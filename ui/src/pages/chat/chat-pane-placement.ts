@@ -29,12 +29,19 @@ function resolvePlacementComposerState(params: {
   reclaimingKey: string | null;
   restartingKey: string | null;
   row: GatewaySessionRow | undefined;
+  workspaceResultReconciling: boolean;
 }): ChatPanePlacementComposerState {
   if (params.restartingKey === params.row?.key) {
     return { kind: "busy", message: t("sessionsView.restartingSession") };
   }
   if (params.reclaimingKey === params.row?.key) {
     return { kind: "busy", message: t("sessionsView.stoppingSession") };
+  }
+  if (
+    params.workspaceResultReconciling &&
+    (params.row?.placement?.state === "active" || params.row?.placement?.state === "draining")
+  ) {
+    return { kind: "busy", message: t("sessionsView.syncingCloudFilesComposer") };
   }
   switch (params.row?.placement?.state) {
     case "requested":
@@ -46,7 +53,7 @@ function resolvePlacementComposerState(params: {
       return { kind: "busy", message: t("newSession.starting") };
     case "draining":
     case "reconciling":
-      return { kind: "busy", message: t("sessionsView.syncingCloudFilesComposer") };
+      return { kind: "busy", message: t("sessionsView.finishingSessionMove") };
     case "failed":
       return {
         kind: "failed",
@@ -68,7 +75,7 @@ export function resolvePlacementComposer(params: {
   restartingKey: string | null;
   row: GatewaySessionRow | undefined;
   startupPending: boolean;
-  workspaceResultPending: boolean;
+  workspaceResultReconciling: boolean;
   onRestart: () => void;
   onReclaim: () => void;
 }): PlacementComposerPresentation {
@@ -84,8 +91,8 @@ export function resolvePlacementComposer(params: {
     blocksSend:
       state.kind !== "ready" &&
       !(
-        params.workspaceResultPending &&
-        (placement?.state === "draining" || placement?.state === "reconciling")
+        params.workspaceResultReconciling &&
+        (placement?.state === "active" || placement?.state === "draining")
       ),
     busyMessage,
     diskSpace: placement?.state === "active" ? placement.diskSpace : undefined,

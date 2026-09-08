@@ -52,7 +52,7 @@ function mount(
 }
 
 describe("chat pane device placement", () => {
-  it("presents healthy reconciliation as cloud file sync with elapsed safe-apply detail", () => {
+  it("presents active post-turn reconciliation as cloud file sync", () => {
     const container = document.createElement("div");
     document.body.append(container);
     containers.push(container);
@@ -61,7 +61,8 @@ describe("chat pane device placement", () => {
       kind: "direct",
       updatedAt: 0,
       placement: {
-        state: "reconciling",
+        state: "active",
+        workspaceResultReconciling: true,
         generation: 2,
         createdAtMs: 100_000,
         updatedAtMs: 300_000,
@@ -82,7 +83,7 @@ describe("chat pane device placement", () => {
     expect(container.querySelector(".chat-pane__placement-note")?.textContent).toContain(
       "Safely applying cloud edits",
     );
-    expect(container.querySelector("openclaw-elapsed-time")).not.toBeNull();
+    expect(container.querySelector("openclaw-elapsed-time")).toBeNull();
   });
 
   it.each(

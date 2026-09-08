@@ -16,6 +16,7 @@ import type {
   WorkerSessionTurnClaim,
 } from "./placement-store.js";
 import { ActiveTurnClaimError } from "./placement-turn-claims.js";
+import type { WorkerSessionWorkspace } from "./session-workspace.js";
 import { WorkerRunnerCapacityError, WorkerRunnerUnavailableError } from "./tunnel-contract.js";
 import {
   claimWorkerTurn,
@@ -44,7 +45,9 @@ type ReclaimedWorkerPlacement = Extract<WorkerSessionPlacementRecord, { state: "
 type WorkerTurnLauncherOptions = {
   environments: WorkerTurnEnvironmentService;
   placements: WorkerSessionPlacementStore;
-  resolveWorkspacePath: (identity: ReturnType<typeof resolvePlacementIdentity>) => Promise<string>;
+  resolveWorkspace: (
+    identity: ReturnType<typeof resolvePlacementIdentity>,
+  ) => Promise<WorkerSessionWorkspace>;
   reconcileActivePlacement: (environmentId: string) => Promise<void>;
   workspaceOperations: WorkerWorkspaceOperationCoordinator;
   redispatchReclaimed: (placement: ReclaimedWorkerPlacement) => Promise<ActiveWorkerPlacement>;
@@ -101,7 +104,7 @@ export function createWorkerSessionTurnPlacementProvider(options: WorkerTurnLaun
           throw new Error(`Remote-exec placement changed while preparing its ${phase}`);
         }
       };
-      const localWorkspaceDir = await options.resolveWorkspacePath({
+      const workspace = await options.resolveWorkspace({
         sessionId: placement.sessionId,
         agentId: placement.agentId,
         sessionKey: placement.sessionKey,
@@ -110,7 +113,7 @@ export function createWorkerSessionTurnPlacementProvider(options: WorkerTurnLaun
       const sandbox = await createRemoteExecPlacementSandbox({
         config: params.config,
         environments: options.environments,
-        localWorkspaceDir,
+        workspaceDir: workspace.kind === "local" ? workspace.path : placement.remoteWorkspaceDir,
         placement,
       });
       assertCurrentPlacement("sandbox");
@@ -122,7 +125,6 @@ export function createWorkerSessionTurnPlacementProvider(options: WorkerTurnLaun
         currentEnvironment.attachedSessionIds.length !== 1 ||
         currentEnvironment.attachedSessionIds[0] !== placement.sessionId ||
         (sandbox.backendId === "node" &&
-          "placementNodeId" in sandbox &&
           currentEnvironment.nodeDeviceId !== sandbox.placementNodeId)
       ) {
         throw new Error("Remote-exec environment changed while preparing its sandbox");
@@ -134,10 +136,6 @@ export function createWorkerSessionTurnPlacementProvider(options: WorkerTurnLaun
     },
     async executeTurn(claim, inputTurn, runLocal, onAdmitted) {
       let turn = inputTurn;
-      const hasPendingWorkspaceResultForOtherRun = (sessionId: string, runId: string) =>
-        options.placements
-          .listPendingWorkspaceResults()
-          .some((pending) => pending.sessionId === sessionId && pending.runId !== runId);
       const current = options.placements.get(claim.sessionId);
       if (!current && turn.modelRun === true && !claim.sessionKey?.trim()) {
         return await runLocal();
@@ -145,6 +143,10 @@ export function createWorkerSessionTurnPlacementProvider(options: WorkerTurnLaun
       if (!current || current.state === "local") {
         return await executeLocalTurn({ claim, placements: options.placements, runLocal });
       }
+      const hasPendingWorkspaceResultForOtherRun = (sessionId: string, runId: string) =>
+        options.placements
+          .listPendingWorkspaceResults()
+          .some((pending) => pending.sessionId === sessionId && pending.runId !== runId);
       let identity = resolvePlacementIdentity(claim, current);
       let routablePlacement = current;
       let placement: ActiveWorkerPlacement;
@@ -163,11 +165,7 @@ export function createWorkerSessionTurnPlacementProvider(options: WorkerTurnLaun
             routablePlacement,
           );
         }
-        const resultIsReconciling = hasPendingWorkspaceResultForOtherRun(
-          identity.sessionId,
-          claim.runId,
-        );
-        if (resultIsReconciling) {
+        if (hasPendingWorkspaceResultForOtherRun(identity.sessionId, claim.runId)) {
           await waitForPendingWorkerResult({
             placements: options.placements,
             sessionId: identity.sessionId,
@@ -184,8 +182,7 @@ export function createWorkerSessionTurnPlacementProvider(options: WorkerTurnLaun
           continue;
         }
         placement = requireActivePlacement(routablePlacement);
-        const remoteExec = placement.executionMode === "remote-exec";
-        if (remoteExec) {
+        if (placement.executionMode === "remote-exec") {
           try {
             turnClaim = options.placements.claimTurn({
               ...identity,
@@ -247,27 +244,33 @@ export function createWorkerSessionTurnPlacementProvider(options: WorkerTurnLaun
         }
         break;
       }
+      // Placement and session storage own the workspace; caller paths may be stale.
+      let workspace: WorkerSessionWorkspace;
+      try {
+        workspace = await options.resolveWorkspace(identity);
+      } catch (error) {
+        await releaseClaimIfOwned(options.placements, turnClaim);
+        throw error;
+      }
       const remoteExec = placement.executionMode === "remote-exec";
+      if (remoteExec) {
+        const refreshed = options.placements.get(claim.sessionId);
+        if (
+          refreshed?.state !== "active" ||
+          refreshed.executionMode !== "remote-exec" ||
+          refreshed.environmentId !== placement.environmentId ||
+          refreshed.activeOwnerEpoch !== placement.activeOwnerEpoch ||
+          refreshed.generation !== turnClaim.placementGeneration
+        ) {
+          await releaseClaimIfOwned(options.placements, turnClaim);
+          throw new Error("Remote-exec placement changed during turn admission");
+        }
+        placement = refreshed;
+      }
       let activeWorkerTurn: ActiveWorkerTurn | undefined;
       let handedOff = false;
       let terminalAtMs: number | undefined;
       try {
-        // The placement owns the managed worktree. Callers can carry a default or stale
-        // workspace path, but remote results must only reconcile into that canonical root.
-        const localWorkspaceDir = await options.resolveWorkspacePath(identity);
-        if (remoteExec) {
-          const refreshed = options.placements.get(claim.sessionId);
-          if (
-            refreshed?.state !== "active" ||
-            refreshed.executionMode !== "remote-exec" ||
-            refreshed.environmentId !== placement.environmentId ||
-            refreshed.activeOwnerEpoch !== placement.activeOwnerEpoch ||
-            refreshed.generation !== turnClaim.placementGeneration
-          ) {
-            throw new Error("Remote-exec placement changed during turn admission");
-          }
-          placement = refreshed;
-        }
         if (!remoteExec) {
           activeWorkerTurn = createWorkerTurnRunOwner({
             placements: options.placements,
@@ -291,7 +294,7 @@ export function createWorkerSessionTurnPlacementProvider(options: WorkerTurnLaun
           },
           placement,
           placements: options.placements,
-          localWorkspaceDir,
+          workspace,
           ...(options.prepareAcceptedWorkspacePublication
             ? { prepareAcceptedWorkspacePublication: options.prepareAcceptedWorkspacePublication }
             : {}),
@@ -390,6 +393,5 @@ export function createWorkerSessionTurnPlacementProvider(options: WorkerTurnLaun
       }
     },
   };
-  provider satisfies SessionPlacementAdmissionProvider;
   return provider;
 }

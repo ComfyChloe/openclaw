@@ -12,7 +12,7 @@ function projectSessionPlacementFields(params: {
   context: GatewayRequestContext;
   sessionId: string | undefined;
   placements?: ReadonlyMap<string, WorkerSessionPlacementRecord>;
-  pendingWorkspaceResultSessionIds?: ReadonlySet<string>;
+  workspaceResultReconcilingSessionIds?: ReadonlySet<string>;
   moves?: ReadonlyMap<string, WorkerPlacementMoveIntent>;
 }) {
   const placement = params.sessionId ? params.placements?.get(params.sessionId) : undefined;
@@ -35,7 +35,7 @@ function projectSessionPlacementFields(params: {
             params.context.workerPlacementRunnerAvailabilityReader?.read(placement),
             readWorkerPlacementIdentity(placement, params.context.workerEnvironmentService),
             failedRecoveryAction,
-            params.pendingWorkspaceResultSessionIds?.has(placement.sessionId) ?? false,
+            params.workspaceResultReconcilingSessionIds?.has(placement.sessionId) ?? false,
           ),
         }
       : {}),
@@ -49,15 +49,15 @@ export function createSessionPlacementBatchProjector(
 ) {
   const sessionIds = sessions.flatMap((session) => (session.sessionId ? [session.sessionId] : []));
   const placements = context.workerSessionPlacementService?.getMany(sessionIds);
-  const pendingWorkspaceResultSessionIds =
-    context.workerSessionPlacementService?.getPendingWorkspaceResultSessionIds?.(sessionIds);
+  const workspaceResultReconcilingSessionIds =
+    context.workerSessionPlacementService?.getWorkspaceResultReconcilingSessionIds?.(sessionIds);
   const moves = context.workerSessionPlacementService?.getPlacementMoves?.(sessionIds);
   return (sessionId: string | undefined) =>
     projectSessionPlacementFields({
       context,
       sessionId,
       placements,
-      pendingWorkspaceResultSessionIds,
+      workspaceResultReconcilingSessionIds,
       moves,
     });
 }

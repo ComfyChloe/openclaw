@@ -12,7 +12,7 @@ const suite = createChatFlowE2eSuite();
 const sessionKey = "agent:main:cloud-reconciliation";
 const now = Date.now();
 
-function placement(state: "reconciling" | "active" | "failed") {
+function placement(state: "active" | "failed", workspaceResultReconciling = false) {
   const timing = {
     createdAtMs: now - 180_000,
     generation: state === "failed" ? 3 : 2,
@@ -37,18 +37,22 @@ function placement(state: "reconciling" | "active" | "failed") {
     remoteWorkspaceDir: "/workspace/openclaw",
     workerBundleHash: "a".repeat(64),
     workspaceBaseManifestRef: "manifest-before-sync",
-    ...(state === "reconciling" ? { workspaceResultPending: true as const } : {}),
+    ...(workspaceResultReconciling ? { workspaceResultReconciling: true as const } : {}),
   };
 }
 
-function session(state: "reconciling" | "active" | "failed", queuedFollowUp = false) {
+function session(
+  state: "active" | "failed",
+  queuedFollowUp = false,
+  workspaceResultReconciling = false,
+) {
   return {
     activeRunIds: queuedFollowUp ? ["follow-up-run"] : [],
     hasActiveRun: queuedFollowUp,
     key: sessionKey,
     kind: "direct",
     label: "Cloud reconciliation proof",
-    placement: placement(state),
+    placement: placement(state, workspaceResultReconciling),
     sessionId: "cloud-reconciliation-session",
     status: queuedFollowUp ? "running" : "done",
     updatedAt: now,
@@ -80,7 +84,7 @@ suite.define(() => {
           : {}),
       },
       async ({ page }) => {
-        const reconciling = session("reconciling");
+        const reconciling = session("active", false, true);
         const reconcilingHistory = {
           inFlightRun: null,
           messages: [{ role: "assistant", content: "Cloud edits are ready to apply." }],
@@ -123,7 +127,7 @@ suite.define(() => {
           status: "started",
         });
 
-        const queued = session("reconciling", true);
+        const queued = session("active", true, true);
         const queuedHistory = {
           ...reconcilingHistory,
           pendingInputs: { items: [pendingInput], total: 1 },

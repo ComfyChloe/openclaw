@@ -55,8 +55,8 @@ describe("worker placement projection", () => {
     expect(projectWorkerSessionPlacement(active)).not.toHaveProperty("diskSpace");
   });
 
-  it.each(["draining", "reconciling"] as const)(
-    "projects the Gateway-owned pending-result fence for %s placements",
+  it.each(["active", "draining"] as const)(
+    "projects active post-turn workspace reconciliation for %s placements",
     (state) => {
       const placement = {
         ...RECORD_BASE,
@@ -68,7 +68,9 @@ describe("worker placement projection", () => {
         workerBundleHash: BUNDLE_HASH,
       } satisfies WorkerSessionPlacementRecord;
 
-      expect(projectWorkerSessionPlacement(placement)).not.toHaveProperty("workspaceResultPending");
+      expect(projectWorkerSessionPlacement(placement)).not.toHaveProperty(
+        "workspaceResultReconciling",
+      );
       const projected = projectWorkerSessionPlacement(
         placement,
         undefined,
@@ -77,10 +79,26 @@ describe("worker placement projection", () => {
         undefined,
         true,
       );
-      expect(projected).toMatchObject({ workspaceResultPending: true });
+      expect(projected).toMatchObject({ workspaceResultReconciling: true });
       expect(Value.Check(SessionPlacementSchema, projected)).toBe(true);
     },
   );
+
+  it("does not project result reconciliation for the move-only reconciling state", () => {
+    const placement = {
+      ...RECORD_BASE,
+      state: "reconciling",
+      environmentId: "environment-1",
+      activeOwnerEpoch: 7,
+      workspaceBaseManifestRef: "manifest-1",
+      remoteWorkspaceDir: "/workspace",
+      workerBundleHash: BUNDLE_HASH,
+    } satisfies WorkerSessionPlacementRecord;
+
+    expect(
+      projectWorkerSessionPlacement(placement, undefined, undefined, undefined, undefined, true),
+    ).not.toHaveProperty("workspaceResultReconciling");
+  });
 
   it("projects device availability from the exact active environment and current runner proof", () => {
     const active = {

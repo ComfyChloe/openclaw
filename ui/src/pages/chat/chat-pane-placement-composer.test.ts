@@ -3,7 +3,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { GatewaySessionRow } from "../../api/types.ts";
 import type { ApplicationGatewaySnapshot } from "../../app/context.ts";
-import { resolveComposerAvailability } from "./chat-composer-availability.ts";
 import { resolvePlacementComposer } from "./chat-pane-placement.ts";
 
 function placementSession(
@@ -37,7 +36,7 @@ function presentation(
     restartingKey: null,
     row,
     startupPending: false,
-    workspaceResultPending: false,
+    workspaceResultReconciling: false,
     onRestart: vi.fn(),
     onReclaim: vi.fn(),
     ...overrides,
@@ -51,41 +50,38 @@ describe("chat placement composer presentation", () => {
     ["provisioning", "busy", "Provisioning environment…"],
     ["syncing", "busy", "Preparing workspace…"],
     ["starting", "busy", "Starting…"],
-    ["draining", "busy", "Send now; your message starts automatically after workspace sync."],
-    ["reconciling", "busy", "Send now; your message starts automatically after workspace sync."],
+    ["draining", "busy", "Finishing session move…"],
+    ["reconciling", "busy", "Finishing session move…"],
   ] as const)("projects %s placement into a %s composer", (state, kind, busyMessage) => {
-    const acceptsDuringSync = state === "draining" || state === "reconciling";
-    const result = presentation(placementSession(state), {
-      workspaceResultPending: acceptsDuringSync,
-    });
+    const result = presentation(placementSession(state));
 
     expect(result.state.kind).toBe(kind);
-    expect(result.blocksSend).toBe(kind !== "ready" && !acceptsDuringSync);
+    expect(result.blocksSend).toBe(kind !== "ready");
     expect(result.busyMessage).toBe(busyMessage ?? null);
-    expect(
-      resolveComposerAvailability({
-        catalog: false,
-        catalogCanSend: false,
-        catalogDisabledReason: null,
-        modelSetupRequired: false,
-        baseDisabledReason: null,
-        baseDisabledReasonTone: "danger",
-        selectedSessionArchived: false,
-        restartRecoveryTombstoned: false,
-        placement: result,
-        sendHoldReason: null,
-        placementStartupPending: false,
-        sessionDisabledBanner: undefined,
-      }).canSend,
-    ).toBe(kind === "ready" || acceptsDuringSync);
   });
 
-  it.each(["draining", "reconciling"] as const)(
-    "keeps %s blocked without a pending workspace result",
+  it.each(["active", "draining"] as const)(
+    "accepts a follow-up while an %s placement reconciles a completed result",
     (state) => {
-      expect(presentation(placementSession(state)).blocksSend).toBe(true);
+      const result = presentation(placementSession(state), { workspaceResultReconciling: true });
+
+      expect(result.state).toEqual({
+        kind: "busy",
+        message: "Send now; your message starts automatically after workspace sync.",
+      });
+      expect(result.blocksSend).toBe(false);
+      expect(result.busyMessage).toBe(
+        "Send now; your message starts automatically after workspace sync.",
+      );
     },
   );
+
+  it("keeps move reconciliation blocked with truthful copy", () => {
+    const result = presentation(placementSession("reconciling"));
+
+    expect(result.blocksSend).toBe(true);
+    expect(result.busyMessage).toBe("Finishing session move…");
+  });
 
   it.each(["restart", "stop-first"] as const)(
     "projects failed %s recovery into an actionable composer banner",
