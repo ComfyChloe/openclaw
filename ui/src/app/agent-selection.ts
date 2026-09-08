@@ -1,5 +1,6 @@
 import type { AgentsListResult } from "../api/types.ts";
 import { normalizeAgentId, parseAgentSessionKey } from "../lib/sessions/session-key.ts";
+import type { UiPreferences } from "./settings.ts";
 
 type AgentSelectionGateway = {
   readonly connection: {
@@ -22,7 +23,11 @@ type AgentSelectionRoster = {
 };
 
 type AgentSelectionPreferences = {
-  readonly settings: { gatewayUrl: string; sidebarAgentsMode?: "chip" | "roster" };
+  readonly settings: Pick<
+    UiPreferences,
+    "gatewayUrl" | "sidebarAgentsMode" | "sidebarPreTeamScope"
+  >;
+  patch: (patch: Pick<UiPreferences, "sidebarPreTeamScope">) => void;
   subscribe: (listener: () => void) => () => void;
 };
 
@@ -90,8 +95,15 @@ export function createAgentSelectionCapability(
       : null;
   const initialSelectedId = reconcileSelectedId(initialId);
   let teamMode = preferences?.settings.sidebarAgentsMode === "roster";
-  let previousScopeId = resolveScopeId(initialSelectedId);
-  let previousScopeNeedsRoster = !roster.state.agentsList;
+  const rememberedScope = (fallback: string | null) =>
+    resolveScopeId(
+      preferences?.settings.sidebarPreTeamScope === undefined
+        ? fallback
+        : preferences.settings.sidebarPreTeamScope,
+    );
+  let previousScopeId = rememberedScope(initialSelectedId);
+  let previousScopeNeedsRoster =
+    preferences?.settings.sidebarPreTeamScope === undefined && !roster.state.agentsList;
   let scopeNeedsRoster = !teamMode && previousScopeNeedsRoster;
   let configuredIds = new Set(
     roster.state.agentsList?.agents.map((agent) => normalizeAgentId(agent.id)),
@@ -138,8 +150,11 @@ export function createAgentSelectionCapability(
     if (teamMode) {
       previousScopeId = state.scopeId;
       previousScopeNeedsRoster = scopeNeedsRoster;
+    } else {
+      previousScopeId = rememberedScope(previousScopeId);
     }
     scopeNeedsRoster = !teamMode && previousScopeNeedsRoster;
+    preferences.patch({ sidebarPreTeamScope: teamMode ? previousScopeId : undefined });
     publish({ ...state, scopeId: teamMode ? null : previousScopeId });
   });
   const stopGateway = gateway.subscribe((next) => {
@@ -155,8 +170,9 @@ export function createAgentSelectionCapability(
       followsGatewayDefault = !nextPersistedId;
       const selectedId = nextPersistedId ? normalizeAgentId(nextPersistedId) : nextAssistantAgentId;
       teamMode = preferences?.settings.sidebarAgentsMode === "roster";
-      previousScopeId = resolveScopeId(selectedId);
-      previousScopeNeedsRoster = !roster.state.agentsList;
+      previousScopeId = rememberedScope(selectedId);
+      previousScopeNeedsRoster =
+        preferences?.settings.sidebarPreTeamScope === undefined && !roster.state.agentsList;
       scopeNeedsRoster = !teamMode && previousScopeNeedsRoster;
       configuredIds.clear();
       // AgentCapability subscribes first and clears the old roster on a
@@ -191,6 +207,9 @@ export function createAgentSelectionCapability(
         !nextIds.has(previousScopeId)
       ) {
         previousScopeId = resolveScopeId(reconcileSelectedId(previousScopeId));
+        if (teamMode) {
+          preferences?.patch({ sidebarPreTeamScope: previousScopeId });
+        }
       }
       previousScopeNeedsRoster = false;
       scopeNeedsRoster = false;

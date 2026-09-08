@@ -33,6 +33,33 @@ describe("sidebar preference persistence", () => {
     }
   });
 
+  it.each([
+    [" Research ", "research"],
+    [null, null],
+    [undefined, undefined],
+    [" ", undefined],
+    [true, undefined],
+    [42, undefined],
+    [{ agent: "research" }, undefined],
+  ])(
+    "normalizes remembered team scope %j without conflating all agents and unset",
+    (value, expected) => {
+      setTestLocation({ protocol: "https:", host: "gateway.example", pathname: "/" });
+      const gatewayUrl = expectedGatewayUrl("");
+      const key = `openclaw.control.settings.v1:${gatewayUrl}`;
+      localStorage.setItem(
+        key,
+        JSON.stringify({ ...makeUiSettings(gatewayUrl), sidebarPreTeamScope: value }),
+      );
+      const settings = loadSettings();
+      expect(settings.sidebarPreTeamScope).toBe(expected);
+      saveSettings(settings);
+      expect(loadSettings().sidebarPreTeamScope).toBe(expected);
+      const persisted = JSON.parse(localStorage.getItem(key) ?? "{}") as Record<string, unknown>;
+      expect(Object.hasOwn(persisted, "sidebarPreTeamScope")).toBe(expected !== undefined);
+    },
+  );
+
   it("persists sidebar width without leaking tab-local visibility across reloads", () => {
     setTestLocation({ protocol: "https:", host: "gateway.example:8443", pathname: "/" });
     const gatewayUrl = expectedGatewayUrl("");

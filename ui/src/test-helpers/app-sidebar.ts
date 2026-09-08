@@ -20,7 +20,7 @@ import type {
 } from "../app/context.ts";
 import type { ExecApprovalRequest } from "../app/exec-approval.ts";
 import type { ApplicationOverlays } from "../app/overlays-types.ts";
-import { loadSettings } from "../app/settings.ts";
+import { loadSettings, patchSettings } from "../app/settings.ts";
 import type { SessionDataController } from "../components/session-data-controller.ts";
 import type { SessionOrganizerController } from "../components/session-organizer-controller.ts";
 import type { AgentIdentityCapability } from "../lib/agents/identity.ts";
@@ -554,7 +554,13 @@ export function createContext(
     gateway,
     agents,
     { load: () => selectedAgentId, save: () => undefined },
-    theme,
+    {
+      get settings() {
+        return theme.settings;
+      },
+      subscribe: theme.subscribe,
+      patch: patchSettings,
+    },
   );
   sidebarContextCleanups.add(() => {
     agentSelection.dispose();

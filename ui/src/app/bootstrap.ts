@@ -262,7 +262,13 @@ export function bootstrapApplication(): ApplicationRuntime {
           },
         }
       : undefined,
-    theme,
+    {
+      get settings() {
+        return theme.settings;
+      },
+      subscribe: theme.subscribe,
+      patch: patchSettings,
+    },
   );
   const channels = createChannelCapability(gateway);
   const scopeUpgrade = createScopeUpgradeCapability(gateway);

@@ -70,7 +70,11 @@ agent; the chip above remains the context indicator and agent switcher. Turning
 team mode off restores the usual Home row and direct New session button.
 
 Enabling team mode also defaults the shared page scope to **All agents**, while
-remembering the previous scope to restore when you turn it off. You can still
+remembering the previous scope to restore when you turn it off. That scope,
+including an explicit **All agents** selection, is saved in this browser for each
+gateway. It survives reloads and switching to another gateway and back, even if
+you open a different agent's chat in team mode. Turning team mode off clears the
+remembered value after restoring it. You can still
 choose a narrower scope; navigating between pages does not reset that choice.
 Automations, Dashboards, Sessions, Tasks, and Usage support all-agent views, with
 agent identity shown on mixed-agent rows. Memory, Model providers, and Skill
