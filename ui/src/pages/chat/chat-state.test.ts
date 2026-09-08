@@ -13,7 +13,6 @@ import {
   SLASH_COMMANDS,
 } from "../../lib/chat/commands.ts";
 import { extractText } from "../../lib/chat/message-extract.ts";
-import { invalidateModelCatalogCache } from "../../lib/model-catalog-store.ts";
 import type { ChatHistoryResult } from "./chat-history-snapshot.ts";
 import { loadChatHistory } from "./chat-history.ts";
 import { makeChatHost } from "./chat-host.test-support.ts";
@@ -4043,7 +4042,7 @@ describe("loadPageAssistantIdentity", () => {
     identities.invalidate(["main"]);
     let holdMainIdentity = true;
     request.mockImplementation((method: string, params?: { agentId?: string }) => {
-      if (method === "chat.metadata") {
+      if (method === "chat.metadata" || method === "models.list") {
         return Promise.resolve({ commands: [], models: [] });
       }
       if (method === "models.authStatus") {
@@ -4111,17 +4110,20 @@ describe("refreshChatMetadata", () => {
         authProfileId: "test:current",
         source: "user",
       };
-      const request = vi
-        .fn()
-        .mockReturnValueOnce(old.promise)
-        .mockResolvedValue({ commands: [], models: [ready], accountSelection });
+      let reads = 0;
+      const request = vi.fn((method: string) =>
+        method === "chat.metadata"
+          ? Promise.resolve({ commands: [] })
+          : ++reads === 1
+            ? old.promise
+            : Promise.resolve({ models: [ready], accountSelection }),
+      );
       const state = createMetadataState(request);
       state.chatAccountSelection = { kind: "automatic", label: "Automatic account selection" };
       const pending =
         kind === "picker" ? refreshChatModelCatalogOnDemand(state) : refreshChatMetadata(state);
       state.connected = false;
       retireChatMetadataRequests(state);
-      invalidateModelCatalogCache(state.client!);
       invalidateChatMetadataStore(state.client!);
       expect(state.chatModelCatalog).toEqual([]);
       expect(state.chatAccountSelection).toBeNull();
@@ -4181,7 +4183,7 @@ describe("refreshChatMetadata", () => {
     },
     { label: "cold", existingModels: [] },
   ])(
-    "refreshes $label session metadata after full model discovery completes",
+    "reads the $label session catalog without provider acquisition",
     async ({ existingModels }) => {
       const refreshSessions = vi.fn().mockResolvedValue(undefined);
       const discovery = createDeferred<{
@@ -4190,7 +4192,7 @@ describe("refreshChatMetadata", () => {
       const request = vi.fn((method: string, params?: unknown) => {
         expect(params).toEqual(
           method === "models.list"
-            ? { view: "configured", agentId: "work", refresh: true }
+            ? { view: "configured", agentId: "work", sessionKey: "agent:work:main" }
             : { agentId: "work", sessionKey: "agent:work:main" },
         );
         return discovery.promise;
@@ -4229,8 +4231,11 @@ describe("refreshChatMetadata", () => {
       models: Array<{ id: string; name: string; provider: string; available: boolean }>;
     }>();
     const request = vi.fn(async (method: string, params?: unknown) => {
-      expect(method).toBe("chat.metadata");
-      expect(params).toEqual({ agentId: "work", sessionKey: "agent:work:main" });
+      expect(params).toEqual({
+        agentId: "work",
+        sessionKey: "agent:work:main",
+        ...(method === "models.list" ? { view: "configured" } : {}),
+      });
       return await metadata;
     });
     const state = createMetadataState(request);
@@ -4244,7 +4249,7 @@ describe("refreshChatMetadata", () => {
     await refresh;
 
     expect(state.chatModelCatalog).toEqual([]);
-    expect(request).toHaveBeenCalledTimes(1);
+    expect(request.mock.calls.filter(([method]) => method === "models.list")).toHaveLength(1);
   });
 
   it("isolates metadata across sessions and agents", async () => {
@@ -4263,15 +4268,17 @@ describe("refreshChatMetadata", () => {
     await refreshChatMetadata(state);
     state.sessionKey = "agent:work:second";
     await refreshChatMetadata(state);
-    expect(request).toHaveBeenCalledTimes(2);
+    expect(request.mock.calls.filter(([method]) => method === "models.list")).toHaveLength(2);
 
     state.sessionKey = "agent:other:main";
     await refreshChatMetadata(state);
-    expect(request).toHaveBeenCalledTimes(3);
-    expect(request).toHaveBeenLastCalledWith("chat.metadata", {
-      agentId: "other",
-      sessionKey: "agent:other:main",
-    });
+    expect(request.mock.calls.filter(([method]) => method === "models.list")).toHaveLength(3);
+    expect(state.chatModelCatalog[0]?.id).toBe("other-model");
+    expect(request).toHaveBeenLastCalledWith(
+      "models.list",
+      { view: "configured", agentId: "other", sessionKey: "agent:other:main" },
+      { signal: expect.any(AbortSignal) },
+    );
   });
 
   it("ignores metadata after switching to a different agent", async () => {
@@ -4279,7 +4286,7 @@ describe("refreshChatMetadata", () => {
       commands: never[];
       models: Array<{ id: string; name: string; provider: string }>;
     }>();
-    const request = vi.fn(async () => await metadata);
+    const request = vi.fn(async (_method: string) => await metadata);
     const existingCatalog = [
       { id: "work-model", name: "Work Model", provider: "openai", available: true },
     ];
@@ -4294,7 +4301,7 @@ describe("refreshChatMetadata", () => {
     await refresh;
 
     expect(state.chatModelCatalog).toBe(existingCatalog);
-    expect(request).toHaveBeenCalledTimes(1);
+    expect(request.mock.calls.filter(([method]) => method === "models.list")).toHaveLength(1);
   });
 
   it("keeps loading owned by the newest agent metadata request", async () => {
@@ -4354,26 +4361,40 @@ describe("refreshChatMetadata", () => {
     expect(state.chatModelCatalog).toEqual([]);
   });
 
-  it("keeps the seeded catalog and reports chat metadata failures without model fallback", async () => {
-    const seededCatalog = [
-      { id: "seeded-model", name: "Seeded Model", provider: "openai", available: true },
-    ];
+  it("keeps model reads independent of command metadata failures", async () => {
+    const model = { id: "published", name: "Published", provider: "example", available: true };
     const request = vi.fn(async (method: string) => {
       if (method === "chat.metadata") {
-        throw new Error("metadata unavailable");
+        throw new Error("commands unavailable");
       }
-      if (method === "models.list") {
-        return { models: [{ id: "substitute-model", name: "Substitute Model" }] };
-      }
-      return { commands: [] };
+      return { models: [model], accountSelection: { kind: "automatic", label: "Automatic" } };
     });
-    const state = createMetadataState(request, { chatModelCatalog: seededCatalog });
-
+    const state = createMetadataState(request);
     await refreshChatMetadata(state);
+    expect(state.chatModelCatalog).toEqual([model]);
+    expect(state.chatAccountSelection).toEqual({ kind: "automatic", label: "Automatic" });
+    expect(state.chatModelCatalogError).toBeNull();
+  });
 
-    expect(state.chatModelCatalog).toBe(seededCatalog);
-    expect(state.chatModelCatalogError).toBe("metadata unavailable");
-    expect(request.mock.calls.map(([method]) => method)).toEqual(["chat.metadata"]);
+  it("retains rows after catalog failure and clears failure on a successful empty publication", async () => {
+    const model = { id: "retained", name: "Retained", provider: "example" };
+    const request = vi
+      .fn()
+      .mockResolvedValueOnce({ models: [model], refreshFailed: true })
+      .mockRejectedValueOnce(new Error("catalog transport failed"))
+      .mockResolvedValueOnce({ models: [] });
+    const state = createMetadataState(request);
+    await refreshChatModelCatalogOnDemand(state);
+    expect(state.chatModelCatalog).toEqual([model]);
+    expect(state.chatModelCatalogError).toBe(
+      "Some models could not be refreshed. Open Models to try again.",
+    );
+    await refreshChatModelCatalogOnDemand(state);
+    expect(state.chatModelCatalog).toEqual([model]);
+    expect(state.chatModelCatalogError).toBe("catalog transport failed");
+    await refreshChatModelCatalogOnDemand(state);
+    expect(state.chatModelCatalog).toEqual([]);
+    expect(state.chatModelCatalogError).toBeNull();
   });
 
   it("keeps fallback slash commands when chat metadata omits commands", async () => {
@@ -4383,6 +4404,9 @@ describe("refreshChatMetadata", () => {
         return {
           models: [{ id: "metadata-model", name: "Metadata Model", provider: "openai" }],
         };
+      }
+      if (method === "models.list") {
+        return { models: [] };
       }
       return {
         commands: [
@@ -4401,7 +4425,7 @@ describe("refreshChatMetadata", () => {
 
     await refreshChatMetadata(state);
 
-    expect(request.mock.calls.map(([method]) => method)).toEqual(["chat.metadata"]);
+    expect(request.mock.calls.map(([method]) => method)).toEqual(["chat.metadata", "models.list"]);
     expect(SLASH_COMMANDS.some((command) => command.name === "help")).toBe(true);
     expect(SLASH_COMMANDS.some((command) => command.name === "remote-command")).toBe(false);
   });

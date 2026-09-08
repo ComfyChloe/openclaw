@@ -1986,6 +1986,19 @@
                       "providers/nvidia",
                       "providers/ollama-cloud",
                       "providers/openai",
+                      {
+                        "group": "OpenAI",
+                        "pages": [
+                          "providers/openai/setup",
+                          "providers/openai/models",
+                          "providers/openai/runtimes",
+                          "providers/openai/coverage-and-cost",
+                          "providers/openai/image-and-video",
+                          "providers/openai/voice-and-speech",
+                          "providers/openai/azure",
+                          "providers/openai/advanced"
+                        ]
+                      },
                       "providers/opencode",
                       "providers/opencode-go",
                       "providers/perplexity-provider",
@@ -2603,6 +2616,7 @@
                 "group": "Release notes",
                 "pages": [
                   "releases/index",
+                  "releases/2026.9.3",
                   "releases/2026.9.2",
                   "releases/2026.9.1",
                   "releases/2026.8.2",
@@ -2630,6 +2644,17 @@
                 "group": "Testing and CI",
                 "pages": [
                   "reference/test",
+                  {
+                    "group": "Tests",
+                    "pages": [
+                      "reference/test/local",
+                      "reference/test/lanes",
+                      "reference/test/docker",
+                      "reference/test/performance",
+                      "reference/test/runner-internals",
+                      "reference/test/remote-proof"
+                    ]
+                  },
                   "ci",
                   {
                     "group": "CI",
