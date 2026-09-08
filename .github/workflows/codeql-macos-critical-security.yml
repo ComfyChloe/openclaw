@@ -1,50 +1,80 @@
-name: CodeQL macOS Critical Security
+name: "Diagnostic only: Mermaid cross-platform artifact"
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: "0 8 * * 1"
 
 concurrency:
-  group: codeql-macos-critical-security-${{ github.workflow }}-${{ github.event_name == 'workflow_dispatch' && format('manual-{0}', github.run_id) || format('ref-{0}', github.ref) }}
+  group: diagnostic-mermaid-cross-platform-${{ github.run_id }}
   cancel-in-progress: false
+
+permissions: {}
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
-permissions:
-  actions: read
-  contents: read
-  security-events: write
-
 jobs:
   prepare-mermaid:
-    name: Prepare Mermaid assets
+    name: Generate on Ubuntu
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: read
     outputs:
       artifact-id: ${{ steps.upload.outputs.artifact-id }}
+      inventory: ${{ steps.inventory.outputs.manifest }}
+      node-version: ${{ steps.fingerprint.outputs.node }}
+      pnpm-version: ${{ steps.fingerprint.outputs.pnpm }}
+      production-sha: ${{ steps.overlay.outputs.production-sha }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 1
+          fetch-depth: 2
           persist-credentials: false
           ref: ${{ github.sha }}
           submodules: false
 
+      - name: Verify diagnostic-only overlay
+        id: overlay
+        run: |
+          set -euo pipefail
+          if [[ "$(git rev-list --parents -n 1 HEAD | awk '{ print NF - 1 }')" != 1 ]]; then
+            echo "Diagnostic head must have exactly one parent." >&2
+            exit 1
+          fi
+          changed="$(git diff --name-only HEAD^ HEAD)"
+          if [[ "$changed" != ".github/workflows/codeql-macos-critical-security.yml" ]]; then
+            echo "Diagnostic head must differ from its production parent only at the CodeQL workflow." >&2
+            printf '%s\n' "$changed" >&2
+            exit 1
+          fi
+          printf 'production-sha=%s\n' "$(git rev-parse HEAD^)" >> "$GITHUB_OUTPUT"
+          printf '%s\n' 'qualification: false' >> "$GITHUB_STEP_SUMMARY"
+
       - name: Setup Node environment
         uses: ./.github/actions/setup-node-env
         with:
-          cache-mode: restore
+          cache-mode: off
           install-bun: "false"
           install-deps: "false"
+
+      - name: Verify clean dependency tree
+        env:
+          PNPM_CONFIG_CACHE_DIR: ${{ runner.temp }}/diagnostic-mermaid-pnpm-cache
+          PNPM_CONFIG_STORE_DIR: ${{ runner.temp }}/diagnostic-mermaid-pnpm-store
+        run: |
+          set -euo pipefail
+          test ! -e node_modules
+          test ! -e packages/mermaid-renderer/node_modules
+          test ! -e packages/normalization-core/node_modules
+          test ! -e "$PNPM_CONFIG_CACHE_DIR"
+          test ! -e "$PNPM_CONFIG_STORE_DIR"
 
       - name: Install Mermaid renderer dependencies
         env:
           CI: "true"
+          PNPM_CONFIG_CACHE_DIR: ${{ runner.temp }}/diagnostic-mermaid-pnpm-cache
+          PNPM_CONFIG_STORE_DIR: ${{ runner.temp }}/diagnostic-mermaid-pnpm-store
         run: >-
           pnpm install --frozen-lockfile --prefer-offline --optional
           --filter '@openclaw/mermaid-renderer...'
@@ -53,101 +83,358 @@ jobs:
           --config.enable-pre-post-scripts=true
           --config.side-effects-cache=true
 
+      - name: Record toolchain fingerprint
+        id: fingerprint
+        run: |
+          set -euo pipefail
+          printf 'node=%s\n' "$(node -p 'process.versions.node')" >> "$GITHUB_OUTPUT"
+          printf 'pnpm=%s\n' "$(pnpm --version)" >> "$GITHUB_OUTPUT"
+
       - name: Prepare Apple Mermaid assets
         run: node scripts/prepare-apple-mermaid.mjs
 
-      - name: Upload Mermaid assets
+      - name: Inventory generated assets
+        id: inventory
+        env:
+          MERMAID_ROOT: apps/shared/OpenClawKit/Sources/OpenClawChatUI/Resources/Mermaid
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import { createHash } from "node:crypto";
+          import { appendFileSync } from "node:fs";
+          import { lstat, readFile, readdir } from "node:fs/promises";
+          import { join, relative, resolve, sep } from "node:path";
+
+          const root = resolve(process.env.MERMAID_ROOT);
+          const rootStat = await lstat(root).catch(() => null);
+          if (!rootStat?.isDirectory()) {
+            throw new Error("generated Mermaid root is missing or is not a directory");
+          }
+
+          const files = [];
+          async function walk(directory) {
+            const entries = await readdir(directory, { withFileTypes: true });
+            entries.sort((a, b) => a.name.localeCompare(b.name, "en"));
+            for (const entry of entries) {
+              const absolute = join(directory, entry.name);
+              const stat = await lstat(absolute);
+              if (stat.isSymbolicLink()) {
+                throw new Error(`generated tree contains a symlink: ${entry.name}`);
+              }
+              if (stat.isDirectory()) {
+                await walk(absolute);
+                continue;
+              }
+              if (!stat.isFile()) {
+                throw new Error(`generated tree contains a non-file entry: ${entry.name}`);
+              }
+              const path = relative(root, absolute).split(sep).join("/");
+              if (!path || path.startsWith("../")) {
+                throw new Error("generated tree contains an invalid relative path");
+              }
+              const bytes = await readFile(absolute);
+              if (bytes.length === 0) {
+                throw new Error(`generated asset is empty: ${path}`);
+              }
+              files.push({
+                path,
+                size: bytes.length,
+                sha256: createHash("sha256").update(bytes).digest("hex"),
+              });
+            }
+          }
+
+          await walk(root);
+          files.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+          const expectedPaths = [
+            "NOTICE.txt",
+            "frame.js",
+            "index.html",
+            "mermaid.min.js",
+            "native.js",
+          ];
+          if (JSON.stringify(files.map((file) => file.path)) !== JSON.stringify(expectedPaths)) {
+            throw new Error("generated Mermaid tree does not contain the exact five root assets");
+          }
+
+          const manifest = { schema: 1, files };
+          const json = JSON.stringify(manifest);
+          appendFileSync(
+            process.env.GITHUB_OUTPUT,
+            `manifest=${Buffer.from(json).toString("base64url")}\n`,
+          );
+          console.log(json);
+          NODE
+
+      - name: Upload generated assets
         id: upload
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: codeql-macos-mermaid-${{ github.run_id }}-${{ github.run_attempt }}
+          name: diagnostic-mermaid-${{ github.run_id }}-${{ github.run_attempt }}
           path: apps/shared/OpenClawKit/Sources/OpenClawChatUI/Resources/Mermaid
           if-no-files-found: error
           retention-days: 1
 
-  macos:
-    name: Critical Security (macOS)
+  verify-mermaid:
+    name: Generate and compare on macOS
     needs: prepare-mermaid
     runs-on: macos-26-intel
-    timeout-minutes: 45
+    timeout-minutes: 10
+    permissions:
+      contents: read
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 1
+          fetch-depth: 2
           persist-credentials: false
           ref: ${{ github.sha }}
           submodules: false
 
-      - name: Select Xcode
+      - name: Verify diagnostic-only overlay
+        env:
+          EXPECTED_PRODUCTION_SHA: ${{ needs.prepare-mermaid.outputs.production-sha }}
         run: |
           set -euo pipefail
-          sudo xcode-select -s /Applications/Xcode_26.6.app/Contents/Developer
-          xcodebuild -version
-          xcode_version="$(xcodebuild -version | awk 'NR == 1 { print $2 }')"
-          if [[ "$xcode_version" != 26.6* ]]; then
-            echo "error: expected Xcode 26.6, got $xcode_version" >&2
+          changed="$(git diff --name-only HEAD^ HEAD)"
+          if [[ "$changed" != ".github/workflows/codeql-macos-critical-security.yml" ]]; then
+            echo "Diagnostic head must differ from its production parent only at the CodeQL workflow." >&2
+            printf '%s\n' "$changed" >&2
             exit 1
           fi
-          swift --version
+          if [[ "$(git rev-parse HEAD^)" != "$EXPECTED_PRODUCTION_SHA" ]]; then
+            echo "Ubuntu and macOS jobs did not bind the same production parent." >&2
+            exit 1
+          fi
+          printf '%s\n' 'qualification: false' >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Download Mermaid assets
+      - name: Setup Node environment
+        uses: ./.github/actions/setup-node-env
+        with:
+          cache-mode: off
+          install-bun: "false"
+          install-deps: "false"
+          node-version: ${{ needs.prepare-mermaid.outputs.node-version }}
+
+      - name: Verify clean dependency tree
+        env:
+          PNPM_CONFIG_CACHE_DIR: ${{ runner.temp }}/diagnostic-mermaid-pnpm-cache
+          PNPM_CONFIG_STORE_DIR: ${{ runner.temp }}/diagnostic-mermaid-pnpm-store
+        run: |
+          set -euo pipefail
+          test ! -e node_modules
+          test ! -e packages/mermaid-renderer/node_modules
+          test ! -e packages/normalization-core/node_modules
+          test ! -e "$PNPM_CONFIG_CACHE_DIR"
+          test ! -e "$PNPM_CONFIG_STORE_DIR"
+
+      - name: Install Mermaid renderer dependencies
+        env:
+          CI: "true"
+          PNPM_CONFIG_CACHE_DIR: ${{ runner.temp }}/diagnostic-mermaid-pnpm-cache
+          PNPM_CONFIG_STORE_DIR: ${{ runner.temp }}/diagnostic-mermaid-pnpm-store
+        run: >-
+          pnpm install --frozen-lockfile --prefer-offline --optional
+          --filter '@openclaw/mermaid-renderer...'
+          --config.ignore-scripts=false
+          --config.engine-strict=false
+          --config.enable-pre-post-scripts=true
+          --config.side-effects-cache=true
+
+      - name: Verify toolchain fingerprint
+        env:
+          EXPECTED_NODE_VERSION: ${{ needs.prepare-mermaid.outputs.node-version }}
+          EXPECTED_PNPM_VERSION: ${{ needs.prepare-mermaid.outputs.pnpm-version }}
+        run: |
+          set -euo pipefail
+          if [[ "$(node -p 'process.versions.node')" != "$EXPECTED_NODE_VERSION" ]]; then
+            echo "Ubuntu and macOS Node versions differ." >&2
+            exit 1
+          fi
+          if [[ "$(pnpm --version)" != "$EXPECTED_PNPM_VERSION" ]]; then
+            echo "Ubuntu and macOS pnpm versions differ." >&2
+            exit 1
+          fi
+          printf 'Node: %s\npnpm: %s\n' "$EXPECTED_NODE_VERSION" "$EXPECTED_PNPM_VERSION"
+
+      - name: Verify production resource path starts absent
+        run: |
+          set -euo pipefail
+          test ! -e apps/shared/OpenClawKit/Sources/OpenClawChatUI/Resources/Mermaid
+
+      - name: Download Ubuntu artifact by ID to production resource path
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           artifact-ids: ${{ needs.prepare-mermaid.outputs.artifact-id }}
           path: apps/shared/OpenClawKit/Sources/OpenClawChatUI/Resources/Mermaid
 
-      - name: Initialize CodeQL
-        uses: github/codeql-action/init@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4.37.7
-        with:
-          languages: swift
-          build-mode: manual
-          config-file: ./.github/codeql/codeql-macos-critical-security.yml
-
-      - name: Build macOS for CodeQL
-        # Preserve ARM-only application paths in CodeQL coverage on the Intel host.
-        run: swift build --package-path apps/macos --product OpenClaw --arch arm64 --disable-index-store -debug-info-format none
-
-      - name: Analyze
-        id: analyze
-        uses: github/codeql-action/analyze@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4.37.7
-        with:
-          output: sarif-results
-          upload: failure-only
-          category: "/codeql-critical-security/macos"
-
-      - name: Remove dependency build results
+      - name: Inventory downloaded assets before regeneration
+        id: downloaded-inventory
         env:
-          SARIF_OUTPUT: sarif-results
+          MERMAID_ROOT: apps/shared/OpenClawKit/Sources/OpenClawChatUI/Resources/Mermaid
         run: |
           set -euo pipefail
-          shopt -s nullglob
+          node --input-type=module <<'NODE'
+          import { createHash } from "node:crypto";
+          import { appendFileSync } from "node:fs";
+          import { lstat, readFile, readdir } from "node:fs/promises";
+          import { join, relative, resolve, sep } from "node:path";
 
-          if [ ! -d "$SARIF_OUTPUT" ]; then
-            echo "SARIF output directory not found: $SARIF_OUTPUT" >&2
-            exit 1
-          fi
+          const root = resolve(process.env.MERMAID_ROOT);
+          const rootStat = await lstat(root).catch(() => null);
+          if (!rootStat?.isDirectory()) {
+            throw new Error("downloaded Mermaid root is missing or is not a directory");
+          }
 
-          mkdir -p sarif-results-filtered
+          const files = [];
+          async function walk(directory) {
+            const entries = await readdir(directory, { withFileTypes: true });
+            entries.sort((a, b) => a.name.localeCompare(b.name, "en"));
+            for (const entry of entries) {
+              const absolute = join(directory, entry.name);
+              const stat = await lstat(absolute);
+              if (stat.isSymbolicLink()) {
+                throw new Error(`downloaded tree contains a symlink: ${entry.name}`);
+              }
+              if (stat.isDirectory()) {
+                await walk(absolute);
+                continue;
+              }
+              if (!stat.isFile()) {
+                throw new Error(`downloaded tree contains a non-file entry: ${entry.name}`);
+              }
+              const path = relative(root, absolute).split(sep).join("/");
+              if (!path || path.startsWith("../")) {
+                throw new Error("downloaded tree contains an invalid relative path");
+              }
+              const bytes = await readFile(absolute);
+              if (bytes.length === 0) {
+                throw new Error(`downloaded asset is empty: ${path}`);
+              }
+              files.push({
+                path,
+                size: bytes.length,
+                sha256: createHash("sha256").update(bytes).digest("hex"),
+              });
+            }
+          }
 
-          files=("$SARIF_OUTPUT"/*.sarif)
-          if [ "${#files[@]}" -eq 0 ]; then
-            echo "No SARIF files found in $SARIF_OUTPUT" >&2
-            exit 1
-          fi
+          await walk(root);
+          files.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+          const expectedPaths = [
+            "NOTICE.txt",
+            "frame.js",
+            "index.html",
+            "mermaid.min.js",
+            "native.js",
+          ];
+          if (JSON.stringify(files.map((file) => file.path)) !== JSON.stringify(expectedPaths)) {
+            throw new Error("downloaded Mermaid tree does not contain the exact five root assets");
+          }
 
-          for file in "${files[@]}"; do
-            jq '
-              def in_dependency_build:
-                ((.locations // []) | length > 0)
-                and all(.locations[]; (.physicalLocation.artifactLocation.uri? // "") | test("^apps/macos/\\.build/"));
+          const manifest = { schema: 1, files };
+          const json = JSON.stringify(manifest);
+          appendFileSync(
+            process.env.GITHUB_OUTPUT,
+            `manifest=${Buffer.from(json).toString("base64url")}\n`,
+          );
+          console.log(json);
+          NODE
 
-              .runs |= map(.results = ((.results // []) | map(select(in_dependency_build | not))))
-            ' "$file" > "sarif-results-filtered/$(basename "$file")"
-          done
+      - name: Regenerate Apple Mermaid assets locally
+        run: node scripts/prepare-apple-mermaid.mjs
 
-      - name: Upload filtered SARIF
-        uses: github/codeql-action/upload-sarif@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4.37.7
-        with:
-          sarif_file: sarif-results-filtered
-          category: "/codeql-critical-security/macos"
+      - name: Compare complete asset inventories
+        env:
+          DOWNLOADED_MANIFEST: ${{ steps.downloaded-inventory.outputs.manifest }}
+          LOCAL_ROOT: apps/shared/OpenClawKit/Sources/OpenClawChatUI/Resources/Mermaid
+          PRODUCER_MANIFEST: ${{ needs.prepare-mermaid.outputs.inventory }}
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import { createHash } from "node:crypto";
+          import { lstat, readFile, readdir } from "node:fs/promises";
+          import { join, relative, resolve, sep } from "node:path";
+
+          async function inventory(rootInput) {
+            const root = resolve(rootInput);
+            const rootStat = await lstat(root).catch(() => null);
+            if (!rootStat?.isDirectory()) {
+              throw new Error("Mermaid root is missing or is not a directory");
+            }
+            const files = [];
+            async function walk(directory) {
+              const entries = await readdir(directory, { withFileTypes: true });
+              entries.sort((a, b) => a.name.localeCompare(b.name, "en"));
+              for (const entry of entries) {
+                const absolute = join(directory, entry.name);
+                const stat = await lstat(absolute);
+                if (stat.isSymbolicLink()) {
+                  throw new Error(`Mermaid tree contains a symlink: ${entry.name}`);
+                }
+                if (stat.isDirectory()) {
+                  await walk(absolute);
+                  continue;
+                }
+                if (!stat.isFile()) {
+                  throw new Error(`Mermaid tree contains a non-file entry: ${entry.name}`);
+                }
+                const path = relative(root, absolute).split(sep).join("/");
+                if (!path || path.startsWith("../")) {
+                  throw new Error("Mermaid tree contains an invalid relative path");
+                }
+                const bytes = await readFile(absolute);
+                if (bytes.length === 0) {
+                  throw new Error(`Mermaid asset is empty: ${path}`);
+                }
+                files.push({
+                  path,
+                  size: bytes.length,
+                  sha256: createHash("sha256").update(bytes).digest("hex"),
+                });
+              }
+            }
+            await walk(root);
+            files.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+            const expectedPaths = [
+              "NOTICE.txt",
+              "frame.js",
+              "index.html",
+              "mermaid.min.js",
+              "native.js",
+            ];
+            if (JSON.stringify(files.map((file) => file.path)) !== JSON.stringify(expectedPaths)) {
+              throw new Error("Mermaid tree does not contain the exact five root assets");
+            }
+            return { schema: 1, files };
+          }
+
+          const producer = JSON.parse(
+            Buffer.from(process.env.PRODUCER_MANIFEST, "base64url").toString("utf8"),
+          );
+          const downloaded = JSON.parse(
+            Buffer.from(process.env.DOWNLOADED_MANIFEST, "base64url").toString("utf8"),
+          );
+          const local = await inventory(process.env.LOCAL_ROOT);
+          console.log(JSON.stringify({ producer, local, downloaded }));
+
+          const encodedProducer = JSON.stringify(producer);
+          const encodedLocal = JSON.stringify(local);
+          const encodedDownloaded = JSON.stringify(downloaded);
+          if (encodedProducer !== encodedDownloaded) {
+            throw new Error("downloaded artifact inventory differs from the Ubuntu inventory");
+          }
+          if (encodedLocal !== encodedDownloaded) {
+            throw new Error("macOS-generated inventory differs from the Ubuntu artifact");
+          }
+
+          const native = local.files.find((file) => file.path === "native.js");
+          console.log(
+            JSON.stringify({
+              outcome: "equal",
+              fileCount: local.files.length,
+              nativeJs: native,
+              qualification: false,
+            }),
+          );
+          NODE
