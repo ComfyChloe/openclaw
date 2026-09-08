@@ -2,7 +2,6 @@ import { isDeepStrictEqual } from "node:util";
 import { resolveAmbientOwnerAgentId } from "../agents/agent-scope-config.js";
 import { resolveAgentEffectiveModelPrimary } from "../agents/agent-scope.js";
 import { loadAuthProfileStoreForRuntime } from "../agents/auth-profiles/store-runtime.js";
-import type { AgentExecutionAuthBinding } from "../agents/execution-auth-binding.js";
 import { normalizeProviderId } from "../agents/model-selection.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import type { ProviderAuthResult } from "../plugins/types.js";
@@ -90,10 +89,7 @@ export async function verifySetupInference(
       ...(params.deps ? { deps: params.deps } : {}),
       ...(params.bindSession
         ? {
-            onVerifiedExecution: (
-              _auth: AgentExecutionAuthBinding,
-              binding: SystemAgentVerifiedInferenceBinding,
-            ) => {
+            onVerifiedExecution: (binding: SystemAgentVerifiedInferenceBinding) => {
               verifiedBinding = binding;
             },
           }
@@ -240,11 +236,8 @@ export async function verifySetupInferenceConfig(params: {
   runtime: RuntimeEnv;
   timeoutMs?: number;
   deps?: ActivateSetupInferenceDeps;
-  /** Internal session gate: capture only the final exact successful credential. */
-  onVerifiedExecution?: (
-    auth: AgentExecutionAuthBinding,
-    binding: SystemAgentVerifiedInferenceBinding,
-  ) => void;
+  /** Internal session gate: capture only the final verified execution binding. */
+  onVerifiedExecution?: (binding: SystemAgentVerifiedInferenceBinding) => void;
   /** Reject a successful turn unless its runner reports the exact execution owner. */
   requireExecutionOwner?: boolean;
 }): Promise<VerifySetupInferenceResult> {
@@ -461,7 +454,7 @@ async function withSetupInferenceVerification<T>(
                 stagedOwnerPluginArtifacts,
                 deps,
               });
-              params.onVerifiedExecution?.(test.auth, binding);
+              params.onVerifiedExecution?.(binding);
             } catch (error) {
               return {
                 ok: false,

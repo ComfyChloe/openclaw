@@ -241,6 +241,9 @@ afterAll(async () => {
 beforeEach(() => {
   inMemoryAuthProfileStores = new Map();
   pluginMetadataSnapshot?.bindForConfig(materializedMainRuntimeConfig);
+  mocks.loadAgentRuntimePluginRegistryHandle
+    .mockReset()
+    .mockReturnValue(createEmptyPluginRegistry());
 });
 
 async function createMainAgentFixture() {
@@ -1687,9 +1690,6 @@ describe("activateSetupInference", () => {
 
   beforeEach(() => {
     mocks.appendAudit.mockReset();
-    mocks.loadAgentRuntimePluginRegistryHandle
-      .mockReset()
-      .mockReturnValue(createEmptyPluginRegistry());
     mocks.refreshPluginRegistryAfterConfigMutation.mockReset().mockResolvedValue(undefined);
   });
 
