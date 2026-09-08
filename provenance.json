@@ -1,0 +1,402 @@
+{
+  "pr": "openclaw/openclaw#141896",
+  "head": "d57b7966d6ba3776099d25ad4ac1dbb6b4173150",
+  "base": "fdd6acecfe91af913e044736e54ddc4cf0dfc908",
+  "trees": {
+    "before": "efcc2866e2818713154434dcc96ec000da145555",
+    "after": "43c780c7a96a5de47166799e1887340f6bf91594"
+  },
+  "settings": {
+    "route": "/chat",
+    "viewport": {
+      "width": 1180,
+      "height": 800
+    },
+    "theme": "light",
+    "locale": "en-US",
+    "reducedMotion": "no-preference",
+    "fixedDate": "2026-07-05T10:00:00.000Z",
+    "chromium": "151.0.7922.34"
+  },
+  "rendering": "actual production-config UI bundle with deterministic E2E build metadata",
+  "gateway": "controlled in-page mocked Gateway; no live GitHub metadata",
+  "scenarioSha256": "4c08156790a15f5b7f93d9fddb7b91e8324d0eef138747ca386555ce428e13df",
+  "scenario": {
+    "deferredMethods": [
+      "controlUi.githubPreview"
+    ],
+    "methodResponses": {
+      "controlUi.githubPreview": {
+        "cases": [
+          {
+            "match": {
+              "kind": "pull",
+              "number": 99816
+            },
+            "response": {
+              "kind": "pull",
+              "owner": "openclaw",
+              "repo": "openclaw",
+              "number": 99816,
+              "state": "open",
+              "draft": false,
+              "login": "octocat",
+              "title": "Preview evidence: coordinated GitHub hover",
+              "createdAt": "2026-07-04T08:00:00Z",
+              "updatedAt": "2026-07-05T09:00:00Z",
+              "additions": 101,
+              "deletions": 12,
+              "changedFiles": 3,
+              "comments": 2
+            }
+          },
+          {
+            "match": {
+              "kind": "pull",
+              "number": 99817
+            },
+            "response": {
+              "kind": "pull",
+              "owner": "openclaw",
+              "repo": "openclaw",
+              "number": 99817,
+              "state": "open",
+              "draft": false,
+              "login": "octocat",
+              "title": "Preview evidence: coordinated GitHub hover",
+              "createdAt": "2026-07-04T08:00:00Z",
+              "updatedAt": "2026-07-05T09:00:00Z",
+              "additions": 101,
+              "deletions": 12,
+              "changedFiles": 3,
+              "comments": 2
+            }
+          },
+          {
+            "match": {
+              "kind": "pull",
+              "number": 99818
+            },
+            "response": {
+              "kind": "pull",
+              "owner": "openclaw",
+              "repo": "openclaw",
+              "number": 99818,
+              "state": "open",
+              "draft": false,
+              "login": "octocat",
+              "title": "Preview evidence: coordinated GitHub hover",
+              "createdAt": "2026-07-04T08:00:00Z",
+              "updatedAt": "2026-07-05T09:00:00Z",
+              "additions": 101,
+              "deletions": 12,
+              "changedFiles": 3,
+              "comments": 2
+            }
+          }
+        ]
+      }
+    },
+    "historyMessages": [
+      {
+        "role": "assistant",
+        "timestamp": 1783245600000,
+        "content": [
+          {
+            "type": "text",
+            "text": "Preview evidence: review https://github.com/openclaw/openclaw/pull/99816, then https://github.com/openclaw/openclaw/pull/99817, and https://github.com/openclaw/openclaw/pull/99818."
+          }
+        ]
+      }
+    ]
+  },
+  "sourceUnchanged": {
+    "before": true,
+    "after": true
+  },
+  "inspection": {
+    "by": "RoboClaw parent review session (AI pixel inspection)",
+    "resolution": "All 14 full-resolution 1180x800 frames, including hash-equivalent replacements",
+    "result": "No visible private data, clipping, obscured target, or legibility defect; intended states and focus styling confirmed",
+    "limits": "Static frames show states, not motion or request timing. Recorded observations/assertions support timing, backoff, and intercepted navigation. Browser destination-status chrome is not captured or suppressed. Uninspected recordings are not published."
+  },
+  "navigation": {
+    "before": [
+      {
+        "action": "Tab through repo link and title, then Enter",
+        "expected": "https://github.com/openclaw/openclaw/pull/99816",
+        "observed": "https://github.com/openclaw/openclaw/pull/99816",
+        "destination": "intercepted synthetic page, not live GitHub",
+        "passed": true
+      }
+    ],
+    "after": [
+      {
+        "action": "Tab through repo link and title, then Enter",
+        "expected": "https://github.com/openclaw/openclaw/pull/99816",
+        "observed": "https://github.com/openclaw/openclaw/pull/99816",
+        "destination": "intercepted synthetic page, not live GitHub",
+        "passed": true
+      }
+    ]
+  },
+  "stages": {
+    "before": [
+      {
+        "file": "before-cold-title.png",
+        "note": "Lazy runtime response withheld; 800ms after pointer intent, before any preview RPC.",
+        "elapsedWallMs": 12992,
+        "sha256": "f2a11bedb4a22ba0d9275b590d4b98096b5ed2437ea260766c455dfe21be80e4",
+        "width": 1180,
+        "height": 800,
+        "observed": {
+          "cardCount": 0,
+          "loading": null,
+          "cardText": null,
+          "titleTooltipOpenCount": 1,
+          "activeElement": "BODY",
+          "activeClass": null,
+          "activeHref": null
+        },
+        "sourceFrame": "01-cold-title.png"
+      },
+      {
+        "file": "before-initial-pending.png",
+        "note": "First metadata response withheld for at least 800ms; no prior displayed success.",
+        "elapsedWallMs": 14554,
+        "sha256": "692f0503b02bae78de58b6cfda1a3fde3d3b2d177569c3bf3d48aa578b907ad6",
+        "width": 1180,
+        "height": 800,
+        "observed": {
+          "cardCount": 1,
+          "loading": "true",
+          "cardText": "",
+          "titleTooltipOpenCount": 0,
+          "activeElement": "BODY",
+          "activeClass": null,
+          "activeHref": null
+        },
+        "sourceFrame": "02-initial-pending.png"
+      },
+      {
+        "file": "before-success-hover.png",
+        "note": "First successful metadata response; actual preview shown for pointer hover.",
+        "elapsedWallMs": 15315,
+        "sha256": "224bf8aeac72f07156d3e494cf19a01c0d3265218339fae26ae167f602621de6",
+        "width": 1180,
+        "height": 800,
+        "observed": {
+          "cardCount": 1,
+          "loading": "false",
+          "cardText": "Open\n        openclaw/openclaw #99816\n        1h ago\n      \n      Preview evidence: coordinated GitHub hover\n      \n        octocat\n        \n                +101\n                −12",
+          "titleTooltipOpenCount": 0,
+          "activeElement": "BODY",
+          "activeClass": null,
+          "activeHref": null
+        },
+        "sourceFrame": "03-success-hover.png"
+      },
+      {
+        "file": "before-success-focus.png",
+        "note": "Keyboard focus traversed the real card repo link and title using two Tab presses.",
+        "elapsedWallMs": 16311,
+        "sha256": "6e9dda0a99f67c2ee7873df5cbf58ee87cd415e4076ebaa14985ee4ef46e8910",
+        "width": 1180,
+        "height": 800,
+        "observed": {
+          "cardCount": 1,
+          "loading": "false",
+          "cardText": "Open\n        openclaw/openclaw #99816\n        1h ago\n      \n      Preview evidence: coordinated GitHub hover\n      \n        octocat\n        \n                +101\n                −12",
+          "titleTooltipOpenCount": 0,
+          "activeElement": "A",
+          "activeClass": "github-link-hovercard__title",
+          "activeHref": "https://github.com/openclaw/openclaw/pull/99816"
+        },
+        "sourceFrame": "04-success-focus.png"
+      },
+      {
+        "file": "before-later-loading.png",
+        "note": "An uncached second link after one successful displayed preview; response remains withheld.",
+        "elapsedWallMs": 18190,
+        "sha256": "c119afb3149669ab78d7695940f404ff85c4d4e36e4e506677abaf5fd4371593",
+        "width": 1180,
+        "height": 800,
+        "observed": {
+          "cardCount": 1,
+          "loading": "true",
+          "cardText": "",
+          "titleTooltipOpenCount": 0,
+          "activeElement": "A",
+          "activeClass": "markdown-bare-url markdown-github-link markdown-github-item",
+          "activeHref": "https://github.com/openclaw/openclaw/pull/99816"
+        },
+        "sourceFrame": "05-later-loading.png"
+      },
+      {
+        "file": "before-failure-dismissal.png",
+        "note": "Second request rejected using controlled fixture error.",
+        "elapsedWallMs": 19241,
+        "sha256": "49f5a344859eb7c477cae5b068d47fbb1099767a198f5d22512d59f3af7a00af",
+        "width": 1180,
+        "height": 800,
+        "observed": {
+          "cardCount": 1,
+          "loading": "false",
+          "cardText": "GitHub preview unavailable\n      Fixture: metadata unavailable",
+          "titleTooltipOpenCount": 0,
+          "activeElement": "A",
+          "activeClass": "markdown-bare-url markdown-github-link markdown-github-item",
+          "activeHref": "https://github.com/openclaw/openclaw/pull/99816"
+        },
+        "sourceFrame": "06-failure-dismissal.png"
+      },
+      {
+        "file": "before-failure-dismissal.png",
+        "note": "Rehover within the failure backoff; no additional preview RPC.",
+        "elapsedWallMs": 20721,
+        "sha256": "49f5a344859eb7c477cae5b068d47fbb1099767a198f5d22512d59f3af7a00af",
+        "width": 1180,
+        "height": 800,
+        "observed": {
+          "cardCount": 1,
+          "loading": "false",
+          "cardText": "GitHub preview unavailable\n      Fixture: metadata unavailable",
+          "titleTooltipOpenCount": 0,
+          "activeElement": "A",
+          "activeClass": "markdown-bare-url markdown-github-link markdown-github-item",
+          "activeHref": "https://github.com/openclaw/openclaw/pull/99816"
+        },
+        "sourceFrame": "07-cached-failure.png"
+      }
+    ],
+    "after": [
+      {
+        "file": "after-cold-title.png",
+        "note": "Lazy runtime response withheld; 800ms after pointer intent, before any preview RPC.",
+        "elapsedWallMs": 11154,
+        "sha256": "c0862faf533b9239655c27e18c6496fdfbb9f953a683711abcb58ec01b8dd739",
+        "width": 1180,
+        "height": 800,
+        "observed": {
+          "cardCount": 0,
+          "loading": null,
+          "cardText": null,
+          "titleTooltipOpenCount": 0,
+          "activeElement": "BODY",
+          "activeClass": null,
+          "activeHref": null
+        },
+        "sourceFrame": "01-cold-title.png"
+      },
+      {
+        "file": "after-cold-title.png",
+        "note": "First metadata response withheld for at least 800ms; no prior displayed success.",
+        "elapsedWallMs": 12701,
+        "sha256": "c0862faf533b9239655c27e18c6496fdfbb9f953a683711abcb58ec01b8dd739",
+        "width": 1180,
+        "height": 800,
+        "observed": {
+          "cardCount": 0,
+          "loading": null,
+          "cardText": null,
+          "titleTooltipOpenCount": 0,
+          "activeElement": "BODY",
+          "activeClass": null,
+          "activeHref": null
+        },
+        "sourceFrame": "02-initial-pending.png"
+      },
+      {
+        "file": "before-success-hover.png",
+        "note": "First successful metadata response; actual preview shown for pointer hover.",
+        "elapsedWallMs": 13441,
+        "sha256": "224bf8aeac72f07156d3e494cf19a01c0d3265218339fae26ae167f602621de6",
+        "width": 1180,
+        "height": 800,
+        "observed": {
+          "cardCount": 1,
+          "loading": "false",
+          "cardText": "Open\n        openclaw/openclaw #99816\n        1h ago\n      \n      Preview evidence: coordinated GitHub hover\n      \n        octocat\n        \n                +101\n                −12",
+          "titleTooltipOpenCount": 0,
+          "activeElement": "BODY",
+          "activeClass": null,
+          "activeHref": null
+        },
+        "sourceFrame": "03-success-hover.png"
+      },
+      {
+        "file": "before-success-focus.png",
+        "note": "Keyboard focus traversed the real card repo link and title using two Tab presses.",
+        "elapsedWallMs": 14414,
+        "sha256": "6e9dda0a99f67c2ee7873df5cbf58ee87cd415e4076ebaa14985ee4ef46e8910",
+        "width": 1180,
+        "height": 800,
+        "observed": {
+          "cardCount": 1,
+          "loading": "false",
+          "cardText": "Open\n        openclaw/openclaw #99816\n        1h ago\n      \n      Preview evidence: coordinated GitHub hover\n      \n        octocat\n        \n                +101\n                −12",
+          "titleTooltipOpenCount": 0,
+          "activeElement": "A",
+          "activeClass": "github-link-hovercard__title",
+          "activeHref": "https://github.com/openclaw/openclaw/pull/99816"
+        },
+        "sourceFrame": "04-success-focus.png"
+      },
+      {
+        "file": "after-later-loading.png",
+        "note": "An uncached second link after one successful displayed preview; response remains withheld.",
+        "elapsedWallMs": 16289,
+        "sha256": "96027738d51bf36613c67bbf744236dfda3dee3b03a5adaff0085f71c203a655",
+        "width": 1180,
+        "height": 800,
+        "observed": {
+          "cardCount": 1,
+          "loading": "true",
+          "cardText": "",
+          "titleTooltipOpenCount": 0,
+          "activeElement": "A",
+          "activeClass": "markdown-bare-url markdown-github-link markdown-github-item",
+          "activeHref": "https://github.com/openclaw/openclaw/pull/99816"
+        },
+        "sourceFrame": "05-later-loading.png"
+      },
+      {
+        "file": "after-failure-dismissal.png",
+        "note": "Second request rejected using controlled fixture error.",
+        "elapsedWallMs": 17337,
+        "sha256": "0914a1b12151f16fd03b7b72730ccf51afdcf51babbd3e1d0e3d06c4b27f0796",
+        "width": 1180,
+        "height": 800,
+        "observed": {
+          "cardCount": 0,
+          "loading": null,
+          "cardText": null,
+          "titleTooltipOpenCount": 0,
+          "activeElement": "A",
+          "activeClass": "markdown-bare-url markdown-github-link markdown-github-item",
+          "activeHref": "https://github.com/openclaw/openclaw/pull/99816"
+        },
+        "sourceFrame": "06-failure-dismissal.png"
+      },
+      {
+        "file": "after-failure-dismissal.png",
+        "note": "Rehover within the failure backoff; no additional preview RPC.",
+        "elapsedWallMs": 18823,
+        "sha256": "0914a1b12151f16fd03b7b72730ccf51afdcf51babbd3e1d0e3d06c4b27f0796",
+        "width": 1180,
+        "height": 800,
+        "observed": {
+          "cardCount": 0,
+          "loading": null,
+          "cardText": null,
+          "titleTooltipOpenCount": 0,
+          "activeElement": "A",
+          "activeClass": "markdown-bare-url markdown-github-link markdown-github-item",
+          "activeHref": "https://github.com/openclaw/openclaw/pull/99816"
+        },
+        "sourceFrame": "07-cached-failure.png"
+      }
+    ]
+  },
+  "uniquePngs": 9
+}
