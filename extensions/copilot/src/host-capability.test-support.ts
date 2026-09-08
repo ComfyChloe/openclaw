@@ -9,7 +9,7 @@ type TranscriptCapableTestHostCapabilities = TestHostCapabilities &
     >;
   }>;
 
-/** Published v2026.9.2 host shape, before provider transcript commit was promoted. */
+/** Exact published v2026.9.2 host shape before either newer capability shipped. */
 export function createCopilotStableHostCapabilitiesV2026_9_2(): TestHostCapabilities {
   return Object.freeze({
     kind: "agent-harness-host-capability",
@@ -22,7 +22,7 @@ export function createCopilotStableHostCapabilitiesV2026_9_2(): TestHostCapabili
   });
 }
 
-/** Minimal host authority for tests that do not exercise host policy or approvals. */
+/** Minimal modern host authority for tests that do not exercise host policy or approvals. */
 export function createCopilotTestHostCapabilities(): TranscriptCapableTestHostCapabilities {
   const commitProviderTranscriptPrefix: NonNullable<
     TestHostCapabilities["commitProviderTranscriptPrefix"]
@@ -32,12 +32,12 @@ export function createCopilotTestHostCapabilities(): TranscriptCapableTestHostCa
   });
   return Object.freeze({
     ...createCopilotStableHostCapabilitiesV2026_9_2(),
-    createToolSurface: (options) => createOpenClawCodingTools(options),
     commitProviderTranscriptPrefix,
+    createToolSurface: (options) => createOpenClawCodingTools(options),
   });
 }
 
-/** Transcript-capable host before the optional host tool constructor is available. */
+/** Constructor-less test host that retains every other modern capability. */
 export function createCopilotConstructorlessTestHostCapabilities(): TranscriptCapableTestHostCapabilities {
   const { createToolSurface: _createToolSurface, ...hostCapabilities } =
     createCopilotTestHostCapabilities();

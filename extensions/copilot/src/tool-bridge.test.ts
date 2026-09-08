@@ -177,7 +177,7 @@ describe("createCopilotToolBridge", () => {
     expect(createOpenClawCodingTools).not.toHaveBeenCalled();
   });
 
-  it("routes modern construction through the host-owned tool surface", async () => {
+  it("routes production construction through the host-owned tool surface", async () => {
     const sourceTool = makeTool();
     const createToolSurface = vi.fn(() => [sourceTool]);
     const bindToolSurface = vi.fn((tools: AnyAgentTool[]) => tools);
@@ -194,7 +194,15 @@ describe("createCopilotToolBridge", () => {
     });
 
     expect(hostCapabilities.createToolSurface).toBeTypeOf("function");
-    expect(hostCapabilities.commitProviderTranscriptPrefix).toBeTypeOf("function");
+    await expect(
+      hostCapabilities.commitProviderTranscriptPrefix({
+        assertCurrent: () => {},
+        entries: [],
+      }),
+    ).resolves.toEqual({
+      kind: "rejected",
+      reason: "test host transcript commit is not configured",
+    });
     expect(createToolSurface).toHaveBeenCalledTimes(1);
     expect(createToolSurface).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -205,6 +213,29 @@ describe("createCopilotToolBridge", () => {
     );
     expect(bindToolSurface).not.toHaveBeenCalled();
     expect(bridge.sourceTools).toEqual([sourceTool]);
+    expect(bridge.sourceTools.some((tool) => tool.name === "send_current_reply")).toBe(false);
+  });
+
+  it("keeps ordinary tools on the published host without minting reply authority", async () => {
+    const bindToolSurface = vi.fn((tools: AnyAgentTool[]) => tools);
+    const hostCapabilities = createCopilotStableHostCapabilitiesV2026_9_2();
+    const bridge = await createCopilotToolBridge({
+      attemptParams: {
+        config: { tools: { codeMode: false, toolSearch: false } },
+        hostCapabilities: {
+          ...hostCapabilities,
+          bindToolSurface,
+        },
+        toolsAllow: ["read"],
+      },
+    });
+
+    expect(hostCapabilities.createToolSurface).toBeUndefined();
+    expect(Reflect.get(hostCapabilities, "commitProviderTranscriptPrefix")).toBeUndefined();
+    expect(bridge.sourceTools.map((tool) => tool.name)).toEqual(["read"]);
+    expect(bridge.sourceTools.some((tool) => tool.name === "send_current_reply")).toBe(false);
+    expect(bindToolSurface).toHaveBeenCalledOnce();
+    expect(bindToolSurface.mock.calls[0]).toHaveLength(2);
   });
 
   it("binds every tool surface and retained source/SDK tools fail after capability closure", async () => {
@@ -619,10 +650,12 @@ describe("createCopilotToolBridge", () => {
       makeTool({ name: "fake_hidden" }),
       makeTool({ name: "read" }),
     ]);
+    const hostCapabilities = createCopilotConstructorlessTestHostCapabilities();
 
     const result = await createCopilotToolBridge({
       attemptParams: {
         config: { tools: { codeMode: true } },
+        hostCapabilities,
         runId: "run-code-mode",
         sessionKey: "agent:agent-1:main",
       } as never,
@@ -636,18 +669,13 @@ describe("createCopilotToolBridge", () => {
         toolSearchCatalogExecutor: expect.any(Function),
       }),
     );
+    expect(hostCapabilities.createToolSurface).toBeUndefined();
+    expect(hostCapabilities.commitProviderTranscriptPrefix).toBeTypeOf("function");
     expect(result.codeModeEngaged).toBe(true);
     expect(result.sourceTools.map((tool) => tool.name)).toEqual(["exec", "wait"]);
-    expect(result.promptToolPolicy.apply().tools.map((tool) => tool.name)).toEqual([
-      "exec",
-      "wait",
-    ]);
-    expect(result.promptToolPolicy.apply().callableToolNames).toEqual([
-      "exec",
-      "wait",
-      "fake_hidden",
-      "read",
-    ]);
+    const finalProjection = result.promptToolPolicy.apply();
+    expect(finalProjection.tools.map((tool) => tool.name)).toEqual(["exec", "wait"]);
+    expect(finalProjection.callableToolNames).toEqual(["exec", "wait", "fake_hidden", "read"]);
   });
 
   it("rejects Code Mode on a stable v2026.9.2 host after final surface filtering", async () => {
