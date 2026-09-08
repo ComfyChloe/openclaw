@@ -249,6 +249,12 @@ Operator clients may advertise optional capabilities in `connect.params.caps`:
 
 - `tool-events`: accepts structured tool lifecycle events.
 - `inline-widgets`: can render hosted inline widget tool results.
+- `talk-client-metadata`: accepts `authMethod`, `controlSource`, and
+  `transcriptOwner` in WebRTC `talk.client.create` responses. Without this
+  capability, the Gateway omits these fields for released generated-protocol
+  decoders that reject unknown keys. This does not select authentication or
+  transfer control: `gateway-control-v1` remains a separate request capability.
+  Clients must still accept absent metadata when connected to older Gateways.
 
 Client capabilities describe the connected client, not authorization. Agent tools may declare required capabilities; the Gateway omits those tools unless every requirement appears in the originating client's `caps`. Channel-originated runs have no Gateway client capabilities, so capability-gated tools are unavailable even when tool policy explicitly allows them.
 

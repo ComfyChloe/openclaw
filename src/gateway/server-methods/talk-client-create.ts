@@ -4,6 +4,10 @@ import {
   normalizeOptionalString,
 } from "@openclaw/normalization-core/string-coerce";
 import {
+  GATEWAY_CLIENT_CAPS,
+  hasGatewayClientCap,
+} from "../../../packages/gateway-protocol/src/client-info.js";
+import {
   ErrorCodes,
   errorShape,
   validateTalkClientCreateParams,
@@ -402,14 +406,26 @@ export const createTalkClient: GatewayRequestHandler = async ({
             });
           }
           gatewayControlOwner?.activate();
+          const supportsMetadata = hasGatewayClientCap(
+            client?.connect?.caps,
+            GATEWAY_CLIENT_CAPS.TALK_CLIENT_METADATA,
+          );
+          const clientSession = {
+            ...projectInternalRealtimeVoicePublicConfig({
+              provider: resolution.provider,
+              providerConfig: resolution.providerConfig,
+              config: session,
+            }),
+          };
+          // v2026.9.3 generated clients reject new keys. Project only the reply;
+          // the provider session and control owner retain their authoritative facts.
+          if (clientSession.transport === "webrtc" && !supportsMetadata) {
+            delete clientSession.authMethod;
+          }
           respond(
             true,
             {
-              ...projectInternalRealtimeVoicePublicConfig({
-                provider: resolution.provider,
-                providerConfig: resolution.providerConfig,
-                config: session,
-              }),
+              ...clientSession,
               voiceSessionId,
               ...(clientControl ? { clientControl } : {}),
             },

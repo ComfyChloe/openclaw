@@ -4,7 +4,10 @@
 
 import { expectDefined } from "@openclaw/normalization-core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ErrorCodes } from "../../../packages/gateway-protocol/src/index.js";
+import {
+  ErrorCodes,
+  validateTalkClientCreateResult,
+} from "../../../packages/gateway-protocol/src/index.js";
 import { createDeferred } from "../../../test/helpers/promise.js";
 import { createColdOpenAIRealtimeCatalogFixture } from "../../../test/helpers/talk-cold-openai-catalog.js";
 import type { OpenClawConfig } from "../../config/config.js";
@@ -3688,6 +3691,62 @@ describe("talk.client.create handler", () => {
     expect(createInput).not.toHaveProperty("tools");
     expectRespondOk(respond, { provider: "openai", transport: "webrtc" });
   });
+
+  it.each(
+    (["oauth", "api-key"] as const).flatMap((authMethod) =>
+      [false, true].map((metadata) => ({ authMethod, metadata })),
+    ),
+  )(
+    "projects authentication metadata only for opted-in clients (auth=$authMethod, metadata=$metadata)",
+    async ({ authMethod, metadata }) => {
+      const model = "gpt-realtime-2.1";
+      const browserSession = Object.freeze({
+        provider: "openai",
+        transport: "webrtc" as const,
+        clientSecret: "test-offer-capability",
+        authMethod,
+        model,
+      });
+      const createBrowserSession = vi.fn(async () => browserSession);
+      mocks.resolveConfiguredRealtimeVoiceProvider.mockReturnValue({
+        provider: { id: "openai", label: "OpenAI", isConfigured: () => true, createBrowserSession },
+        providerConfig: { model },
+      });
+      mocks.resolveRealtimeVoiceProviderCapabilities.mockReturnValueOnce({
+        transports: ["webrtc"],
+        supportsToolCalls: true,
+      });
+      const respond = vi.fn();
+      await callTalkHandler("talk.client.create", {
+        params: { sessionKey: "main", capabilities: ["voice-transcript"] },
+        client: {
+          connId: "conn-1",
+          connect: {
+            scopes: ["operator.write"],
+            ...(metadata ? { caps: ["talk-client-metadata"] } : {}),
+          },
+        },
+        respond,
+        context: {
+          getRuntimeConfig: () =>
+            ({ talk: { realtime: { provider: "openai", model } } }) as OpenClawConfig,
+          logGateway: { warn: vi.fn() },
+        },
+      });
+      const result = expectRespondOk(respond, { authMethod: metadata ? authMethod : undefined });
+      expect(validateTalkClientCreateResult(result)).toBe(true);
+      // The capability's fixed contract accepts all three fields; A produces only authMethod.
+      expect(result).not.toHaveProperty("controlSource");
+      expect(result).not.toHaveProperty("transcriptOwner");
+      if (!metadata) {
+        // v2026.9.3 (1391f7cd2d40) TalkClientCreateResultWebrtc rejects unknown keys.
+        expect(Object.keys(result as Record<string, unknown>).toSorted()).toEqual(
+          ["provider", "transport", "clientSecret", "model", "voiceSessionId"].toSorted(),
+        );
+      }
+      expect(browserSession.authMethod).toBe(authMethod);
+    },
+  );
 
   it("returns a Gateway-owned descriptor only after a supported reservation succeeds", async () => {
     mocks.createOrResumeClientVoiceSession.mockReturnValueOnce("voice-gateway");
