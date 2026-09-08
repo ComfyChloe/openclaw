@@ -52,29 +52,8 @@ async function resolveSpawnModelSelection(params: {
 }): Promise<Result<ModelRef, string>> {
   const { runtime, targetAgentId, modelInput } = params;
   const cfg = runtime.config;
-  const normalization = {
-    manifestPlugins: runtime.metadataSnapshot,
-    resolvedModelCatalog: runtime.modelCatalog.entries,
-  };
-  let defaults = resolveDefaultModelForAgent({ cfg, agentId: targetAgentId, ...normalization });
   let catalog = runtime.modelCatalog.entries;
   if (params.request.model?.trim() || params.request.outputSchema) {
-    // Live capability proof remains scoped, and the retained generation owns its normalization.
-    const discoveryRef = resolveModelRefFromString({
-      cfg,
-      agentId: targetAgentId,
-      raw: modelInput,
-      defaultProvider: defaults.provider,
-      aliasIndex: buildModelAliasIndex({
-        cfg,
-        agentId: targetAgentId,
-        defaultProvider: defaults.provider,
-        ...normalization,
-        allowPluginNormalization: false,
-      }),
-      ...normalization,
-      allowPluginNormalization: false,
-    });
     try {
       catalog = await getSubagentSpawnDeps().loadPreparedModelCatalog({
         config: cfg,
@@ -82,21 +61,19 @@ async function resolveSpawnModelSelection(params: {
         agentDir: runtime.agentDir,
         workspaceDir: params.workspaceDir,
         readOnly: true,
-        providerDiscoveryProviderIds: [discoveryRef?.ref.provider ?? defaults.provider],
-        scopedLiveProviderDiscovery: true,
       });
     } catch (error) {
       return err(
         `sessions_spawn could not verify the selected model: ${summarizeSpawnError(error)}`,
       );
     }
-    defaults = resolveDefaultModelForAgent({
-      cfg,
-      agentId: targetAgentId,
-      manifestPlugins: runtime.metadataSnapshot,
-      resolvedModelCatalog: catalog,
-    });
   }
+  const defaults = resolveDefaultModelForAgent({
+    cfg,
+    agentId: targetAgentId,
+    manifestPlugins: runtime.metadataSnapshot,
+    resolvedModelCatalog: catalog,
+  });
   const selection = {
     cfg,
     catalog,

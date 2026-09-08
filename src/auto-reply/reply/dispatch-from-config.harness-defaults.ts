@@ -7,7 +7,7 @@ import {
   resolveModelRefFromString,
   type ModelAliasIndex,
 } from "../../agents/model-selection.js";
-import { getAvailablePreparedModelCatalogSnapshot } from "../../agents/prepared-model-catalog.js";
+import { getPreparedModelCatalogSnapshot } from "../../agents/prepared-model-catalog.js";
 import { resolveSessionRuntimeOverrideForProvider } from "../../agents/session-runtime-compat.js";
 import { resolveChannelModelOverride } from "../../channels/model-overrides.js";
 import type { SessionEntry } from "../../config/sessions/types.js";
@@ -250,7 +250,7 @@ function resolveHarnessSourceVisibleRepliesDefault(params: {
     return undefined;
   }
   try {
-    const catalog = getAvailablePreparedModelCatalogSnapshot({
+    const catalog = getPreparedModelCatalogSnapshot({
       config: params.cfg,
       agentId: params.sessionAgentId,
     })?.entries;

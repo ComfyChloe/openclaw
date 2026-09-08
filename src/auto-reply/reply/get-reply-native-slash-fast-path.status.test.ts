@@ -66,7 +66,7 @@ describe("native /status channel model routing", () => {
     resetPluginRuntimeStateForTest();
     setActivePluginRegistry(createSessionConversationTestRegistry());
     vi.spyOn(preparedModelCatalog, "loadPreparedModelCatalog").mockResolvedValue([]);
-    vi.spyOn(preparedModelCatalog, "getAvailablePreparedModelCatalogSnapshot").mockReturnValue({
+    vi.spyOn(preparedModelCatalog, "getPreparedModelCatalogSnapshot").mockReturnValue({
       entries: [
         {
           id: "gpt-5.5",

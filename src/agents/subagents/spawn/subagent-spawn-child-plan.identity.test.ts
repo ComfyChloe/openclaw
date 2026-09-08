@@ -237,7 +237,7 @@ describe("spawn prepared model ownership", () => {
   });
 
   it.each([false, true])(
-    "keeps explicit/outputSchema=%s live proof inside the selected generation",
+    "keeps explicit/outputSchema=%s published catalog reads inside the selected generation",
     async (outputSchema) => {
       const cfg = config("provider-b/runtime-alias");
       const registry = state.registry;
@@ -245,9 +245,10 @@ describe("spawn prepared model ownership", () => {
         expect(getPluginRuntimeGenerationRegistry()).toBe(registry);
         expect(input).toMatchObject({
           config: cfg,
-          providerDiscoveryProviderIds: ["provider-b"],
-          scopedLiveProviderDiscovery: true,
+          readOnly: true,
         });
+        expect(input).not.toHaveProperty("providerDiscoveryProviderIds");
+        expect(input).not.toHaveProperty("scopedLiveProviderDiscovery");
         await Promise.resolve();
         state.registry = createEmptyPluginRegistry();
         expect(getPluginRuntimeGenerationRegistry()).toBe(registry);

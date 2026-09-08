@@ -59,9 +59,8 @@ export async function resolveDirectStatusReplyForSessionCore(
   const agentEntry = listAgentEntries(statusCfg).find(
     (entry) => entry.id?.trim().toLowerCase() === statusAgentId,
   );
-  const { getAvailablePreparedModelCatalogSnapshot } =
-    await import("../agents/prepared-model-catalog.js");
-  const preparedModelCatalog = getAvailablePreparedModelCatalogSnapshot({
+  const { getPreparedModelCatalogSnapshot } = await import("../agents/prepared-model-catalog.js");
+  const preparedModelCatalog = getPreparedModelCatalogSnapshot({
     config: statusCfg,
     agentId: statusAgentId,
   });

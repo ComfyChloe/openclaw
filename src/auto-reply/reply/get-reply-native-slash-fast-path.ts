@@ -4,7 +4,7 @@ import type { QueueMode } from "../../../packages/gateway-protocol/src/schema/lo
 import type { ModelCatalogSnapshot } from "../../agents/model-catalog.types.js";
 import { resolveModelRefFromString, type ModelAliasIndex } from "../../agents/model-selection.js";
 import { resolveThinkingDefaultCore } from "../../agents/model-thinking-default-core.js";
-import { getAvailablePreparedModelCatalogSnapshot } from "../../agents/prepared-model-catalog.js";
+import { getPreparedModelCatalogSnapshot } from "../../agents/prepared-model-catalog.js";
 import { resolveChannelModelOverride } from "../../channels/model-overrides.js";
 import type { OpenClawConfig } from "../../config/config.js";
 import { isModelSelectionLocked } from "../../sessions/model-overrides.js";
@@ -180,7 +180,7 @@ export async function maybeResolveNativeSlashCommandFastReply(params: {
     const thinkingCatalog =
       (
         params.preparedModelCatalog ??
-        getAvailablePreparedModelCatalogSnapshot({
+        getPreparedModelCatalogSnapshot({
           config: params.cfg,
           agentId: params.agentId,
           agentDir: params.agentDir,

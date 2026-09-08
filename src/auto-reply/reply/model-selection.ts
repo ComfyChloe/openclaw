@@ -13,7 +13,6 @@ import type { ModelCatalogSnapshot } from "../../agents/model-catalog.types.js";
 import type { ModelFallbackRouteResolution } from "../../agents/model-fallback.types.js";
 import {
   type ModelAliasIndex,
-  buildConfiguredModelCatalog,
   modelKey,
   normalizeProviderId,
   resolveReasoningDefault,
@@ -151,12 +150,12 @@ export async function createModelSelectionState(params: {
     ).loadPreparedModelCatalogSnapshot({
       config: cfg,
       ...(params.agentId ? { agentId: params.agentId } : {}),
+      readOnly: true,
     }));
   const runtimeModelNormalization = {
     ...resolveRuntimeNormalization(cfg, params.preparedModelCatalog?.entries),
     allowPluginNormalization: params.allowPluginNormalization ?? true,
   };
-  const { manifestPlugins } = runtimeModelNormalization;
 
   let provider = params.provider;
   let model = params.model;
@@ -185,7 +184,7 @@ export async function createModelSelectionState(params: {
     model: defaultModel,
   });
   const configuredModelCatalog = mergePreparedConfiguredCatalog({
-    configured: buildConfiguredModelCatalog({ cfg, manifestPlugins }),
+    configured: [...visibilityPolicy.configuredCatalog],
     prepared: params.preparedModelCatalog?.entries,
   });
   const needsModelCatalog =
@@ -452,21 +451,6 @@ export async function createModelSelectionState(params: {
     }
   }
 
-  let manifestModelCatalog: ModelCatalog | null = null;
-  const buildThinkingCatalog = (catalog: ModelCatalog): ModelCatalog =>
-    resolveVisibility(catalog).allowedCatalog;
-  const loadManifestCatalog = async () => {
-    if (manifestModelCatalog) {
-      return manifestModelCatalog;
-    }
-    const { loadManifestModelCatalog } = await modelCatalogRuntimeLoader.load();
-    manifestModelCatalog = loadManifestModelCatalog({
-      config: cfg,
-      fallbackToMetadataScan: false,
-    });
-    logStage("manifest-catalog-loaded", `entries=${manifestModelCatalog.length}`);
-    return manifestModelCatalog;
-  };
   const thinkingCatalogs = new Map<string, ModelCatalog>();
   const resolveThinkingCatalog = async (
     selection: ThinkingDefaultSelection = { provider, model },
@@ -477,27 +461,18 @@ export async function createModelSelectionState(params: {
       return cached.length > 0 ? cached : undefined;
     }
     let catalog = allowedModelCatalog;
-    const hasReasoning = (entries: ModelCatalog) =>
-      findModelInCatalog(entries, selection.provider, selection.model)?.reasoning !== undefined;
-    if (!hasReasoning(catalog)) {
-      const manifestCatalog = buildThinkingCatalog(await loadManifestCatalog());
-      if (hasReasoning(manifestCatalog)) {
-        catalog = manifestCatalog;
-      } else {
-        // Capability reads stay scoped to the actual selection, including a model
-        // chosen after this state was prepared. Never discover every provider here.
-        const { loadProviderScopedThinkingCatalog } = await modelCatalogRuntimeLoader.load();
-        const scopedCatalog = buildThinkingCatalog(
-          await loadProviderScopedThinkingCatalog({
-            config: cfg,
-            agentId: params.agentId,
-            provider: selection.provider,
-            model: selection.model,
-          }),
-        );
-        if (findModelInCatalog(scopedCatalog, selection.provider, selection.model)) {
-          catalog = scopedCatalog;
-        }
+    if (findModelInCatalog(catalog, selection.provider, selection.model)?.reasoning === undefined) {
+      const { loadProviderScopedThinkingCatalog } = await modelCatalogRuntimeLoader.load();
+      const preparedCatalog = resolveVisibility(
+        await loadProviderScopedThinkingCatalog({
+          config: cfg,
+          agentId: params.agentId,
+          provider: selection.provider,
+          model: selection.model,
+        }),
+      ).allowedCatalog;
+      if (findModelInCatalog(preparedCatalog, selection.provider, selection.model)) {
+        catalog = preparedCatalog;
       }
     }
     thinkingCatalogs.set(key, catalog);

@@ -2999,6 +2999,23 @@ docker_e2e_docker_run_cmd run demo
     expect(script).not.toContain('"$HOME/.openclaw/agents/main/agent/auth-profiles.json"');
   });
 
+  it("keeps frozen typed onboarding assertions with their config producer", () => {
+    const runner = readFileSync("scripts/e2e/release-typed-onboarding-docker.sh", "utf8");
+
+    expect(runner).toContain(
+      'scripts/e2e/lib/release-scenarios/assertions.mjs \\\n  "$ROOT_DIR/scripts/e2e/lib/release-scenarios/assertions.mjs"',
+    );
+    expect(runner).toContain(
+      'scripts/e2e/lib/fixtures/mock-openai-config.mjs \\\n  "$ROOT_DIR/scripts/e2e/lib/fixtures/mock-openai-config.mjs"',
+    );
+    expect(runner).toContain(
+      '-v "$ONBOARD_ASSERTIONS:/app/scripts/e2e/lib/release-scenarios/assertions.mjs:ro"',
+    );
+    expect(runner).toContain(
+      '-v "$ONBOARD_MOCK_OPENAI_CONFIG:/app/scripts/e2e/lib/fixtures/mock-openai-config.mjs:ro"',
+    );
+  });
+
   it("prints channel-add failures through the shared E2E logger", () => {
     const script = readFileSync(NPM_ONBOARD_CHANNEL_AGENT_DOCKER_E2E_PATH, "utf8");
     expect(script).toContain(
@@ -5939,7 +5956,10 @@ grep -Fxq preserved "$TMPDIR/caller-fd"
     expectTextToIncludeAll(upgradeRunner, [
       "scripts/e2e/lib/upgrade-survivor",
       'UPGRADE_RUNNER="$UPGRADE_SCENARIO_DIR/run.sh"',
-      '-v "$UPGRADE_SCENARIO_DIR:/app/scripts/e2e/lib/upgrade-survivor:ro"',
+      'cp -R "$UPGRADE_SCENARIO_DIR/." "$UPGRADE_SCENARIO_STAGE/"',
+      'cp "$UPGRADE_DIAGNOSTICS" "$UPGRADE_SCENARIO_STAGE/diagnostics.mjs"',
+      '-v "$UPGRADE_SCENARIO_STAGE:/app/scripts/e2e/lib/upgrade-survivor:ro"',
+      '-v "$UPGRADE_NPM_REGISTRY_SERVER:/app/scripts/e2e/lib/plugins/npm-registry-server.mjs:ro"',
       '-v "$UPGRADE_NPM_PUBLISH_PLAN:/app/scripts/lib/npm-publish-plan.mjs:ro"',
       'DOCKER_E2E_WINDOWS_HELPERS_PATH="$UPGRADE_WINDOWS_HELPERS"',
       '-v "$UPGRADE_BOUNDED_RESPONSE:/app/scripts/lib/bounded-response.mjs:ro"',

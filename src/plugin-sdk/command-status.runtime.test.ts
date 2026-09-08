@@ -5,7 +5,7 @@ import type { BuildStatusTextParams } from "../status/status-text.types.js";
 
 const mocks = vi.hoisted(() => ({
   loadSessionEntry: vi.fn(),
-  getAvailablePreparedModelCatalogSnapshot: vi.fn(),
+  getPreparedModelCatalogSnapshot: vi.fn(),
   persistReplySessionEntry: vi.fn(),
   patchSessionEntryCore: vi.fn(),
   loadPreparedModelCatalogSnapshot: vi.fn(),
@@ -19,7 +19,7 @@ vi.mock("../gateway/session-utils.js", () => ({
   loadGatewaySessionEntryReadOnly: mocks.loadSessionEntry,
 }));
 vi.mock("../agents/prepared-model-catalog.js", () => ({
-  getAvailablePreparedModelCatalogSnapshot: mocks.getAvailablePreparedModelCatalogSnapshot,
+  getPreparedModelCatalogSnapshot: mocks.getPreparedModelCatalogSnapshot,
 }));
 vi.mock("../agents/model-catalog.runtime.js", () => ({
   loadManifestModelCatalog: () => [],
@@ -92,7 +92,7 @@ beforeEach(() => {
     store,
     storePath: "/tmp/passive-status-fixture/sessions.json",
   }));
-  mocks.getAvailablePreparedModelCatalogSnapshot.mockReturnValue({
+  mocks.getPreparedModelCatalogSnapshot.mockReturnValue({
     entries: catalog,
     routeVariants: catalog,
   });
@@ -267,7 +267,7 @@ it.each([
         ? [{ provider: "status-provider", id: "tiny", name: "Tiny", reasoning: false }]
         : []),
     ];
-    mocks.getAvailablePreparedModelCatalogSnapshot.mockReturnValue({
+    mocks.getPreparedModelCatalogSnapshot.mockReturnValue({
       entries,
       routeVariants: entries,
     });
@@ -285,7 +285,7 @@ it.each([
 it("keeps an unknown recorded identity and cold capability reads passive", async () => {
   entry.modelProvider = "status-provider";
   entry.model = "namespace/unknown";
-  mocks.getAvailablePreparedModelCatalogSnapshot.mockReturnValue(undefined);
+  mocks.getPreparedModelCatalogSnapshot.mockReturnValue(undefined);
   const before = structuredClone({ entry, store });
   const result = await readStatus();
   expect(JSON.parse(result!.text!)).toMatchObject({
@@ -309,7 +309,7 @@ it.each([false, true])(
       params: { thinking: "high" },
     };
     if (!prepared) {
-      mocks.getAvailablePreparedModelCatalogSnapshot.mockReturnValue(undefined);
+      mocks.getPreparedModelCatalogSnapshot.mockReturnValue(undefined);
     }
     const result = await readStatus();
     expect(JSON.parse(result!.text!)).toMatchObject({
