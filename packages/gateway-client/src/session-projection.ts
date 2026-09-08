@@ -2,8 +2,13 @@
 
 import { asNullableRecord as readRecord } from "@openclaw/normalization-core/record-coerce";
 import {
+  hasSessionProjectionAcceptedFinal,
+  hasUniqueSnapshotTerminalMatch,
+  readSessionProjectionFinalMessageIdentity,
+} from "./session-projection-final-identity.js";
+import {
+  hasDisplayableSessionMessage,
   isSessionProjectionErrorMessage,
-  readSessionMessageDisplayContent,
 } from "./session-projection-message-content.js";
 import {
   normalizeSessionProjectionRunId,
@@ -13,6 +18,11 @@ import {
   type SessionMessageEnvelope,
   type SessionMessageIdentity,
 } from "./session-projection-message-identity.js";
+import { retainSessionProjectionRuns } from "./session-projection-run-retention.js";
+export {
+  hasSessionProjectionAcceptedFinal,
+  readSessionProjectionFinalMessageIdentity,
+} from "./session-projection-final-identity.js";
 export {
   reduceSessionProjectionRunEvent,
   type SessionProjectionGatewayRunEvent,
@@ -79,8 +89,6 @@ export type SessionProjectionState = {
   hasTransportGap: boolean;
 };
 
-const MAX_TRACKED_SESSION_RUNS = 200;
-const RETAINED_SESSION_RUNS = 150;
 const MAX_ACCEPTED_FINAL_MESSAGES_PER_RUN = 32;
 const SESSION_PROJECTION_SCOPE_KEYS = [
   "sessionKey",
@@ -441,10 +449,16 @@ export function reconcileSessionProjectionSnapshot(
   }
   let entries = createProjectionEntries(visibleMessages);
   for (const current of state.entries) {
+    const matches = entries.filter((entry) => entryMatches(entry, current, true));
     if (
       (!current.live && !current.pending) ||
       options.shouldIncludeMessage?.(current.message) === false ||
-      entries.filter((entry) => entryMatches(entry, current, true)).length === 1
+      matches.length === 1 ||
+      hasUniqueSnapshotTerminalMatch(
+        current,
+        matches,
+        current.identity?.runId ? state.runs[current.identity.runId] : undefined,
+      )
     ) {
       continue;
     }
@@ -455,76 +469,6 @@ export function reconcileSessionProjectionSnapshot(
     scope: { ...state.scope, ...scope },
     hasTransportGap: false,
   };
-}
-
-function hasDisplayableSessionMessage(message: unknown): boolean {
-  const { text, hasNonText } = readSessionMessageDisplayContent(message);
-  return Boolean(text) || hasNonText;
-}
-
-export function readSessionProjectionFinalMessageIdentity(message: unknown): string | null {
-  const display = readSessionMessageDisplayContent(message);
-  if (!display.text && !display.hasNonText) {
-    return null;
-  }
-  const identity = readSessionMessageIdentity(message);
-  if (identity?.externalSource) {
-    return `import:${identity.role}:${identity.externalSource}`;
-  }
-  if (identity?.id && !identity.isImported) {
-    return `id:${identity.role}:${identity.id}`;
-  }
-  if (identity?.sequence !== null && identity?.sequence !== undefined) {
-    return `seq:${identity.role}:${identity.sequence}`;
-  }
-  const record = readRecord(message);
-  const metadata = readRecord(record?.["__openclaw"]);
-  try {
-    return `content:${JSON.stringify([
-      identity?.role ?? "assistant",
-      typeof message === "string" ? message : (record?.content ?? null),
-      metadata?.media ?? null,
-      identity?.isImported
-        ? [
-            metadata?.importedFrom ?? null,
-            metadata?.cliSessionId ?? null,
-            metadata?.externalId ?? null,
-          ]
-        : null,
-      ...(display.usesFallbackText ? [record?.text] : []),
-    ])}`;
-  } catch {
-    return null;
-  }
-}
-
-/** Replayed finals are recognized against this run's bounded canonical terminal history. */
-export function hasSessionProjectionAcceptedFinal(
-  run: SessionProjectionRun | undefined,
-  message: unknown,
-): boolean {
-  const identity = readSessionProjectionFinalMessageIdentity(message);
-  return Boolean(
-    identity &&
-    run &&
-    (run.acceptedFinalMessageIdentities?.includes(identity) ||
-      readSessionProjectionFinalMessageIdentity(run.message) === identity),
-  );
-}
-
-function retainSessionProjectionRuns(
-  runs: Readonly<Record<string, SessionProjectionRun>>,
-): Readonly<Record<string, SessionProjectionRun>> {
-  const entries = Object.entries(runs);
-  if (entries.length <= MAX_TRACKED_SESSION_RUNS) {
-    return runs;
-  }
-  const active = entries.filter(([, run]) => run.status === "streaming");
-  const terminal = entries.filter(([, run]) => run.status !== "streaming");
-  const terminalLimit = Math.max(0, RETAINED_SESSION_RUNS - active.length);
-  const retainedTerminal = terminalLimit > 0 ? terminal.slice(-terminalLimit) : [];
-  // Live streams are never expendable; completed runs are retained by completion order.
-  return Object.fromEntries([...active, ...retainedTerminal]);
 }
 
 function updateRun(
