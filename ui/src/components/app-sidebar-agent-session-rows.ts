@@ -1,4 +1,6 @@
+import type { SessionCatalog } from "../../../packages/gateway-protocol/src/index.ts";
 import type { GatewaySessionRow, SessionsListResult } from "../api/types.ts";
+import type { ApplicationContext } from "../app/context.ts";
 import { filterVisibleSessionRows, sessionMatchesArchivedFilter } from "../lib/sessions/index.ts";
 import {
   areUiSessionKeysEquivalent,
@@ -16,24 +18,26 @@ import {
   someSidebarSessionInTree,
   type SidebarSessionNavigationState,
 } from "./app-sidebar-session-navigation-logic.ts";
-import type { AppSidebarSessionNavigationElement } from "./app-sidebar-session-navigation.ts";
 import { projectSessionTree } from "./app-sidebar-session-tree.ts";
 import type {
   SidebarKnownSessionAttention,
   SidebarRecentSession,
+  SidebarSessionStatusFilter,
 } from "./app-sidebar-session-types.ts";
+import type { SessionDataController } from "./session-data-controller.ts";
 
-type AgentSessionRowsHost = Pick<
-  AppSidebarSessionNavigationElement,
-  | "sessionDataContext"
-  | "sessionData"
-  | "visibleSessionCatalogs"
-  | "selectedAgentMainSessionKey"
-  | "sessionsShowCron"
-  | "sessionsShowSystem"
-  | "sessionsStatusFilter"
-  | "sessionInvolvingMeFilterActive"
->;
+type AgentSessionRowsHost = {
+  readonly sessionDataContext:
+    | Pick<ApplicationContext, "agents" | "gateway" | "sessions">
+    | undefined;
+  readonly sessionData: SessionDataController;
+  visibleSessionCatalogs(): readonly SessionCatalog[];
+  selectedAgentMainSessionKey(agentId: string): string;
+  readonly sessionsShowCron: boolean;
+  readonly sessionsShowSystem: boolean;
+  readonly sessionsStatusFilter: SidebarSessionStatusFilter;
+  readonly sessionInvolvingMeFilterActive: boolean;
+};
 
 /** Project either sidebar scope through one sorted session forest. */
 export function projectSidebarAgentSessionRows({
