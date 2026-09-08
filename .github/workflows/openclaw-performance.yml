@@ -651,7 +651,7 @@ jobs:
             then
               effective_status=0
               {
-                echo "Kova returned a non-zero release-gate verdict, but the trusted report adapter found only filtered coverage, profiling-affected resource thresholds, or a Kova-owned inconclusive CPU interval whose lower bound passed."
+                echo "Kova returned a non-zero release-gate verdict, but the trusted report adapter found only filtered coverage or profiling-affected resource thresholds with no baseline regression."
                 echo
               } >> "$GITHUB_STEP_SUMMARY"
             fi
