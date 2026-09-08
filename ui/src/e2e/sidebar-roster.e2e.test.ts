@@ -68,13 +68,36 @@ suite.define(() => {
             ],
           ),
         } satisfies SessionsListResult;
+        const jobs = ["main", "forge"].map((agentId) => ({
+          id: `${agentId}-daily`,
+          agentId,
+          configRevision: `${agentId}-revision`,
+          name: `${agentId === "main" ? "Harbor" : "Forge"} daily review`,
+          enabled: true,
+          createdAtMs: now,
+          updatedAtMs: now,
+          schedule: { kind: "cron", expr: "0 9 * * *" },
+          sessionTarget: "main",
+          wakeMode: "next-heartbeat",
+          payload: { kind: "systemEvent", text: "Review the sample project." },
+          state: { nextRunAtMs: now + 86_400_000 },
+        }));
+        const jobList = (agentId?: string) => ({
+          jobs: jobs.filter((job) => !agentId || job.agentId === agentId),
+          snapshotRevision: "team-jobs",
+          total: agentId ? 1 : 2,
+          offset: 0,
+          limit: 50,
+          hasMore: false,
+          nextOffset: null,
+        });
         await page.addInitScript(() => {
           localStorage.setItem(
             "openclaw:control-ui:community-invite",
             JSON.stringify({ dismissedAtMs: Date.now() }),
           );
         });
-        await installMockGateway(page, {
+        const gateway = await installMockGateway(page, {
           sessions: sessions.sessions,
           methodResponses: {
             "agents.list": agentsList,
@@ -97,6 +120,15 @@ suite.define(() => {
               thinkingLevel: null,
             },
             "sessions.list": sessions,
+            "cron.list": {
+              cases: [
+                ...["main", "forge"].map((agentId) => ({
+                  match: { agentId },
+                  response: jobList(agentId),
+                })),
+                { match: {}, response: jobList() },
+              ],
+            },
           },
         });
         await page.goto(`${suite.server.baseUrl}chat`);
@@ -106,6 +138,7 @@ suite.define(() => {
         const sessionRows = sidebar.locator(".sidebar-recent-session");
         await expect.poll(() => chip.isVisible()).toBe(true);
         await expect.poll(() => sessionRows.count()).toBe(2);
+        expect(await sidebar.getByRole("link", { name: "Home", exact: true }).count()).toBe(1);
         expect(await sidebar.locator('[data-session-key="agent:forge:notes"]').count()).toBe(0);
         await captureSidebarUiProof(suite, page, "sidebar-roster-before.png");
         await chip.click();
@@ -119,6 +152,7 @@ suite.define(() => {
           )
           .toEqual(["forge", "main", "scout", "bloom"]);
         await expect.poll(() => sessionRows.count()).toBe(8);
+        expect(await sidebar.getByRole("link", { name: "Home", exact: true }).count()).toBe(0);
         expect(await chip.isVisible()).toBe(true);
         for (const agent of agentsList.agents) {
           const group = sidebar.locator(`[data-agent-group="${agent.id}"]`);
@@ -131,9 +165,9 @@ suite.define(() => {
               .getByRole("link", { name: "New session", exact: true })
               .getAttribute("href"),
           ).toBe(`/new?agent=${agent.id}`);
-          expect(
-            await group.getByRole("link", { name: "Open chat", exact: true }).getAttribute("href"),
-          ).toBe(`/chat/${agent.id}`);
+          expect(await group.locator(".sidebar-agent-roster__row").getAttribute("href")).toBe(
+            `/chat/${agent.id}`,
+          );
         }
         expect(
           await sidebar
@@ -144,6 +178,30 @@ suite.define(() => {
           "Working: Preparing the sample dashboard.",
         );
         await captureSidebarUiProof(suite, page, "sidebar-roster-after.png");
+
+        await sidebar.locator(".sidebar-brand__new-thread").click();
+        const newMenu = sidebar.locator(".sidebar-brand .sidebar-new-session-menu");
+        await expect.poll(() => newMenu.locator("wa-dropdown-item").first().isVisible()).toBe(true);
+        expect(
+          await newMenu
+            .locator("wa-dropdown-item a")
+            .evaluateAll((links) => links.map((link) => link.getAttribute("href"))),
+        ).toEqual(["forge", "main", "scout", "bloom"].map((id) => `/new?agent=${id}`));
+        await newMenu.locator('wa-dropdown-item[value="scout"]').click();
+        await waitForControlUiRoute(page, { routeId: "new-session", pathname: "/new" });
+        expect(new URL(page.url()).searchParams.get("agent")).toBe("scout");
+        await sidebar.locator('[data-agent-id="forge"]').click();
+        await waitForControlUiRoute(page, { routeId: "chat", pathname: "/chat/forge" });
+        await sidebar.getByRole("link", { name: "Automations", exact: true }).click();
+        await waitForControlUiRoute(page, { routeId: "cron" });
+        await expect.poll(() => page.locator(".cron-table__row").count()).toBe(2);
+        expect(
+          await page.locator(".cron-table__row openclaw-agent-row-chip").allTextContents(),
+        ).toEqual([expect.stringContaining("Harbor"), expect.stringContaining("Forge")]);
+        expect((await gateway.getRequests("cron.list")).at(-1)?.params).not.toHaveProperty(
+          "agentId",
+        );
+        await captureSidebarUiProof(suite, page, "sidebar-team-automations.png");
 
         await sidebar
           .locator('[data-session-key="agent:forge:notes"] .sidebar-recent-session__link')
@@ -171,12 +229,15 @@ suite.define(() => {
         await sidebar.locator('.sidebar-session-sort-menu [value="owner:"]').click();
         await expect.poll(() => sessionRows.count()).toBe(8);
 
-        await sidebar.locator('[data-agent-id="bloom"]').click();
+        await sidebar.locator('[data-agent-collapse="bloom"]').click();
         await expect.poll(() => sessionRows.count()).toBe(6);
+        expect(new URL(page.url()).pathname).toBe("/chat/forge/notes");
         await page.reload();
         await expect.poll(() => headers.count()).toBe(4);
         await expect
-          .poll(() => sidebar.locator('[data-agent-id="bloom"]').getAttribute("aria-expanded"))
+          .poll(() =>
+            sidebar.locator('[data-agent-collapse="bloom"]').getAttribute("aria-expanded"),
+          )
           .toBe("false");
         await expect.poll(() => sessionRows.count()).toBe(6);
         expect(await chip.isVisible()).toBe(true);
@@ -186,6 +247,7 @@ suite.define(() => {
         await chip.click();
         await sidebar.locator('wa-dropdown-item[value="command:sidebar-agents"]').click();
         await expect.poll(() => headers.count()).toBe(0);
+        expect(await sidebar.getByRole("link", { name: "Home", exact: true }).count()).toBe(1);
         expect(await chip.isVisible()).toBe(true);
       },
     );

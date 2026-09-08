@@ -110,7 +110,9 @@ openclaw-sidebar-agent-roster {
 
 .sidebar-agent-roster__action {
   padding: 4px;
+  border: 0;
   border-radius: var(--radius-sm);
+  background: transparent;
 }
 
 .sidebar-agent-roster__action:hover {
@@ -126,4 +128,8 @@ openclaw-sidebar-agent-roster {
 
 .sidebar-agent-roster__group > .sidebar-recent-sessions__group {
   padding-left: 12px;
+}
+
+.sidebar-new-session-menu::part(menu) {
+  min-width: 180px;
 }

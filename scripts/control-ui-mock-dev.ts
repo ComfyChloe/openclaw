@@ -2034,7 +2034,10 @@ async function createChatPickerScenario(
   const modelProviders = buildModelProviderMocks(Date.now());
   const skillWorkshop = buildSkillWorkshopMocks(Date.now());
   const richAttention = fixture === "approval";
-  const cronMocks = buildCronMocks(Date.now(), { richAttention });
+  const cronMocks = buildCronMocks(Date.now(), {
+    richAttention,
+    ...(fixture === "sidebar-roster" ? { secondAgentId: "forge" } : {}),
+  });
   const updateFixtureNow = Date.now();
   const updateFixture = buildUpdateFixture(fixture, updateFixtureNow);
   const updateSchedule = updateFixture?.schedule ?? null;
@@ -3275,9 +3278,50 @@ async function createChatPickerScenario(
     workspaceGit: true,
   };
   if (fixture === "sidebar-roster") {
+    const teamTasks = backgroundTasks.methodResponses["tasks.list"].tasks
+      .slice(0, 2)
+      .map((task, index) => {
+        const agent = expectDefined(rosterAgents[index], "team task agent");
+        return Object.assign({}, task, {
+          agentId: agent.id,
+          title: agent.sessionLabels[0],
+          sessionKey: `agent:${agent.id}:main`,
+          ownerKey: `agent:${agent.id}:main`,
+          childSessionKey: `agent:${agent.id}:sample-1`,
+        });
+      });
     scenario.methodResponses = {
       ...scenario.methodResponses,
       "sessions.catalog.list": { catalogs: [] },
+      "tasks.list": {
+        cases: [
+          ...rosterAgents.map(({ id }) => ({
+            match: { agentId: id },
+            response: { tasks: teamTasks.filter((task) => task.agentId === id) },
+          })),
+          { response: { tasks: teamTasks } },
+        ],
+      },
+      "tasks.get": {
+        cases: teamTasks.map((task) => ({
+          match: { taskId: task.id },
+          response: { task },
+        })),
+      },
+      "cron.list": {
+        cases: [
+          ...rosterAgents.flatMap(({ id }) =>
+            cronMocks["cron.list"].cases.map((entry) => {
+              const jobs = entry.response.jobs.filter((job) => job.agentId === id);
+              return {
+                match: { ...entry.match, agentId: id },
+                response: { ...entry.response, jobs, total: jobs.length },
+              };
+            }),
+          ),
+          ...cronMocks["cron.list"].cases,
+        ],
+      },
     };
     scenario.sessions = rosterSessions;
     scenario.repeatingSessionEvents = { events: [] };

@@ -37,6 +37,7 @@ type RenderableSessionSection = SidebarSessionSection<SidebarRecentSession> & {
 };
 
 type SidebarSessionListHost = SessionListHost & {
+  readonly sidebarAgentsMode: "chip" | "roster";
   loadMoreSidebarSessions(): Promise<void>;
 };
 
@@ -588,14 +589,18 @@ function renderSessionListToolbar(host: SidebarSessionListHost, extra: unknown =
         ${icons.listFilter}
       </button>
       ${extra}
-      ${renderNewSessionLink({
-        basePath: host.basePath,
-        agentId: host.expandedAgentId(),
-        className: "sidebar-session-toolbar__button sidebar-new-session",
-        label: t("chat.runControls.newSession"),
-        disabledReason: newSessionAccess.allowed ? undefined : newSessionAccess.reason,
-        onOpen: (agentId, target) => host.requestOpenNewSession(agentId, target),
-      })}
+      ${
+        host.sidebarAgentsMode === "roster"
+          ? nothing
+          : renderNewSessionLink({
+              basePath: host.basePath,
+              agentId: host.expandedAgentId(),
+              className: "sidebar-session-toolbar__button sidebar-new-session",
+              label: t("chat.runControls.newSession"),
+              disabledReason: newSessionAccess.allowed ? undefined : newSessionAccess.reason,
+              onOpen: (agentId, target) => host.requestOpenNewSession(agentId, target),
+            })
+      }
     </div>
   `;
 }

@@ -184,13 +184,11 @@ class AppSidebar extends AppSidebarSessionNavigationElement implements SessionLi
       }
     },
   );
-  private rosterRenderer:
-    | typeof import("./sidebar-agent-roster.ts").renderSidebarAgentRoster
-    | null = null;
+  private rosterRenderer: typeof import("./sidebar-agent-roster.ts") | null = null;
   private readonly rosterRendererImport = createIdleImport(
     () => import("./sidebar-agent-roster.ts"),
     (module) => {
-      this.rosterRenderer = module.renderSidebarAgentRoster;
+      this.rosterRenderer = module;
       this.requestUpdate();
     },
   );
@@ -553,7 +551,10 @@ class AppSidebar extends AppSidebarSessionNavigationElement implements SessionLi
         void this.rosterRendererImport.load().catch(() => undefined);
         return nothing;
       }
-      return this.rosterRenderer(this, this.projectedSessionSections.sections);
+      return this.rosterRenderer.renderSidebarAgentRoster(
+        this,
+        this.projectedSessionSections.sections,
+      );
     }
     const navigationState = this.getSessionNavigationState();
     const visibleSessions = this.selectedAgentSessionRows(navigationState);
@@ -617,7 +618,15 @@ class AppSidebar extends AppSidebarSessionNavigationElement implements SessionLi
         }}
       >
         <div class="sidebar-shell" @mousedown=${beginNativeWindowDragFromTopInset}>
-          ${renderAppSidebarBrand(this)}
+          ${renderAppSidebarBrand(
+            this,
+            this.sidebarAgentsMode === "roster"
+              ? this.rosterRenderer?.renderSidebarNewSessionMenu(
+                  this,
+                  "sidebar-brand__icon sidebar-brand__header-control sidebar-brand__new-thread",
+                )
+              : nothing,
+          )}
           <div class="sidebar-shell__content">
             <div
               class="sidebar-shell__body sidebar-shell__body--scroll-${

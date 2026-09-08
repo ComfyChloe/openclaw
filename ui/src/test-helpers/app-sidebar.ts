@@ -11,6 +11,7 @@ import type { AgentsListResult, SessionsListResult } from "../api/types.ts";
 import type { NavigationRouteId } from "../app-navigation.ts";
 import type { RouteId } from "../app-route-paths.ts";
 import { createAgentSelectionCapability } from "../app/agent-selection.ts";
+import { createApplicationTheme } from "../app/bootstrap-theme.ts";
 import { createApplicationConfigCapability } from "../app/config.ts";
 import type {
   ApplicationContext,
@@ -19,6 +20,7 @@ import type {
 } from "../app/context.ts";
 import type { ExecApprovalRequest } from "../app/exec-approval.ts";
 import type { ApplicationOverlays } from "../app/overlays-types.ts";
+import { loadSettings } from "../app/settings.ts";
 import type { SessionDataController } from "../components/session-data-controller.ts";
 import type { SessionOrganizerController } from "../components/session-organizer-controller.ts";
 import type { AgentIdentityCapability } from "../lib/agents/identity.ts";
@@ -48,6 +50,7 @@ const sidebarSessionGatewayBindings = new WeakMap<
   SessionCapability,
   (gateway: ApplicationGateway, selection: ApplicationContext["agentSelection"]) => void
 >();
+const sidebarContextCleanups = new Set<() => void>();
 
 export type SidebarLifecycleState = HTMLElement & {
   basePath: string;
@@ -546,9 +549,16 @@ export function createContext(
     ensureList: async (): Promise<AgentsListResult | null> => agents.state.agentsList,
     subscribe: () => () => undefined,
   };
-  const agentSelection = createAgentSelectionCapability(gateway, agents, {
-    load: () => selectedAgentId,
-    save: () => undefined,
+  const theme = createApplicationTheme(loadSettings(gateway.connection.gatewayUrl), gateway);
+  const agentSelection = createAgentSelectionCapability(
+    gateway,
+    agents,
+    { load: () => selectedAgentId, save: () => undefined },
+    theme,
+  );
+  sidebarContextCleanups.add(() => {
+    agentSelection.dispose();
+    theme.dispose();
   });
   sidebarSessionGatewayBindings.get(sessions)?.(gateway, agentSelection);
   return {
@@ -565,6 +575,7 @@ export function createContext(
     agents,
     agentIdentity,
     agentSelection,
+    theme,
     scopeUpgrade: hiddenScopeUpgradeCapability,
     overlays: {
       snapshot: { approvalQueue },
@@ -694,6 +705,10 @@ export function setupSidebarTest() {
     }
     await vi.dynamicImportSettled();
     document.body.replaceChildren();
+    for (const cleanup of sidebarContextCleanups) {
+      cleanup();
+    }
+    sidebarContextCleanups.clear();
     if (originalLocalStorage) {
       Object.defineProperty(globalThis, "localStorage", originalLocalStorage);
     } else {

@@ -9,6 +9,7 @@ import { rosterActivityStore } from "../lib/agents/roster-activity-store.ts";
 import { AgentRosterElement } from "../lib/agents/roster-element.ts";
 import { formatRelativeTimestamp } from "../lib/format.ts";
 import { shouldHandleNavigationClick } from "../lib/navigation-click.ts";
+import { newSessionSearch } from "../pages/new-session/location.ts";
 import type { AppSidebarRenderHost } from "./app-sidebar-render.ts";
 import { renderSessionListFrame, renderSessionSection } from "./app-sidebar-session-list-render.ts";
 import type { SidebarVisibleSections } from "./app-sidebar-session-projection.ts";
@@ -118,14 +119,28 @@ class SidebarAgentRoster extends AgentRosterElement {
                 <div class="sidebar-agent-roster__header">
                   <button
                     type="button"
-                    class="sidebar-agent-roster__row"
-                    data-agent-id=${card.id}
+                    class="sidebar-agent-roster__action sidebar-agent-roster__chevron"
+                    data-agent-collapse=${card.id}
+                    aria-label=${t(collapsed ? "agentsHome.expandAgent" : "agentsHome.collapseAgent", { agent: card.name })}
                     aria-expanded=${String(!collapsed)}
                     @click=${() => this.toggleAgent(card.id)}
                   >
                     <span class="sidebar-agent-roster__chevron" aria-hidden="true"
                       >${collapsed ? icons.chevronRight : icons.chevronDown}</span
                     >
+                  </button>
+                  <a
+                    class="sidebar-agent-roster__row"
+                    data-agent-id=${card.id}
+                    href=${card.target.href}
+                    title=${t("agentsHome.openChat")}
+                    @click=${(event: MouseEvent) => {
+                      if (shouldHandleNavigationClick(event)) {
+                        event.preventDefault();
+                        this.host.openMainSession(card.id);
+                      }
+                    }}
+                  >
                     <span class="sidebar-agent-roster__avatar" aria-hidden="true">
                       ${card.avatar ? html`<img src=${card.avatar} alt="" loading="lazy" />` : card.fallback}
                       <span
@@ -140,20 +155,7 @@ class SidebarAgentRoster extends AgentRosterElement {
                       ></span
                     >
                     ${unread > 0 ? html`<span class="sidebar-agent-roster__unread" aria-label=${t("sessionsView.unread")}>${unread}</span>` : nothing}
-                  </button>
-                  <a
-                    class="sidebar-agent-roster__action"
-                    href=${card.target.href}
-                    aria-label=${t("agentsHome.openChat")}
-                    title=${t("agentsHome.openChat")}
-                    @click=${(event: MouseEvent) => {
-                      if (shouldHandleNavigationClick(event)) {
-                        event.preventDefault();
-                        this.host.openMainSession(card.id);
-                      }
-                    }}
-                    >${icons.messageSquare}</a
-                  >
+                  </a>
                   ${renderNewSessionLink({
                     basePath: this.host.basePath,
                     agentId: card.id,
@@ -180,13 +182,91 @@ class SidebarAgentRoster extends AgentRosterElement {
             },
           )}
         </div>`,
-        seeAll,
+        html`${seeAll}${renderSidebarNewSessionMenu(this.host, "sidebar-session-toolbar__button sidebar-new-session")}`,
       );
     });
   }
 }
 
 customElements.define("openclaw-sidebar-agent-roster", SidebarAgentRoster);
+
+class SidebarNewSessionMenu extends AgentRosterElement {
+  @property({ attribute: false }) host!: RosterHost;
+  @property({ attribute: false }) triggerClass = "";
+
+  override render() {
+    return this.avatars.withActiveRoutes(() => {
+      const access = this.host.readNewSessionAccess();
+      const cards = this.cards();
+      return html`<wa-dropdown
+        class="sidebar-new-session-menu"
+        placement="bottom-end"
+        aria-label=${t("agentChip.agents")}
+        @wa-show=${() => this.host.dismissTransientMenus()}
+        @wa-select=${(event: CustomEvent<{ item: HTMLElement & { value?: string } }>) => {
+          const item = event.detail.item;
+          event.preventDefault();
+          if (item.dataset.nativeNavigation) {
+            delete item.dataset.nativeNavigation;
+            return;
+          }
+          const id = item.value;
+          if (access.allowed && id && cards.some((card) => card.id === id)) {
+            const dropdown = this.querySelector("wa-dropdown");
+            if (dropdown) {
+              dropdown.open = false;
+            }
+            this.host.requestOpenNewSession(id);
+          }
+        }}
+      >
+        <button
+          slot="trigger"
+          type="button"
+          class=${this.triggerClass}
+          aria-label=${t("chat.runControls.newSession")}
+          title=${access.allowed ? t("chat.runControls.newSession") : access.reason}
+          ?disabled=${!access.allowed || cards.length === 0}
+        >
+          ${icons.plus}
+        </button>
+        ${cards.map(
+          (card) => html`<wa-dropdown-item
+            value=${card.id}
+            @click=${(event: MouseEvent) => {
+              if (shouldHandleNavigationClick(event)) {
+                event.preventDefault();
+              } else if (event.currentTarget instanceof HTMLElement) {
+                event.currentTarget.dataset.nativeNavigation = "true";
+              }
+            }}
+            ><a
+              class="sidebar-agent-roster__link"
+              href=${`${pathForRoute("new-session", this.host.basePath)}${newSessionSearch(card.id)}`}
+              tabindex="-1"
+              ><span class="sidebar-agent-roster__avatar" aria-hidden="true">
+                ${card.avatar ? html`<img src=${card.avatar} alt="" loading="lazy" />` : card.fallback}
+                <span
+                  class="sidebar-agent-roster__status"
+                  data-working=${String(this.connected && card.activeNow)}
+                ></span> </span
+              ><span>${card.name}</span></a
+            >
+          </wa-dropdown-item>`,
+        )}
+      </wa-dropdown>`;
+    });
+  }
+}
+
+customElements.define("openclaw-sidebar-new-session-menu", SidebarNewSessionMenu);
+
+export function renderSidebarNewSessionMenu(host: RosterHost, triggerClass: string) {
+  return html`<openclaw-sidebar-new-session-menu
+    .host=${host}
+    .triggerClass=${triggerClass}
+  ></openclaw-sidebar-new-session-menu>`;
+}
 
 export function renderSidebarAgentRoster(
   host: RosterHost,

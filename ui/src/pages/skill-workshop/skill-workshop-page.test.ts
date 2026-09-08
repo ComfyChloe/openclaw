@@ -201,6 +201,11 @@ describe("SkillWorkshopPage lifecycle", () => {
     expect(body?.querySelector('img[src="https://example.org/diagram.png"]')).toBeNull();
     expect(body?.querySelector('a[href="https://example.org/diagram.png"]')).not.toBeNull();
     expect(body?.querySelector('script, [onerror], a[href^="javascript:"]')).toBeNull();
+    const agentChip = page.querySelector(".sw-row openclaw-agent-row-chip");
+    if (!(agentChip instanceof HTMLElement)) {
+      throw new Error("Proposal origin agent chip is missing");
+    }
+    await waitForSkillWorkshop(() => expect(agentChip.textContent).toContain("research"));
   });
 
   it("forces a fresh proposal load when the gateway source changes", async () => {

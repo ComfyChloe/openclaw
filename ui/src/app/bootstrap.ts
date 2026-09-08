@@ -248,6 +248,7 @@ export function bootstrapApplication(): ApplicationRuntime {
     throw error;
   });
   const agentIdentity = createAgentIdentityCapability(gateway);
+  const theme = createApplicationTheme(settings, gateway);
   const agentSelection = createAgentSelectionCapability(
     gateway,
     agents,
@@ -261,6 +262,7 @@ export function bootstrapApplication(): ApplicationRuntime {
           },
         }
       : undefined,
+    theme,
   );
   const channels = createChannelCapability(gateway);
   const scopeUpgrade = createScopeUpgradeCapability(gateway);
@@ -303,7 +305,6 @@ export function bootstrapApplication(): ApplicationRuntime {
     hasSidebarCollapseIntent &&
       sessionRefFromPath(applicationLocation.pathname, basePath)?.namespace === "chat",
   );
-  const theme = createApplicationTheme(settings, gateway);
   const nativeChatDrafts = createNativeChatDrafts();
   const nativeLinkRouting = startNativeLinkRouting({
     onNativeUpdateDeclined: () => {
@@ -652,6 +653,7 @@ export function bootstrapApplication(): ApplicationRuntime {
       stopPostConnect();
       connectionBootstrap.reset();
       agents.dispose();
+      agentSelection.dispose();
       channels.dispose();
       scopeUpgrade.dispose();
       sidebarAttention.dispose();

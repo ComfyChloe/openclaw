@@ -347,12 +347,13 @@ export class AppSidebarSessionNavigationElement extends AppSidebarBase {
     return this.sessionsStatusFilter;
   }
 
-  readonly selectSession = (sessionKey: string) => {
+  readonly selectSession = (sessionKey: string, mainAgentId?: string) => {
     const navigationState = this.getSessionNavigationState();
     const sessionResultsByAgent = this.sessionData.sessionResultsByAgent;
     const row = findProjectedSidebarSession({ sessionKey, navigationState, sessionResultsByAgent });
-    const face = resolveSessionPreferredFace(row);
-    const agentId = this.sessionNavigationAgentId(row ?? { key: sessionKey });
+    const mainChat = mainAgentId !== undefined && this.sidebarAgentsMode === "roster";
+    const face = mainChat ? "chat" : resolveSessionPreferredFace(row);
+    const agentId = mainAgentId ?? this.sessionNavigationAgentId(row ?? { key: sessionKey });
     const target = sessionNavigationTarget({
       face,
       sessionKey,
@@ -360,7 +361,7 @@ export class AppSidebarSessionNavigationElement extends AppSidebarBase {
       basePath: this.basePath,
       row,
       mainKey: this.sessionMainKey(),
-      preferenceDerivedFace: true,
+      preferenceDerivedFace: !mainChat,
       navigationKey: sessionKey,
     });
     runSessionNavigationIntent(this, {
@@ -529,7 +530,9 @@ export class AppSidebarSessionNavigationElement extends AppSidebarBase {
     }
     const nextAgentId = normalizeAgentId(agentId);
     if (nextAgentId === normalizeAgentId(this.expandedAgentId())) {
-      context.agentSelection.setScope(nextAgentId);
+      if (this.sidebarAgentsMode !== "roster") {
+        context.agentSelection.setScope(nextAgentId);
+      }
       return;
     }
     this.clearSessionSelection();
@@ -693,7 +696,8 @@ export class AppSidebarSessionNavigationElement extends AppSidebarBase {
       return;
     }
     this.clearSessionSelection();
-    this.selectSession(this.selectedAgentMainSessionKey(normalizeAgentId(agentId)));
+    const mainAgentId = normalizeAgentId(agentId);
+    this.selectSession(this.selectedAgentMainSessionKey(mainAgentId), mainAgentId);
   };
 
   isSessionChildrenExpanded(session: SidebarRecentSession): boolean {

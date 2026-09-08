@@ -91,7 +91,10 @@ function readSidebarNativeGateway(): SidebarNativeGateway | null {
   return snapshot.gateways.find((gateway) => gateway.id === snapshot.currentId) ?? null;
 }
 
-export function renderAppSidebarBrand(host: AppSidebarRenderHost) {
+export function renderAppSidebarBrand(
+  host: AppSidebarRenderHost,
+  teamNewSession: unknown = nothing,
+) {
   const {
     activeId: cardAgentId,
     agent: cardAgent,
@@ -170,14 +173,19 @@ export function renderAppSidebarBrand(host: AppSidebarRenderHost) {
             ${icons.search}
           </button>
         </openclaw-tooltip>
-        ${renderNewSessionLink({
-          basePath: host.basePath,
-          agentId: host.expandedAgentId(),
-          className: "sidebar-brand__icon sidebar-brand__header-control sidebar-brand__new-thread",
-          label: t("chat.runControls.newSession"),
-          disabledReason: newSessionAccess.allowed ? undefined : newSessionAccess.reason,
-          onOpen: (agentId, target) => host.requestOpenNewSession(agentId, target),
-        })}
+        ${
+          host.sidebarAgentsMode === "roster"
+            ? teamNewSession
+            : renderNewSessionLink({
+                basePath: host.basePath,
+                agentId: host.expandedAgentId(),
+                className:
+                  "sidebar-brand__icon sidebar-brand__header-control sidebar-brand__new-thread",
+                label: t("chat.runControls.newSession"),
+                disabledReason: newSessionAccess.allowed ? undefined : newSessionAccess.reason,
+                onOpen: (agentId, target) => host.requestOpenNewSession(agentId, target),
+              })
+        }
       </div>
     </div>
   `;
@@ -185,6 +193,9 @@ export function renderAppSidebarBrand(host: AppSidebarRenderHost) {
 
 /** Home: the first page. Opens the rolling main session on its saved face. */
 export function renderAppSidebarHomeRow(host: AppSidebarRenderHost) {
+  if (host.sidebarAgentsMode === "roster") {
+    return nothing;
+  }
   const agentId = host.expandedAgentId();
   const mainKey = host.selectedAgentMainSessionKey(agentId);
   const mainRow = host.mainSessionRow(agentId);

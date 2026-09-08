@@ -106,14 +106,20 @@ function getSummaryCards(container: HTMLElement): Array<{
 }
 
 describe("renderUsageInsights", () => {
-  it("renders overview hints as focusable tooltip anchors", () => {
+  it("renders overview hints as focusable tooltip anchors and identifies agents in the breakdown", async () => {
     const container = document.createElement("div");
     document.body.append(container);
 
     render(
       renderUsageInsights(
         totals,
-        aggregates,
+        {
+          ...aggregates,
+          byAgent: [
+            { agentId: "main", totals },
+            { agentId: "research", totals },
+          ],
+        },
         {
           durationSumMs: 0,
           durationCount: 0,
@@ -133,6 +139,14 @@ describe("renderUsageInsights", () => {
     const tooltips = [...container.querySelectorAll("openclaw-tooltip")];
     expect(buttons).toHaveLength(9);
     expect(tooltips).toHaveLength(9);
+    await Promise.all(
+      [...container.querySelectorAll("openclaw-agent-row-chip")].map((chip) => chip.updateComplete),
+    );
+    expect(
+      [...container.querySelectorAll(".usage-list-item .agent-row-chip__name")].map(
+        (chip) => chip.textContent,
+      ),
+    ).toEqual(["main", "research"]);
     expect(
       buttons.every(
         (button) =>
@@ -595,6 +609,22 @@ describe("renderSessionsCard", () => {
     );
     return container;
   };
+
+  it("identifies mixed-agent sessions even when optional metadata columns are hidden", async () => {
+    const container = renderCard([
+      { key: "agent:main:one", agentId: "main", usage: null },
+      { key: "agent:research:two", agentId: "research", usage: null },
+    ]);
+    document.body.append(container);
+    await Promise.all(
+      [...container.querySelectorAll("openclaw-agent-row-chip")].map((chip) => chip.updateComplete),
+    );
+    expect(
+      [...container.querySelectorAll(".session-bar-row .agent-row-chip__name")].map(
+        (chip) => chip.textContent,
+      ),
+    ).toEqual(["main", "research"]);
+  });
 
   it.each([
     { copied: true, feedback: "Copied!" },

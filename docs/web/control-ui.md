@@ -59,11 +59,25 @@ agent creation flow when available, or agent settings otherwise. `/agents` now
 opens the roster; agent configuration remains at `/settings/agents`.
 
 To browse sessions across agents, enable **Show all agents in the sidebar** in the
-agent switcher. This browser preference is off by default. Sessions appear under
-collapsible agent headers, with working agents first and then the most recently
-active. Each header shows activity and unread state, opens the agent's main chat,
-and offers **+** to start a session with that agent. Selecting a session switches
-the active agent; the chip above remains the context indicator and agent switcher.
+agent switcher. This enables **team mode**, a browser preference that is off by
+default. Sessions appear under collapsible agent headers, with working agents
+first and then the most recently active. **Home** disappears from Pages: click an agent header's avatar or name to
+open that agent's main chat. The separate collapse control only folds its sessions.
+The top **+** opens an agent menu with avatars, names, and working indicators in
+the same order as the groups; choosing an agent opens New session for that agent.
+Each group's **+** does this directly. Selecting a session switches the active
+agent; the chip above remains the context indicator and agent switcher. Turning
+team mode off restores the usual Home row and direct New session button.
+
+Enabling team mode also defaults the shared page scope to **All agents**, while
+remembering the previous scope to restore when you turn it off. You can still
+choose a narrower scope; navigating between pages does not reset that choice.
+Automations, Dashboards, Sessions, Tasks, and Usage support all-agent views, with
+agent identity shown on mixed-agent rows. Memory, Model providers, and Skill
+Workshop stay scoped to one agent. Open an agent's main chat from its group header
+to select that agent before visiting those pages; chat actions always belong to
+the conversation's agent.
+
 **See all** in the **Sessions** header opens `/agents`. See
 [Sidebar navigation](/web/control-ui/sessions-and-sidebar#sidebar-navigation) for
 group controls and filtering.
