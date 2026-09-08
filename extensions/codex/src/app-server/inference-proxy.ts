@@ -6,6 +6,7 @@ import { createNodeProxyAgent } from "openclaw/plugin-sdk/fetch-runtime";
 import { generateSecureToken } from "openclaw/plugin-sdk/secure-random-runtime";
 import {
   fetchWithSsrFGuard,
+  isBlockedHostnameOrIp,
   resolvePinnedHostnameWithPolicy,
 } from "openclaw/plugin-sdk/ssrf-runtime";
 import WebSocket, { WebSocketServer, type RawData } from "ws";
@@ -67,7 +68,11 @@ export async function createCodexInferenceProxy(params: {
   });
   const resolveTarget = (request: IncomingMessage) => {
     assertCurrent();
-    if (request.headers.origin || !request.url?.startsWith(pathPrefix + "/")) {
+    if (
+      request.headers.origin ||
+      !request.url?.startsWith(pathPrefix + "/") ||
+      isBlockedHostnameOrIp(upstream.hostname)
+    ) {
       throw new Error(FAILURE);
     }
     // Raw prefix comparison authenticates the private route; URL normalization never broadens it.
@@ -203,10 +208,13 @@ export async function createCodexInferenceProxy(params: {
         socket.once("close", close);
         socket.once("error", close);
         const signal = AbortSignal.any([lifetime.signal, controller.signal]);
-        const pinned = await resolvePinnedHostnameWithPolicy(target.hostname, { signal });
+        // Trusted proxies own destination DNS; direct connections retain DNS pinning.
+        proxyAgent = createNodeProxyAgent({ mode: "env", targetUrl: target.href });
+        const lookup = proxyAgent
+          ? undefined
+          : (await resolvePinnedHostnameWithPolicy(target.hostname, { signal })).lookup;
         assertCurrent();
         signal.throwIfAborted();
-        proxyAgent = createNodeProxyAgent({ mode: "env", targetUrl: target.href });
         target.protocol = "wss:";
         const headers = relayHeaders(req.headers);
         for (const key of Object.keys(headers)) {
@@ -216,7 +224,7 @@ export async function createCodexInferenceProxy(params: {
         }
         remote = new WebSocket(target, {
           headers,
-          ...(proxyAgent ? { agent: proxyAgent } : { lookup: pinned.lookup }),
+          ...(proxyAgent ? { agent: proxyAgent } : { lookup }),
           followRedirects: false,
           perMessageDeflate: false,
           maxPayload: MAX_BODY_BYTES,

@@ -8,19 +8,26 @@ import { createCodexInferenceProxy, type CodexInferenceProxy } from "./inference
 
 const transport = vi.hoisted(() => {
   const wsAgents: unknown[] = [];
-  return { fetch: vi.fn(), proxyAgent: vi.fn(), upstream: "", dials: [] as string[], wsAgents };
+  return {
+    fetch: vi.fn(),
+    proxyAgent: vi.fn(),
+    resolve: vi.fn(),
+    upstream: "",
+    dials: [] as string[],
+    wsAgents,
+  };
 });
 vi.mock("openclaw/plugin-sdk/fetch-runtime", () => ({
   createNodeProxyAgent: transport.proxyAgent,
 }));
-vi.mock("openclaw/plugin-sdk/ssrf-runtime", () => ({
-  fetchWithSsrFGuard: transport.fetch,
-  resolvePinnedHostnameWithPolicy: vi.fn(async () => ({
-    hostname: "api.openai.com",
-    addresses: ["127.0.0.1"],
-    lookup: undefined,
-  })),
-}));
+vi.mock("openclaw/plugin-sdk/ssrf-runtime", async (original) => {
+  const actual = await original<typeof import("openclaw/plugin-sdk/ssrf-runtime")>();
+  return {
+    fetchWithSsrFGuard: transport.fetch,
+    isBlockedHostnameOrIp: actual.isBlockedHostnameOrIp,
+    resolvePinnedHostnameWithPolicy: transport.resolve,
+  };
+});
 vi.mock("ws", async (original) => {
   const actual = await original<typeof import("ws")>();
   return {
@@ -43,6 +50,11 @@ const proxies: CodexInferenceProxy[] = [];
 beforeEach(() => {
   transport.fetch.mockReset();
   transport.proxyAgent.mockReset();
+  transport.resolve.mockReset().mockResolvedValue({
+    hostname: "api.openai.com",
+    addresses: ["127.0.0.1"],
+    lookup: undefined,
+  });
   transport.wsAgents.length = 0;
   transport.dials = [];
 });
@@ -196,12 +208,74 @@ describe("private inference HTTP relay", () => {
 });
 
 describe("private inference WebSocket relay", () => {
-  it.each([false, true])(
-    "preserves WS deltas, native replies and proxy routing (proxy=%s)",
-    async (proxied) => {
+  it.each(["unavailable", "private"] as const)(
+    "rejects %s destination DNS on a direct WebSocket route",
+    async (resolution) => {
+      if (resolution === "unavailable") {
+        transport.resolve.mockRejectedValue(new Error("synthetic DNS failure"));
+      } else {
+        const actual = await vi.importActual<typeof import("openclaw/plugin-sdk/ssrf-runtime")>(
+          "openclaw/plugin-sdk/ssrf-runtime",
+        );
+        transport.resolve.mockImplementation(
+          (hostname: string, options: { signal?: AbortSignal }) =>
+            actual.resolvePinnedHostnameWithPolicy(hostname, {
+              ...options,
+              lookupFn: async () => [{ address: "127.0.0.1", family: 4 }],
+            }),
+        );
+      }
+      const { proxy } = await fixture();
+      const socket = new WebSocket(proxy.baseUrl.replace("http:", "ws:") + "/responses");
+      try {
+        await once(socket, "error");
+        expect(transport.resolve).toHaveBeenCalledOnce();
+        expect(transport.proxyAgent).toHaveBeenCalledOnce();
+        expect(transport.dials).toEqual([]);
+      } finally {
+        socket.terminate();
+      }
+    },
+  );
+
+  it.each(["https://127.0.0.1/v1", "https://service.internal/v1"])(
+    "rejects blocked hostname %s before proxy or DNS work",
+    async (upstream) => {
+      const agent = new Agent();
+      transport.proxyAgent.mockReturnValue(agent);
+      const proxy = await createCodexInferenceProxy({
+        upstream: new URL(upstream),
+        assertCurrent: () => {},
+      });
+      proxies.push(proxy);
+      const socket = new WebSocket(proxy.baseUrl.replace("http:", "ws:") + "/responses");
+      try {
+        await once(socket, "error");
+        expect(transport.proxyAgent).not.toHaveBeenCalled();
+        expect(transport.resolve).not.toHaveBeenCalled();
+        expect(transport.dials).toEqual([]);
+      } finally {
+        socket.terminate();
+        agent.destroy();
+      }
+    },
+  );
+
+  it.each([
+    { proxied: false, localDnsUnavailable: false },
+    { proxied: true, localDnsUnavailable: false },
+    { proxied: true, localDnsUnavailable: true },
+  ])(
+    "preserves WS deltas and replies (proxy=$proxied, local DNS unavailable=$localDnsUnavailable)",
+    async ({ proxied, localDnsUnavailable }) => {
       const agent = new Agent();
       const destroy = vi.spyOn(agent, "destroy");
       transport.proxyAgent.mockReturnValue(proxied ? agent : undefined);
+      if (localDnsUnavailable) {
+        transport.resolve.mockRejectedValue(
+          Object.assign(new Error("synthetic local DNS unavailable"), { code: "ENOTFOUND" }),
+        );
+      }
       const server = createServer();
       const wss = new WebSocketServer({ server });
       const received: unknown[] = [];
@@ -264,6 +338,7 @@ describe("private inference WebSocket relay", () => {
         };
         expect(received).toEqual([expected, { ...expected, input: [] }]);
         expect(transport.dials).toEqual(["wss://api.openai.com/v1/responses"]);
+        expect(transport.resolve).toHaveBeenCalledTimes(proxied ? 0 : 1);
         if (proxied) {
           expect(transport.wsAgents[0] === agent).toBe(true);
           expect(transport.proxyAgent).toHaveBeenCalledWith({
