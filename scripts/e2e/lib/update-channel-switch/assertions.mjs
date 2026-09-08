@@ -234,10 +234,12 @@ function assertConfigChannel(channel) {
   );
 }
 
-function assertDryRun(kind, channel) {
+function assertDryRun(kind, channel, selection) {
   const preview = JSON.parse(process.env.UPDATE_JSON ?? "");
   const reportedKind =
-    kind === "git" && process.env.OPENCLAW_UPDATE_CHANNEL_DRY_RUN_PACKAGE_COMPAT === "1"
+    kind === "git" &&
+    selection === "stored" &&
+    process.env.OPENCLAW_UPDATE_CHANNEL_DRY_RUN_PACKAGE_COMPAT === "1"
       ? "package"
       : kind;
   assert.equal(preview.dryRun, true);
@@ -286,7 +288,7 @@ switch (command) {
     assertConfigChannel(args[0]);
     break;
   case "assert-dry-run":
-    assertDryRun(args[0], args[1]);
+    assertDryRun(args[0], args[1], args[2]);
     break;
   case "assert-status-kind":
     assertStatusKind(args[0]);

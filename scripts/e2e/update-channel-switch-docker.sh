@@ -178,13 +178,13 @@ printf "%s\n" "$status_json"
 STATUS_JSON="$status_json" node scripts/e2e/lib/update-channel-switch/assertions.mjs assert-status-kind package
 
 assert_package_dry_run() {
-  local expected_kind="$1" expected_channel="$2"
-  shift 2
+  local expected_kind="$1" expected_channel="$2" selection="$3"
+  shift 3
   local preview
   preview="$(openclaw update --dry-run --json --no-restart "$@")"
   printf "%s\n" "$preview"
   UPDATE_JSON="$preview" node scripts/e2e/lib/update-channel-switch/assertions.mjs \
-    assert-dry-run "$expected_kind" "$expected_channel"
+    assert-dry-run "$expected_kind" "$expected_channel" "$selection"
   node scripts/e2e/lib/update-channel-switch/assertions.mjs assert-config-channel dev
 }
 dev_channel_args=(--channel dev)
@@ -192,11 +192,11 @@ dev_channel_args=(--channel dev)
 if [ "$OPENCLAW_PACKAGE_ACCEPTANCE_LEGACY_COMPAT" != "1" ]; then
   echo "==> package dry-run channel and one-off tag precedence"
   openclaw config set update.channel dev
-  assert_package_dry_run git dev
-  assert_package_dry_run git dev --channel dev
-  assert_package_dry_run git dev --channel dev --tag beta
-  assert_package_dry_run package dev --tag beta
-  assert_package_dry_run package stable --channel stable
+  assert_package_dry_run git dev stored
+  assert_package_dry_run git dev explicit --channel dev
+  assert_package_dry_run git dev explicit --channel dev --tag beta
+  assert_package_dry_run package dev stored --tag beta
+  assert_package_dry_run package stable explicit --channel stable
   dev_channel_args=()
 fi
 
