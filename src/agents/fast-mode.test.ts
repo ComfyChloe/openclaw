@@ -8,12 +8,12 @@ import {
   formatFastModeCurrentStatus,
   formatFastModeStatusValue,
   resolveFastModeForElapsed,
-  resolveFastModeState,
+  resolveFastModeStateForResolvedModel,
 } from "./fast-mode.js";
 
-describe("resolveFastModeState", () => {
+describe("resolveFastModeStateForResolvedModel", () => {
   it("prefers session overrides over per-agent and global defaults", () => {
-    const state = resolveFastModeState({
+    const state = resolveFastModeStateForResolvedModel({
       cfg: {
         agents: {
           defaults: { fastModeDefault: "auto" },
@@ -32,7 +32,7 @@ describe("resolveFastModeState", () => {
   });
 
   it("keeps auto as the persisted mode and starts enabled", () => {
-    const state = resolveFastModeState({
+    const state = resolveFastModeStateForResolvedModel({
       cfg: {} as OpenClawConfig,
       provider: "openai",
       model: "gpt-5.5",
@@ -61,7 +61,7 @@ describe("resolveFastModeState", () => {
         },
       } as OpenClawConfig;
 
-      const state = resolveFastModeState({
+      const state = resolveFastModeStateForResolvedModel({
         cfg,
         provider: "openai",
         model: "gpt-4o",
@@ -87,7 +87,7 @@ describe("resolveFastModeState", () => {
       },
     } as OpenClawConfig;
 
-    const state = resolveFastModeState({
+    const state = resolveFastModeStateForResolvedModel({
       cfg,
       provider: "openai",
       model: "gpt-4o",
@@ -109,7 +109,7 @@ describe("resolveFastModeState", () => {
       },
     } as OpenClawConfig;
 
-    const state = resolveFastModeState({
+    const state = resolveFastModeStateForResolvedModel({
       cfg,
       provider: "openai",
       model: "gpt-4o",
@@ -150,7 +150,7 @@ describe("resolveFastModeState", () => {
       },
     } as OpenClawConfig;
 
-    const state = resolveFastModeState({
+    const state = resolveFastModeStateForResolvedModel({
       cfg,
       provider: "openai",
       model: "gpt-5.5",
@@ -176,7 +176,7 @@ describe("resolveFastModeState", () => {
       },
     } as OpenClawConfig;
 
-    const state = resolveFastModeState({
+    const state = resolveFastModeStateForResolvedModel({
       cfg,
       provider: "openai",
       model: "gpt-5.5",
@@ -187,25 +187,27 @@ describe("resolveFastModeState", () => {
     expect(state.fastAutoOnSeconds).toBe(15);
   });
 
-  it("uses model config when the runtime passes a provider-qualified model ref", () => {
+  it("keeps a resolved provider-prefixed model ID separate from the shorter ID", () => {
     const cfg = {
       agents: {
         defaults: {
           models: {
             "openai/gpt-5.5": { params: { fastMode: true } },
+            "openai/openai/gpt-5.5": { params: { fastMode: false, fastAutoOnSeconds: 45 } },
           },
         },
       },
     } as OpenClawConfig;
 
-    const state = resolveFastModeState({
+    const state = resolveFastModeStateForResolvedModel({
       cfg,
       provider: "openai",
       model: "openai/gpt-5.5",
     });
 
-    expect(state.enabled).toBe(true);
+    expect(state.enabled).toBe(false);
     expect(state.source).toBe("config");
+    expect(state.fastAutoOnSeconds).toBe(45);
   });
 
   it("uses canonical provider/model config for slash-containing model ids", () => {
@@ -221,7 +223,7 @@ describe("resolveFastModeState", () => {
       },
     } as OpenClawConfig;
 
-    const state = resolveFastModeState({
+    const state = resolveFastModeStateForResolvedModel({
       cfg,
       provider: "openrouter",
       model: "anthropic/claude-sonnet-4-6",
@@ -244,7 +246,7 @@ describe("resolveFastModeState", () => {
       },
     } as OpenClawConfig;
 
-    const state = resolveFastModeState({
+    const state = resolveFastModeStateForResolvedModel({
       cfg,
       provider: "openrouter",
       model: "anthropic/claude-sonnet-4-6",
@@ -255,7 +257,7 @@ describe("resolveFastModeState", () => {
   });
 
   it("defaults to off when unset", () => {
-    const state = resolveFastModeState({
+    const state = resolveFastModeStateForResolvedModel({
       cfg: {} as OpenClawConfig,
       provider: "openai",
       model: "gpt-4o",

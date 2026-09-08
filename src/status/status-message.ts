@@ -12,7 +12,7 @@ import { resolveContextTokensForModel } from "../agents/context.js";
 import { resolveCronStyleNow } from "../agents/current-time.js";
 import { DEFAULT_CONTEXT_TOKENS, DEFAULT_MODEL, DEFAULT_PROVIDER } from "../agents/defaults.js";
 import { resolveExtraParams } from "../agents/embedded-agent-runner/extra-params.js";
-import { resolveFastModeState } from "../agents/fast-mode.js";
+import { resolveFastModeStateForResolvedModel } from "../agents/fast-mode.js";
 import { resolveModelAuthMode } from "../agents/model-auth.js";
 import { findModelInCatalog } from "../agents/model-catalog-lookup.js";
 import {
@@ -813,7 +813,7 @@ export function buildStatusMessageParts(args: StatusArgs): StatusMessageParts {
   const verboseLevel =
     args.resolvedVerbose ?? args.sessionEntry?.verboseLevel ?? args.agent?.verboseDefault ?? "off";
   const fastMode = args.resolvedFast ?? args.sessionEntry?.fastMode ?? false;
-  const fastModeState = resolveFastModeState({
+  const fastModeState = resolveFastModeStateForResolvedModel({
     cfg: args.config,
     provider: activeProvider,
     model: activeModel,

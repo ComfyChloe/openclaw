@@ -5,7 +5,7 @@ import { SESSION_PARTICIPANT_LIMIT } from "../../packages/gateway-protocol/src/s
 import { resolveAuthoredModelContextTokens } from "../agents/context-resolution.js";
 import { resolveContextTokensForModel } from "../agents/context.js";
 import { DEFAULT_MODEL, DEFAULT_PROVIDER } from "../agents/defaults.js";
-import { resolveFastModeState } from "../agents/fast-mode.js";
+import { resolveFastModeStateForResolvedModel } from "../agents/fast-mode.js";
 import { findModelCatalogEntry, type ModelCatalogEntry } from "../agents/model-catalog.js";
 import { resolveModelContextWindowProfile } from "../agents/model-context-window.js";
 import { resolveSelectedAndActiveModel } from "../auto-reply/model-runtime.js";
@@ -329,7 +329,7 @@ export function buildGatewaySessionRow(params: {
     resolvedContextTokens: resolvedCurrentContextTokens,
     authoredContextTokens,
   });
-  const fastModeState = resolveFastModeState({
+  const fastModeState = resolveFastModeStateForResolvedModel({
     cfg,
     provider: rowModelProvider,
     model: rowModel,

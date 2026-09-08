@@ -14,7 +14,7 @@ vi.mock("../../agents/context.js", () => ({
 }));
 
 vi.mock("../../agents/fast-mode.js", () => ({
-  resolveFastModeState: () => ({ enabled: false }),
+  resolveFastModeStateForResolvedModel: () => ({ enabled: false }),
 }));
 
 vi.mock("../../agents/live-model-switch.js", () => ({

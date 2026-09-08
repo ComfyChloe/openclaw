@@ -737,7 +737,8 @@ function createCronPromptExecutor(
           );
           return result;
         }
-        const { resolveFastModeState, runEmbeddedAgent } = await cronEmbeddedRuntimeLoader.load();
+        const { resolveFastModeStateForResolvedModel, runEmbeddedAgent } =
+          await cronEmbeddedRuntimeLoader.load();
         const promptCacheKey = resolveIsolatedCronPromptCacheKey({
           job: params.job,
           agentId: params.agentId,
@@ -791,7 +792,7 @@ function createCronPromptExecutor(
           // requested level without rewriting the durable preference.
           thinkLevel: candidateThinkLevel,
           ...(() => {
-            const fastModeState = resolveFastModeState({
+            const fastModeState = resolveFastModeStateForResolvedModel({
               cfg: params.cfgWithAgentDefaults,
               provider: providerOverride,
               model: modelOverride,

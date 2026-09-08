@@ -1,6 +1,6 @@
 import { resolveContextTokensForModel } from "../../agents/context.js";
 import { DEFAULT_CONTEXT_TOKENS } from "../../agents/defaults.js";
-import { resolveFastModeState } from "../../agents/fast-mode.js";
+import { resolveFastModeStateForResolvedModel } from "../../agents/fast-mode.js";
 import { consolidateLiveModelSwitchAfterRun } from "../../agents/live-model-switch.js";
 import { resolveCollapsedSessionAuthPinSource } from "../../config/sessions/auth-profile-override-provenance.js";
 import { updateSessionEntry } from "../../config/sessions/session-accessor.js";
@@ -183,7 +183,7 @@ export async function accountAgentTurn(context: AgentTurnAccountingContext) {
     winnerModel,
     reasoningEffort:
       typeof followupRun.run.thinkLevel === "string" ? followupRun.run.thinkLevel : undefined,
-    fastMode: resolveFastModeState({
+    fastMode: resolveFastModeStateForResolvedModel({
       cfg,
       provider: providerUsed ?? "",
       model: modelUsed ?? "",

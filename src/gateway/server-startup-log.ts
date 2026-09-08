@@ -5,7 +5,7 @@ import chalk from "chalk";
 import { sanitizeForLog } from "../../packages/terminal-core/src/ansi.js";
 import { resolveAgentConfig, tryResolveLegacyCompatibilityAgentId } from "../agents/agent-scope.js";
 import { DEFAULT_MODEL, DEFAULT_PROVIDER } from "../agents/defaults.js";
-import { formatFastModeValue, resolveFastModeState } from "../agents/fast-mode.js";
+import { formatFastModeValue, resolveFastModeStateForResolvedModel } from "../agents/fast-mode.js";
 import type { ModelCatalogEntry } from "../agents/model-catalog.types.js";
 import {
   buildConfiguredModelCatalog,
@@ -202,7 +202,7 @@ export function formatAgentModelStartupDetails(params: {
       thinking = resolvedThinking === "off" ? "medium" : resolvedThinking;
     }
   }
-  const fast = resolveFastModeState({
+  const fast = resolveFastModeStateForResolvedModel({
     cfg: params.cfg,
     provider: params.provider,
     model: params.model,

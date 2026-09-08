@@ -28,7 +28,7 @@ import {
 } from "../embedded-agent-runner/run-entry.js";
 import { createDeferredEmbeddedRunLifecycleManager } from "../embedded-agent-runner/run/deferred-lifecycle-owner.js";
 import type { CompactionAccountingFact } from "../embedded-agent-runner/run/internal-params.js";
-import { resolveFastModeState } from "../fast-mode.js";
+import { resolveFastModeStateForResolvedModel } from "../fast-mode.js";
 import { runAgentHarnessBeforeMessageWriteHook } from "../harness/hook-helpers.js";
 import { prepareInternalSessionEffectsSession } from "../internal-session-effects.js";
 import { LiveSessionModelSwitchError } from "../live-model-switch.js";
@@ -388,7 +388,7 @@ export async function runEmbeddedAgentAttempt(params: {
             provider: providerOverride,
             model: modelOverride,
           });
-          const fastModeState = resolveFastModeState({
+          const fastModeState = resolveFastModeStateForResolvedModel({
             cfg,
             provider: providerOverride,
             model: modelOverride,

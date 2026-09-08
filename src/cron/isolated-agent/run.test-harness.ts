@@ -1,7 +1,7 @@
 // Isolated run test harness builds cron run inputs, mocks, and assertions.
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import { vi, type Mock } from "vitest";
-import { resolveFastModeState as resolveFastModeStateImpl } from "../../agents/fast-mode.js";
+import { resolveFastModeStateForResolvedModel as resolveFastModeStateImpl } from "../../agents/fast-mode.js";
 import { LiveSessionModelSwitchError } from "../../agents/live-model-switch-error.js";
 import { runInitialModelFallbackAttempt } from "../../agents/test-helpers/model-fallback-runner.test-support.js";
 import { resolveAgentModelFallbackValues } from "../../config/model-input.js";
@@ -271,7 +271,7 @@ vi.mock("./run-execution.runtime.js", () => ({
   resolveBootstrapWarningSignaturesSeen: resolveBootstrapWarningSignaturesSeenMock,
   getCliSessionBinding: getCliSessionBindingMock,
   runCliAgent: runCliAgentMock,
-  resolveFastModeState: resolveFastModeStateMock,
+  resolveFastModeStateForResolvedModel: resolveFastModeStateMock,
   resolveCandidateThinkingLevel: (params: {
     provider: string;
     modelId: string;
@@ -334,7 +334,7 @@ vi.mock("./run-auth-profile.runtime.js", () => ({
 }));
 
 vi.mock("./run-embedded.runtime.js", () => ({
-  resolveFastModeState: resolveFastModeStateMock,
+  resolveFastModeStateForResolvedModel: resolveFastModeStateMock,
   resolveCronAgentLane: resolveCronAgentLaneMock,
   runEmbeddedAgent: runEmbeddedAgentMock,
 }));

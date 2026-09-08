@@ -9,7 +9,7 @@ import {
 } from "../agents/agent-scope.js";
 import { ensureAuthProfileStore } from "../agents/auth-profiles/store-runtime.js";
 import { waitForContextWindowCacheLoad } from "../agents/context.js";
-import { resolveFastModeState } from "../agents/fast-mode.js";
+import { resolveFastModeStateForResolvedModel } from "../agents/fast-mode.js";
 import { resolveAgentHarnessAutoSelectionHint } from "../agents/harness/auto-selection.js";
 import { resolveAgentHarnessPolicy } from "../agents/harness/policy.js";
 import { listRegisteredAgentHarnesses } from "../agents/harness/registry.js";
@@ -553,7 +553,7 @@ export async function buildStatusReplyParts(
   const agentConfig = resolveAgentConfig(cfg, statusAgentId);
   const effectiveFastMode =
     resolvedFastMode ??
-    resolveFastModeState({
+    resolveFastModeStateForResolvedModel({
       cfg,
       provider: selectedLookupProvider,
       model: selectedLookupModel,

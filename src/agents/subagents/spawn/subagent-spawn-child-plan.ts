@@ -97,7 +97,7 @@ async function resolveSpawnModelSelection(params: {
       resolvedModelCatalog: catalog,
     });
   }
-  const resolved = resolveAllowedModelRef({
+  const selection = {
     cfg,
     catalog,
     raw: modelInput,
@@ -106,7 +106,15 @@ async function resolveSpawnModelSelection(params: {
     agentId: targetAgentId,
     manifestPlugins: runtime.metadataSnapshot,
     resolvedModelCatalog: catalog,
-  });
+  };
+  // Configured defaults are operator selections; override policy applies only
+  // to an explicit request, including when outputSchema needs capability proof.
+  const resolved = params.request.model?.trim()
+    ? resolveAllowedModelRef(selection)
+    : (resolveModelRefFromString({
+        ...selection,
+        aliasIndex: buildModelAliasIndex(selection),
+      }) ?? { error: `invalid model: ${modelInput}` });
   if ("error" in resolved) {
     return err(`sessions_spawn model "${modelInput}" is not usable: ${resolved.error}`);
   }

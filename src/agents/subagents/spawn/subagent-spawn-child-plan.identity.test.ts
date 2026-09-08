@@ -123,6 +123,75 @@ function selected(result: Awaited<ReturnType<typeof plan>>) {
 }
 
 describe("spawn prepared model ownership", () => {
+  it.each([
+    { scope: "global", policy: "literal", allow: ["provider-a/main"] },
+    { scope: "global", policy: "wildcard", allow: ["provider-a/*"] },
+    { scope: "agent", policy: "literal", allow: ["provider-a/main"] },
+    { scope: "agent", policy: "wildcard", allow: ["provider-a/*"] },
+  ])(
+    "keeps $scope configured defaults separate from $policy override policy",
+    async ({ scope, allow }) => {
+      const cfg = config(
+        "provider-a/main",
+        scope === "global" ? "provider-b/worker" : "provider-a/global-worker",
+      );
+      cfg.agents!.defaults!.modelPolicy = { allow };
+      if (scope === "agent") {
+        cfg.agents!.entries = { main: { subagents: { model: "provider-b/worker" } } };
+      }
+      state.live.mockResolvedValue([]);
+      for (const request of [{}, { outputSchema: { type: "object" } }]) {
+        const implicit = selected(await plan(cfg, request));
+        expect(implicit.resolvedModel).toBe("provider-b/worker");
+        expect(implicit.initialSessionPatch.modelOverrideSource).toBe("auto");
+        const explicit = await plan(cfg, { ...request, model: "provider-b/worker" });
+        expect(explicit).toMatchObject({
+          ok: false,
+          result: {
+            status: "error",
+            error: expect.stringContaining("model not allowed: provider-b/worker"),
+          },
+        });
+      }
+    },
+  );
+
+  it.each([
+    { name: "ordinary default provider", inferred: false, expected: "provider-a/worker" },
+    { name: "configured provider inference", inferred: true, expected: "provider-b/worker" },
+  ])("keeps explicit bare-model parsing under $name", async ({ inferred, expected }) => {
+    const cfg = config("provider-a/main", "provider-b/configured-worker");
+    cfg.agents!.defaults!.modelPolicy = { allow: [expected] };
+    if (inferred) {
+      cfg.agents!.defaults!.models = { "provider-b/worker": {} };
+    }
+    state.live.mockResolvedValue([]);
+    const explicit = selected(await plan(cfg, { model: "worker" }));
+    expect(explicit.resolvedModel).toBe(expected);
+    expect(explicit.initialSessionPatch.modelOverrideSource).toBe("user");
+  });
+
+  it("checks tools on an implicit configured model after bypassing override policy", async () => {
+    const cfg = config("provider-a/main", "provider-b/worker");
+    cfg.agents!.defaults!.modelPolicy = { allow: ["provider-a/main"] };
+    state.live.mockResolvedValue([
+      {
+        provider: "provider-b",
+        id: "worker",
+        name: "Worker",
+        compat: { supportsTools: false },
+      },
+    ]);
+    const result = await plan(cfg, { outputSchema: { type: "object" } });
+    expect(result).toMatchObject({
+      ok: false,
+      result: {
+        status: "error",
+        error: expect.stringContaining("requires a tool-capable target model"),
+      },
+    });
+  });
+
   it.each(["provider-a/base-a", "cli-fixture/Arbitrary/Case"])(
     "keeps default %s off live discovery",
     async (primary) => {

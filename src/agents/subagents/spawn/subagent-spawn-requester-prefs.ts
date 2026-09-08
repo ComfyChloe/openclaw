@@ -2,7 +2,7 @@ import { resolveSessionModelOverrideRouteResolution } from "../../../config/sess
 import type { SessionEntry } from "../../../config/sessions/types.js";
 import type { OpenClawConfig } from "../../../config/types.openclaw.js";
 import type { FastMode } from "../../../shared/fast-mode.js";
-import { resolveFastModeState } from "../../fast-mode.js";
+import { resolveFastModeStateForResolvedModel } from "../../fast-mode.js";
 import {
   resolveDefaultModelForAgent,
   resolvePersistedSelectedModelRef,
@@ -105,7 +105,7 @@ export function readRequesterFastMode(params: {
         overrideRouteResolution: resolveSessionModelOverrideRouteResolution(entry),
       })
     : undefined;
-  return resolveFastModeState({
+  return resolveFastModeStateForResolvedModel({
     cfg: params.cfg,
     provider: selectedModel?.provider ?? defaultModel.provider,
     model: selectedModel?.model ?? defaultModel.model,

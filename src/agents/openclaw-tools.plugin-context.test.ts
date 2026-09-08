@@ -131,7 +131,7 @@ describe("openclaw plugin tool context", () => {
     });
   });
 
-  it("does not duplicate provider-qualified active model refs", () => {
+  it("preserves provider-local namespaces in active model refs", () => {
     const result = resolveOpenClawPluginToolInputs({
       options: {
         config: {} as never,
@@ -143,7 +143,7 @@ describe("openclaw plugin tool context", () => {
     expect(result.context.activeModel).toStrictEqual({
       provider: "openrouter",
       modelId: "openrouter/auto",
-      modelRef: "openrouter/auto",
+      modelRef: "openrouter/openrouter/auto",
     });
   });
 

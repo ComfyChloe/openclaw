@@ -151,7 +151,7 @@ vi.mock("../../agents/defaults.js", () => ({
 }));
 
 vi.mock("../../agents/fast-mode.js", () => ({
-  resolveFastModeState: (...args: unknown[]) => mocks.resolveFastModeState(...args),
+  resolveFastModeStateForResolvedModel: (...args: unknown[]) => mocks.resolveFastModeState(...args),
 }));
 
 vi.mock("../../agents/sandbox/runtime-status.js", () => ({

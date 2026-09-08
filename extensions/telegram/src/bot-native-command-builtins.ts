@@ -168,7 +168,7 @@ function resolveTelegramFastCommandState(params: {
     resolveFastModeState({
       cfg: params.cfg,
       provider: defaultModel.provider,
-      model: defaultModel.model,
+      modelId: defaultModel.model,
       agentId: params.agentId,
     });
   if (!params.sessionKey.trim()) {
@@ -181,7 +181,7 @@ function resolveTelegramFastCommandState(params: {
     return resolveFastModeState({
       cfg: params.cfg,
       provider: modelContext.provider ?? defaultModel.provider,
-      model: modelContext.model ?? defaultModel.model,
+      modelId: modelContext.model ?? defaultModel.model,
       agentId: params.agentId,
       sessionEntry:
         entry?.fastMode !== undefined

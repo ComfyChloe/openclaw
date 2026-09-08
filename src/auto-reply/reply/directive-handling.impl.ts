@@ -6,7 +6,7 @@ import {
   formatFastModeCommandOptions,
   formatFastModeCurrentStatus,
   formatFastModeValue,
-  resolveFastModeState,
+  resolveFastModeStateForResolvedModel,
 } from "../../agents/fast-mode.js";
 import { findModelInCatalog } from "../../agents/model-catalog-lookup.js";
 import { persistStickyModelSelectionBestEffort } from "../../agents/sticky-model-selection.js";
@@ -212,7 +212,7 @@ export async function handleDirectiveOnly(
     catalog: thinkingCatalog,
     agentRuntime: thinkingRuntime,
   };
-  const fastModeState = resolveFastModeState({
+  const fastModeState = resolveFastModeStateForResolvedModel({
     cfg: params.cfg,
     provider: resolvedProvider,
     model: resolvedModel,

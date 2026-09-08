@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { resolveAgentConfig } from "../../agents/agent-scope.js";
 import { DEFAULT_PROVIDER } from "../../agents/defaults.js";
 import { resolveExtraParams } from "../../agents/embedded-agent-runner/extra-params.js";
-import { resolveFastModeState } from "../../agents/fast-mode.js";
+import { resolveFastModeStateForResolvedModel } from "../../agents/fast-mode.js";
 import { resolveModelRuntimePolicy } from "../../agents/model-runtime-policy.js";
 import { resolveAllowedModelRefCore } from "../../agents/model-selection-resolve.js";
 import { resolveConfiguredThinkingDefault } from "../../agents/model-thinking-default.js";
@@ -143,7 +143,7 @@ describe("resolveCronAgentConfig model policy preservation", () => {
       }),
     ).toBe("low");
     expect(
-      resolveFastModeState({
+      resolveFastModeStateForResolvedModel({
         cfg: cronCfg,
         agentId: "worker",
         provider: "openai",

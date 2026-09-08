@@ -7,7 +7,7 @@ import type {
 import { resolveAgentWorkspaceDir, resolveDefaultAgentId } from "../../agents/agent-scope.js";
 import type { RuntimeAuthMaterialization } from "../../agents/auth-profiles/runtime-materializations.js";
 import { resolveConfiguredModelEntries } from "../../agents/configured-model-entries.js";
-import { resolveFastModeState } from "../../agents/fast-mode.js";
+import { resolveFastModeStateForResolvedModel } from "../../agents/fast-mode.js";
 import type { ModelAuthAvailabilityEvaluation } from "../../agents/model-auth-availability.js";
 import {
   buildProviderConfigModelCatalogForBrowse,
@@ -159,7 +159,7 @@ function createPublicModelsListProjector(params: {
               configuredReasoning: publicEntry.configuredReasoning ?? publicEntry.reasoning,
               thinkingPolicyProvider: publicEntry.thinkingPolicyProvider,
             });
-      const fastModeState = resolveFastModeState({
+      const fastModeState = resolveFastModeStateForResolvedModel({
         cfg: params.cfg,
         agentId: params.agentId,
         provider: entry.provider,

@@ -10,7 +10,7 @@ import {
   runWithCronCreatorAuthorityCapability,
   shouldAdmitFreshChannelOwnerCronAuthority,
 } from "../../agents/cron-creator-authority-context.js";
-import { resolveFastModeState } from "../../agents/fast-mode.js";
+import { resolveFastModeStateForResolvedModel } from "../../agents/fast-mode.js";
 import { runAgentHarnessBeforeMessageWriteHook } from "../../agents/harness/hook-helpers.js";
 import { resolveOwnerPromptNumbers } from "../../agents/owner-display.js";
 import {
@@ -466,7 +466,7 @@ export async function executePreparedReplyRun(state: PreparedReplyRunAdmission) 
         if (useFastReplyRuntime) {
           return { fastMode: false, fastModeAutoOnSeconds: undefined, fastModeOverride: true };
         }
-        const fastModeState = resolveFastModeState({
+        const fastModeState = resolveFastModeStateForResolvedModel({
           cfg,
           provider,
           model,

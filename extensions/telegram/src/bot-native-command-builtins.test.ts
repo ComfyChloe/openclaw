@@ -1,5 +1,5 @@
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   executorTestMocks,
   expectRecordFields,
@@ -256,14 +256,24 @@ describe("Telegram native command built-ins", () => {
     expect(replyMocks.dispatchReplyWithBufferedBlockDispatcher).not.toHaveBeenCalled();
   });
 
-  it("uses configured model defaults instead of runtime auth metadata for the fast menu", async () => {
+  it.each([
+    { model: "gpt-5.5", current: "auto (30 sec)", seconds: 30 },
+    { model: "openai/gpt-5.5", current: "off", seconds: 45 },
+  ])("uses the resolved $model default for the fast menu", async ({ model, current, seconds }) => {
+    const { resolveCommandArgMenu } = await vi.importActual<
+      typeof import("openclaw/plugin-sdk/command-auth-native")
+    >("openclaw/plugin-sdk/command-auth-native");
+    commandAuthMocks.resolveCommandArgMenu.mockImplementation(resolveCommandArgMenu);
     const cfg = {
       agents: {
         defaults: {
-          model: { primary: "openai/gpt-5.5" },
+          model: { primary: `openai/${model}` },
           models: {
             "openai/gpt-5.5": {
               params: { fastMode: "auto", fastAutoOnSeconds: 30 },
+            },
+            "openai/openai/gpt-5.5": {
+              params: { fastMode: false, fastAutoOnSeconds: 45 },
             },
           },
         },
@@ -291,16 +301,13 @@ describe("Telegram native command built-ins", () => {
     expect(
       commandAuthMocks.resolveCommandArgMenu.mock.calls.some(
         ([params]) =>
-          params.command.key === "fast" &&
-          params.provider === "openai" &&
-          params.model === "gpt-5.5",
+          params.command.key === "fast" && params.provider === "openai" && params.model === model,
       ),
     ).toBe(true);
     const options = expectSendMessageCall({
       sendMessage,
       chatId: 100,
-      textIncludes:
-        "Current fast mode: auto (30 sec) (default: model).\nOptions: on, off, auto (30 sec), default, status.",
+      textIncludes: `Current fast mode: ${current} (default: model).\nOptions: on, off, auto (${seconds} sec), default, status.`,
       requireReplyMarkup: true,
       label: "fast menu",
     });
@@ -310,7 +317,7 @@ describe("Telegram native command built-ins", () => {
     const labels = (replyMarkup?.inline_keyboard ?? []).flatMap((row) =>
       row.map((button) => button.text),
     );
-    expect(labels).toContain("auto (30 sec)");
+    expect(labels).toContain(`auto (${seconds} sec)`);
     expect(replyMocks.dispatchReplyWithBufferedBlockDispatcher).not.toHaveBeenCalled();
   });
 

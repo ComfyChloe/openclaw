@@ -78,7 +78,7 @@ vi.mock("../../agents/fast-mode.js", async () => {
   );
   return {
     ...actual,
-    resolveFastModeState: resolveFastModeStateMock,
+    resolveFastModeStateForResolvedModel: resolveFastModeStateMock,
   };
 });
 

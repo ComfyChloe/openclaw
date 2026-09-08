@@ -3,7 +3,7 @@ import {
   normalizeOptionalLowercaseString,
   normalizeOptionalString,
 } from "@openclaw/normalization-core/string-coerce";
-import { resolveFastModeState } from "../../agents/fast-mode.js";
+import { resolveFastModeStateForResolvedModel } from "../../agents/fast-mode.js";
 import { resolveCandidateThinkingLevel } from "../../agents/thinking-runtime.js";
 import { normalizeChatType } from "../../channels/chat-type.js";
 import { getChannelPlugin } from "../../channels/plugins/index.js";
@@ -227,7 +227,7 @@ export function resolveRunFastModeForFallbackCandidate(params: {
   model: string;
   sessionEntry?: Pick<SessionEntry, "fastMode">;
 }) {
-  const state = resolveFastModeState({
+  const state = resolveFastModeStateForResolvedModel({
     cfg: params.config,
     provider: params.provider,
     model: params.model,

@@ -116,6 +116,15 @@ Retained compatibility entrypoints keep their shipped caller names:
 optional `agentId` when resolving a known agent to include its per-model thinking
 settings; omitting it retains shared model and global defaults.
 
+`command-auth-native` retains the `resolveFastModeState` input contract from
+`v2026.9.2`: `model` may be a provider-local ID or a full reference beginning
+with the supplied provider. It preserves the exact authored settings key for
+both fast mode and its auto cutoff. Callers with resolved provider/model pairs
+pass `modelId` instead of `model` to the same function. `modelId` preserves
+every model-ID segment literally, including a matching provider prefix; the
+two input fields are mutually exclusive. The legacy `model` input remains supported until an explicitly
+approved SDK-breaking boundary and announced migration window.
+
 `text-chunking` retains positional `CodeRegion` inputs with `start` and `end`
 offsets for `isInsideCode`. Regions returned by `findCodeRegions` additionally
 include parser-owned `block` metadata; callers supplying their own ranges do not

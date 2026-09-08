@@ -5,7 +5,7 @@ import {
 } from "@openclaw/normalization-core/string-coerce";
 import { listAgentEntries } from "../../agents/agent-scope.js";
 import { DEFAULT_CONTEXT_TOKENS } from "../../agents/defaults.js";
-import { resolveFastModeState } from "../../agents/fast-mode.js";
+import { resolveFastModeStateForResolvedModel } from "../../agents/fast-mode.js";
 import type { ModelCatalogSnapshot } from "../../agents/model-catalog.types.js";
 import type { ModelAliasIndex } from "../../agents/model-selection.js";
 import { resolveSandboxRuntimeStatus } from "../../agents/sandbox/runtime-status.js";
@@ -582,7 +582,7 @@ export async function resolveReplyDirectives(params: {
     resolvedReasoningLevel = await modelState.resolveDefaultReasoningLevel({ provider, model });
   }
   const { directiveAck, perMessageQueueMode, perMessageQueueOptions } = applyResult;
-  const resolvedFastModeState = resolveFastModeState({
+  const resolvedFastModeState = resolveFastModeStateForResolvedModel({
     cfg,
     provider,
     model,
