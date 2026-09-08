@@ -8,6 +8,7 @@ import {
 } from "@openclaw/fs-safe/file-lock";
 import { asNullableRecord } from "@openclaw/normalization-core/record-coerce";
 import {
+  inspectStaleLockOwner,
   isLockOwnerDefinitelyStale,
   shouldRemoveDeadOwnerOrExpiredLock,
 } from "../infra/stale-lock-file.js";
@@ -123,7 +124,10 @@ async function isSameRegularFile(
   }
 }
 
-function normalizeLockError(err: unknown): never {
+function normalizeLockError(
+  err: unknown,
+  staleOwner: ReturnType<typeof inspectStaleLockOwner> = null,
+): never {
   if ((err as { code?: unknown }).code === FILE_LOCK_TIMEOUT_ERROR_CODE) {
     throw Object.assign(new Error((err as Error).message), {
       code: FILE_LOCK_TIMEOUT_ERROR_CODE,
@@ -131,7 +135,10 @@ function normalizeLockError(err: unknown): never {
     }) as FileLockTimeoutError;
   }
   if ((err as { code?: unknown }).code === FILE_LOCK_STALE_ERROR_CODE) {
-    throw Object.assign(new Error((err as Error).message), {
+    const detail = staleOwner
+      ? ` [${staleOwner.reason} pid=${staleOwner.pid} recorded-start=${staleOwner.recordedStarttime ?? "unknown"} observed-start=${staleOwner.observedStarttime ?? "unknown"}]`
+      : "";
+    throw Object.assign(new Error(`${(err as Error).message}${detail}`), {
       code: FILE_LOCK_STALE_ERROR_CODE,
       lockPath: (err as { lockPath?: string }).lockPath ?? "",
     }) as FileLockStaleError;
@@ -155,6 +162,7 @@ export async function acquireFileLock(
   options: FileLockOptions,
 ): Promise<FileLockHandle> {
   const staleRecovery = options.staleRecovery ?? "remove-if-unchanged";
+  let staleOwner: ReturnType<typeof inspectStaleLockOwner> = null;
   try {
     const lock = await acquireFsSafeFileLock(filePath, {
       managerKey: FILE_LOCK_MANAGER_KEY,
@@ -163,14 +171,17 @@ export async function acquireFileLock(
       staleRecovery,
       reentrantOwner: options.reentrantOwner,
       payload: createCurrentProcessLockPayload,
-      shouldReclaim: (params) =>
-        staleRecovery === "fail-closed"
-          ? isLockOwnerDefinitelyStale({ payload: asLockPayload(params.payload) })
-          : shouldRemoveDeadOwnerOrExpiredLock({
-              payload: asLockPayload(params.payload),
-              staleMs: params.staleMs,
-              nowMs: params.nowMs,
-            }),
+      shouldReclaim: (params) => {
+        if (staleRecovery === "fail-closed") {
+          staleOwner = inspectStaleLockOwner({ payload: asLockPayload(params.payload) });
+          return staleOwner !== null;
+        }
+        return shouldRemoveDeadOwnerOrExpiredLock({
+          payload: asLockPayload(params.payload),
+          staleMs: params.staleMs,
+          nowMs: params.nowMs,
+        });
+      },
       ...(staleRecovery === "remove-if-unchanged"
         ? {
             shouldRemoveStaleLock: (snapshot: { payload: unknown }) =>
@@ -183,7 +194,7 @@ export async function acquireFileLock(
     });
     return { lockPath: lock.lockPath, release: lock.release };
   } catch (err) {
-    return normalizeLockError(err);
+    return normalizeLockError(err, staleOwner);
   }
 }
 

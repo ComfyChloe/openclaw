@@ -155,7 +155,10 @@ describe("acquireFileLock", () => {
         stale: 10,
         staleRecovery: "fail-closed",
       }),
-    ).rejects.toMatchObject({ code: FILE_LOCK_STALE_ERROR_CODE });
+    ).rejects.toMatchObject({
+      code: FILE_LOCK_STALE_ERROR_CODE,
+      message: expect.stringContaining(`[owner-process-exited pid=${deadPid}`),
+    });
     await expect(fs.readFile(lockPath, "utf8")).resolves.toContain(`"pid":${deadPid}`);
   });
 
