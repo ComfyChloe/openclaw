@@ -1,78 +1,36 @@
-name: CodeQL Swift Manifest Tracer Diagnostic (Never Merge)
+name: Blacksmith macOS Assignment Canary (never merge)
 
 on:
   workflow_dispatch:
 
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
-  DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
-
-permissions:
-  contents: read
+permissions: {}
 
 jobs:
-  manifest-tracer:
-    name: Swift manifest tracer (${{ matrix.sandbox }})
-    runs-on: macos-26-intel
-    timeout-minutes: 18
-    strategy:
-      fail-fast: false
-      max-parallel: 2
-      matrix:
-        sandbox: ["on", "off"]
+  canary:
+    name: Blacksmith macOS assignment canary
+    runs-on: blacksmith-12vcpu-macos-26
+    timeout-minutes: 1
     steps:
-      - name: Checkout
-        timeout-minutes: 1
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-          submodules: false
-
-      - name: Prepare pinned fixture
-        id: prepare
-        timeout-minutes: 1
+      - name: Report runner capacity
+        shell: bash
         env:
-          SANDBOX_MODE: ${{ matrix.sandbox }}
-          SPARKLE_MANIFEST_URL: https://raw.githubusercontent.com/sparkle-project/Sparkle/ac2def288cbff5cfc7df3ffef6abdf45b72bcb0a/Package.swift
-          SPARKLE_MANIFEST_SHA256: 076e7810d9a463f3d7f034f9429bd5dcb3ed72203d06e1636f221668ec327962
+          DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
         run: |
           set -euo pipefail
-          sudo xcode-select -s /Applications/Xcode_26.6.app/Contents/Developer
-          .github/scripts/codeql-swift-manifest-diagnostic.sh prepare
+          test -d "$DEVELOPER_DIR"
 
-      - name: Run untraced baseline
-        id: baseline
-        timeout-minutes: 1
-        env:
-          SANDBOX_MODE: ${{ matrix.sandbox }}
-        run: .github/scripts/codeql-swift-manifest-diagnostic.sh baseline
+          xcode_version="$(/usr/bin/xcodebuild -version)"
+          case "$xcode_version" in
+            "Xcode 26.6"*) ;;
+            *)
+              echo "error: expected Xcode 26.6" >&2
+              exit 1
+              ;;
+          esac
 
-      - name: Setup CodeQL CLI
-        id: setup-codeql
-        timeout-minutes: 3
-        uses: github/codeql-action/setup-codeql@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4.37.7
-        with:
-          tools: https://github.com/github/codeql-action/releases/download/codeql-bundle-v2.26.4/codeql-bundle-osx64.tar.gz
-          languages: swift
-          token: ${{ github.token }}
-
-      - name: Run cold traced case
-        id: traced
-        timeout-minutes: 9
-        env:
-          SANDBOX_MODE: ${{ matrix.sandbox }}
-          CODEQL_BIN: ${{ steps.setup-codeql.outputs.codeql-path }}
-          SETUP_CODEQL_VERSION: ${{ steps.setup-codeql.outputs.codeql-version }}
-          EXPECTED_CODEQL_VERSION: "2.26.4"
-        run: .github/scripts/codeql-swift-manifest-diagnostic.sh traced
-
-      - name: Collect typed evidence
-        if: ${{ always() }}
-        timeout-minutes: 1
-        env:
-          SANDBOX_MODE: ${{ matrix.sandbox }}
-          PREPARE_OUTCOME: ${{ steps.prepare.outcome }}
-          BASELINE_OUTCOME: ${{ steps.baseline.outcome }}
-          SETUP_OUTCOME: ${{ steps.setup-codeql.outcome }}
-          TRACED_OUTCOME: ${{ steps.traced.outcome }}
-        run: .github/scripts/codeql-swift-manifest-diagnostic.sh collect
+          printf 'architecture=%s\n' "$(/usr/bin/uname -m)"
+          printf 'macos=%s\n' "$(/usr/bin/sw_vers -productVersion)"
+          printf 'logical_cpus=%s\n' "$(/usr/sbin/sysctl -n hw.logicalcpu)"
+          printf 'memory_bytes=%s\n' "$(/usr/sbin/sysctl -n hw.memsize)"
+          printf '%s\n' "$xcode_version"
+          /usr/bin/xcrun swift --version
