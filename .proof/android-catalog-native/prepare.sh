@@ -28,4 +28,4 @@ for path in emulator/package.xml platform-tools/package.xml system-images/androi
   cat "$SDK_ROOT/$path"
 done
 "$SDK_ROOT/platform-tools/adb" version
-"$SDK_ROOT/emulator/emulator" -version
+"$SDK_ROOT/emulator/emulator" -no-window -no-audio -version

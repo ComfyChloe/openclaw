@@ -2,8 +2,9 @@ import fs from 'node:fs';
 import {spawn, spawnSync} from 'node:child_process';
 import {createInterface} from 'node:readline';
 
-export const WRITE_LIMIT=16*1024**3;
-export const INITIAL_HOLD=128*1024**2;
+export const WRITE_LIMIT=24*1024**3;
+export const PRIOR_HOSTED_CARRY=7905583104;
+export const INITIAL_HOLD=PRIOR_HOSTED_CARRY+128*1024**2;
 const CONTROL_LIMIT=65536;
 export function writeControl(path,value){
   const data=JSON.stringify(value,null,2)+'\n';

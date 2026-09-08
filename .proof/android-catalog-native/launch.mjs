@@ -46,7 +46,7 @@ if(mode==='run'){
   writeControl(evidence+'/admission.json',{at:new Date().toISOString(),available,freeBytes:free,runId:process.env.GITHUB_RUN_ID,workflowSha:process.env.GITHUB_WORKFLOW_SHA,source:'575c21f72a45fe6b62c3bf4d8871bfefb772479e'});
   let result={code:0};
   try{
-    assert(available>=12*1024**3&&free>=20*1024**3,'Hosted memory/disk admission refused');
+    assert(available>=12*1024**3&&free>=24*1024**3,'Hosted memory/disk admission refused');
     for(const [name,seconds,script,network] of [['prepare',900,'prepare.sh',true],['native',600,'native.sh',false]]){
       if(cancellation.signal.aborted)throw Error('Owner interrupted before next phase');
       const finished=await phase(name,seconds,['/bin/bash',input+'/'+script],network);
