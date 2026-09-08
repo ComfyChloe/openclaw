@@ -93,6 +93,17 @@ function readFinalContentIdentity(message: unknown): string | null {
   }
 }
 
+function hasTerminalStopReason(message: unknown): boolean {
+  const stopReason = readRecord(message)?.stopReason;
+  return (
+    stopReason === "stop" ||
+    stopReason === "length" ||
+    stopReason === "error" ||
+    stopReason === "aborted" ||
+    stopReason === "end_turn"
+  );
+}
+
 /** Read stable persisted identity first, falling back to canonical display content. */
 export function readSessionProjectionFinalMessageIdentity(message: unknown): string | null {
   if (!hasDisplayableSessionMessage(message)) {
@@ -152,7 +163,10 @@ export function hasUniqueSnapshotTerminalMatch(
   const durableTerminalMatches = matches.filter((entry) => {
     const metadata = readRecord(readRecord(entry.message)?.["__openclaw"]);
     return (
-      metadata?.runTerminal === true && readFinalContentIdentity(entry.message) === terminalContent
+      (metadata?.runTerminal === true ||
+        (entry.identity?.runId === current.identity?.runId &&
+          hasTerminalStopReason(entry.message))) &&
+      readFinalContentIdentity(entry.message) === terminalContent
     );
   });
   return durableTerminalMatches.length === 1;

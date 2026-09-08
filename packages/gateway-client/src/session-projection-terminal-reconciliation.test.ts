@@ -53,6 +53,30 @@ describe("terminal snapshot reconciliation", () => {
     ).toEqual([toolBoundary, persisted]);
   });
 
+  it("promotes an unmarked same-run CLI terminal with a terminal stop reason", () => {
+    const runId = "cli-run";
+    const synthetic = createAssistantMessage("The CLI repair is complete.");
+    const persisted = {
+      role: "assistant",
+      api: "cli",
+      content: [{ text: "The CLI repair is complete.", type: "text" }],
+      idempotencyKey: `cli-assistant:${runId}`,
+      stopReason: "stop",
+      __openclaw: { id: "assistant-final", seq: 4 },
+    };
+    let state = reduceSessionProjection(createSessionProjection(scope), {
+      type: "runTerminal",
+      runId,
+      status: "completed",
+      message: synthetic,
+    });
+    state = projectLiveSessionMessage(state, structuredClone(synthetic), { runId });
+
+    expect(reconcileSessionProjectionSnapshot(state, [persisted], scope).messages).toEqual([
+      persisted,
+    ]);
+  });
+
   it("retains an unsequenced terminal when matching content precedes a later tool boundary", () => {
     const runId = "partial-history-run";
     const synthetic = createAssistantMessage("Still working.");
