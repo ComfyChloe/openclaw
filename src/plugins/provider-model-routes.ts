@@ -13,10 +13,13 @@ import type {
   ProviderModelRouteSource,
   ProviderRouteOverridePresence,
 } from "../plugin-sdk/provider-model-types.js";
+import { getCurrentPluginMetadataSnapshotRequiredRuntime } from "./plugin-metadata-snapshot-required.js";
+import type { PluginMetadataSnapshot } from "./plugin-metadata-snapshot.types.js";
 import {
   resolveDirectBundledProviderPolicySurface,
   type BundledProviderPolicySurface,
 } from "./provider-policy-surface.js";
+import { resolveProviderPolicySurface } from "./provider-public-artifacts.js";
 
 type ProviderModelRouteObservation = {
   modelId?: string;
@@ -27,10 +30,36 @@ type ProviderModelRoutesResolver = (
   observed?: ProviderModelRouteObservation,
 ) => ProviderModelRouteResolution | null;
 
-/** Binds one provider's identity facts for an authored-row lookup. */
-export function createProviderModelCatalogIdNormalizer(providerId: string) {
+/** Resolves policy through the bundled or selected trusted installed owner. */
+export function resolveProviderModelPolicySurface(
+  providerId: string,
+  metadataSnapshot?: Pick<PluginMetadataSnapshot, "plugins">,
+) {
   const provider = normalizeProviderId(providerId);
-  const surface = provider ? resolveDirectBundledProviderPolicySurface(provider) : null;
+  const bundled = resolveDirectBundledProviderPolicySurface(provider);
+  if (bundled) {
+    return bundled;
+  }
+  const metadata =
+    metadataSnapshot ??
+    getCurrentPluginMetadataSnapshotRequiredRuntime({
+      allowScopedSnapshot: true,
+      allowWorkspaceScopedSnapshot: true,
+    });
+  return metadata
+    ? resolveProviderPolicySurface(provider, {
+        manifestRegistry: { plugins: [...metadata.plugins] },
+      })
+    : null;
+}
+
+/** Binds one provider's identity facts for an authored-row lookup. */
+export function createProviderModelCatalogIdNormalizer(
+  providerId: string,
+  metadataSnapshot?: Pick<PluginMetadataSnapshot, "plugins">,
+) {
+  const provider = normalizeProviderId(providerId);
+  const surface = provider ? resolveProviderModelPolicySurface(provider, metadataSnapshot) : null;
   return (modelId: string) =>
     resolveProviderModelCatalogId({ provider, modelId, surface }) ?? modelId;
 }
@@ -40,11 +69,12 @@ export function resolveProviderModelCatalogId(params: {
   provider: string;
   modelId: string;
   surface?: BundledProviderPolicySurface | null;
+  metadataSnapshot?: Pick<PluginMetadataSnapshot, "plugins">;
 }): string | null {
   const provider = normalizeProviderId(params.provider);
   const surface =
     params.surface === undefined
-      ? resolveDirectBundledProviderPolicySurface(provider)
+      ? resolveProviderModelPolicySurface(provider, params.metadataSnapshot)
       : params.surface;
   const normalized = surface?.normalizeModelCatalogId?.({
     provider,
@@ -85,12 +115,9 @@ export function createProviderModelRoutesResolver(params: {
   if (!provider) {
     return () => null;
   }
-  // Runtime selection is a hot path and currently has one canonical OpenAI
-  // owner. Alias/secondary-owner discovery remains on the cold artifact path.
+  // Use the selected metadata generation; runtime lookups must not discover plugins.
   const surface =
-    params.surface === undefined
-      ? resolveDirectBundledProviderPolicySurface(provider)
-      : params.surface;
+    params.surface === undefined ? resolveProviderModelPolicySurface(provider) : params.surface;
   const resolveModelRoutes = surface?.resolveModelRoutes;
   if (!resolveModelRoutes) {
     return () => null;

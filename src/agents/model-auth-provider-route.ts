@@ -33,7 +33,7 @@ export function resolveModelProviderAuthConfig(
           resolveMergedModelProviderConfig(params.config, params.provider),
           params.provider,
           params.modelId,
-          createProviderModelCatalogIdNormalizer(params.provider),
+          createProviderModelCatalogIdNormalizer(params.provider, params.metadataSnapshot),
         )?.baseUrl?.trim()
       : undefined);
   if (typeof modelBaseUrl !== "string" || !modelBaseUrl) {

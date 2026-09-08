@@ -7,8 +7,10 @@ import {
 } from "../config/model-provider-config.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import type { ProviderModelRouteCandidate } from "../plugin-sdk/provider-model-types.js";
-import { resolveProviderModelCatalogId } from "../plugins/provider-model-routes.js";
-import { resolveDirectBundledProviderPolicySurface } from "../plugins/provider-policy-surface.js";
+import {
+  resolveProviderModelCatalogId,
+  resolveProviderModelPolicySurface,
+} from "../plugins/provider-model-routes.js";
 import {
   PREPARED_THINKING_POLICY,
   type ThinkingCatalogPolicyCarrier,
@@ -64,7 +66,7 @@ export function resolveConfiguredModelCatalogOverrides(params: {
   if (!providerConfig?.models?.length) {
     return undefined;
   }
-  const surface = resolveDirectBundledProviderPolicySurface(provider);
+  const surface = resolveProviderModelPolicySurface(provider);
   const normalizeConfiguredModelId = (modelId: string) =>
     params.policy?.resolveIdentity({ provider: params.entry.provider, id: modelId })?.key ??
     resolveProviderModelCatalogId({ provider, modelId, surface }) ??
@@ -166,7 +168,7 @@ export function projectModelCatalogEntryForRoute(params: {
 }): ModelCatalogEntry {
   if (params.projection.kind === "unmanaged") {
     const provider = normalizeProviderId(params.entry.provider);
-    const surface = resolveDirectBundledProviderPolicySurface(provider);
+    const surface = resolveProviderModelPolicySurface(provider);
     // Route-capable owners project identity only with their route facts.
     const id = surface?.resolveModelRoutes
       ? null
