@@ -1,5 +1,5 @@
+import { stageSqliteTransactionState } from "../../infra/sqlite-post-commit.js";
 import {
-  deferOpenClawAgentPostCommitPublication,
   openOpenClawAgentDatabase,
   runOpenClawAgentWriteTransaction,
 } from "../../state/openclaw-agent-db.js";
@@ -82,11 +82,13 @@ export function replaceTranscriptSuffixEventsSync(
     );
     if (
       captureVersionInTransaction &&
-      !deferOpenClawAgentPostCommitPublication(database, () =>
-        captureVersionInTransaction(committedVersion),
-      )
+      !stageSqliteTransactionState(database.db, {
+        stage: () => {},
+        rollback: () => {},
+        commit: () => captureVersionInTransaction(committedVersion),
+      })
     ) {
-      throw new Error("Transcript suffix replacement requires a commit publication");
+      throw new Error("Transcript suffix replacement requires committed transaction state");
     }
     replaced = true;
   }, toDatabaseOptions(resolved));

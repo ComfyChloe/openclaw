@@ -21,7 +21,11 @@ import {
 } from "../../config/sessions/session-transcript-index.js";
 import { runWithSessionTranscriptReadFence } from "../../config/sessions/session-transcript-read-fence.js";
 import { waitForSessionTranscriptIndexReconcile } from "../../config/sessions/session-transcript-reconcile.js";
-import { openOpenClawAgentDatabase } from "../../state/openclaw-agent-db.js";
+import {
+  deferOpenClawAgentPostCommitPublication,
+  openOpenClawAgentDatabase,
+  runOpenClawAgentWriteTransaction,
+} from "../../state/openclaw-agent-db.js";
 import { SessionManager } from "./session-manager.js";
 
 const { uuidQueue } = vi.hoisted(() => ({ uuidQueue: [] as string[] }));
@@ -282,6 +286,33 @@ it("adopts a fenced assistant when another append commits before its reload", as
       expect(fenced.getBranch().some((entry) => entry.id === "post-commit-user")).toBe(false);
     },
   );
+});
+
+it("adopts suffix cleanup before earlier-queued post-commit observers run", async () => {
+  const dir = tempDirs.make("openclaw-session-manager-suffix-commit-order-");
+  const scope = {
+    agentId: "main",
+    sessionId: "suffix-commit-order",
+    sessionKey: "agent:main:suffix-commit-order",
+    storePath: path.join(dir, "sessions.json"),
+  };
+  await upsertSessionEntryCore(scope, { sessionId: scope.sessionId, updatedAt: 1 });
+  const manager = SessionManager.open(scope, dir);
+  const retainedId = manager.appendMessage({ role: "user", content: "keep", timestamp: 1 });
+  const removedId = manager.appendMessage(buildAssistantMessage("remove"));
+  let observedIds: string[] | undefined;
+
+  runOpenClawAgentWriteTransaction((database) => {
+    expect(
+      deferOpenClawAgentPostCommitPublication(database, () => {
+        observedIds = manager.getBranch().map((entry) => entry.id);
+      }),
+    ).toBe(true);
+    expect(manager.removeTrailingEntries((entry) => entry.id === removedId)).toBe(1);
+  }, scope);
+
+  expect(observedIds).toEqual([retainedId]);
+  expect(manager.getBranch().map((entry) => entry.id)).toEqual([retainedId]);
 });
 
 it("appends an assistant without parsing transcript rows outside the bounded context", async () => {
