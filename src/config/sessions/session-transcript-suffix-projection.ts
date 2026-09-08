@@ -9,7 +9,6 @@ import {
   canonicalizeTranscriptEventMedia,
   readEventTimestamp,
 } from "./session-accessor.sqlite-transcript-store.js";
-import type { SqliteTranscriptSuffixMutationPlan } from "./session-accessor.sqlite-transcript-suffix.js";
 import type { SessionTranscriptIndexProjection } from "./session-transcript-index.js";
 import {
   extractTranscriptIndexEntry,
@@ -65,7 +64,7 @@ export function prepareFullTranscriptSuffixMutation(
   resolved: ResolvedTranscriptScope,
   expectedEvents: readonly TranscriptEvent[],
   nextEvents: readonly TranscriptEvent[],
-): SqliteTranscriptSuffixMutationPlan {
+) {
   const expectedRows = readTranscriptStorageRows(database, resolved.sessionId);
   const expected = expectedEvents.map(canonicalizeTranscriptEventMedia);
   const next = nextEvents.map(canonicalizeTranscriptEventMedia);

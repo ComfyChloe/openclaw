@@ -1,6 +1,6 @@
 import { isDeepStrictEqual } from "node:util";
 import { isRecord } from "@openclaw/normalization-core/record-coerce";
-import { sql, type Expression, type RawBuilder } from "kysely";
+import { sql, type AliasableExpression } from "kysely";
 import { executeSqliteQuerySync } from "../../infra/kysely-sync.js";
 import type { OpenClawAgentDatabase } from "../../state/openclaw-agent-db.js";
 import type { TranscriptEvent } from "./session-accessor.sqlite-contract.js";
@@ -10,11 +10,11 @@ import { readNextTranscriptSeq } from "./session-accessor.sqlite-transcript-stat
 
 /** Custom data is opaque to topology and indexing; cleanup keeps it in SQLite. */
 export function projectTranscriptRetainedDataSql(
-  event: Expression<string>,
+  event: AliasableExpression<string>,
   retainedIds: readonly string[],
-): RawBuilder<string> {
+): AliasableExpression<string> {
   return retainedIds.length === 0
-    ? sql<string>`${event}`
+    ? event
     : /* kysely-allow-raw: bound cleanup planning to navigation while retaining opaque custom data in its original row. */ sql<string>`CASE WHEN json_valid(${event}) THEN
         CASE WHEN json_extract(${event}, '$.type') = 'custom'
           AND json_extract(${event}, '$.id') IN (${sql.join(retainedIds)})
@@ -94,10 +94,6 @@ export function copyRetainedTranscriptPayload(
   parentId?: string | null,
 ): void {
   const db = getSessionKysely(database.db);
-  const eventJson =
-    parentId === undefined
-      ? sql.ref<string>("event_json")
-      : /* kysely-allow-raw: reparent only the envelope; opaque data stays in SQLite. */ sql<string>`json_set(event_json, '$.parentId', ${parentId})`;
   const copied = executeSqliteQuerySync(
     database.db,
     db
@@ -106,12 +102,18 @@ export function copyRetainedTranscriptPayload(
       .expression(
         db
           .selectFrom("transcript_events")
-          .select((eb) => [
-            eb.val(sessionId).as("session_id"),
-            eb.val(destinationSeq).as("seq"),
-            eventJson.as("event_json"),
-            "created_at",
-          ])
+          .select((eb) => {
+            const eventJson: AliasableExpression<string> =
+              parentId === undefined
+                ? eb.ref("event_json")
+                : /* kysely-allow-raw: reparent only the envelope; opaque data stays in SQLite. */ sql<string>`json_set(event_json, '$.parentId', ${parentId})`;
+            return [
+              eb.val(sessionId).as("session_id"),
+              eb.val(destinationSeq).as("seq"),
+              eventJson.as("event_json"),
+              "created_at",
+            ];
+          })
           .where("session_id", "=", sessionId)
           .where("seq", "=", sourceSeq),
       ),

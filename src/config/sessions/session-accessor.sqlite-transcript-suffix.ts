@@ -1,5 +1,4 @@
 import { isRecord } from "@openclaw/normalization-core/record-coerce";
-import { sql } from "kysely";
 import {
   executeSqliteQuerySync,
   executeSqliteQueryTakeFirstSync,
@@ -50,7 +49,7 @@ import {
   parseSessionTranscriptTreeEntry,
 } from "./transcript-tree.js";
 
-export type SqliteTranscriptSuffixMutationPlan = {
+type SqliteTranscriptSuffixMutationPlan = {
   expectedRows: readonly SqliteTranscriptStorageRow[];
   retainedCustomDataIds?: readonly string[];
   incremental?: {
@@ -178,9 +177,9 @@ function prepareIncrementalTranscriptSuffixMutation(
     database.db,
     db
       .selectFrom("transcript_events")
-      .select([
+      .select((eb) => [
         "created_at",
-        projectTranscriptRetainedDataSql(sql.ref("event_json"), retainedCustomDataIds).as(
+        projectTranscriptRetainedDataSql(eb.ref("event_json"), retainedCustomDataIds).as(
           "event_json",
         ),
         "seq",
@@ -435,9 +434,9 @@ export function replaceSqliteTranscriptSuffixInTransaction(
         database.db,
         db
           .selectFrom("transcript_events")
-          .select([
+          .select((eb) => [
             "created_at",
-            projectTranscriptRetainedDataSql(sql.ref("event_json"), retainedCustomDataIds).as(
+            projectTranscriptRetainedDataSql(eb.ref("event_json"), retainedCustomDataIds).as(
               "event_json",
             ),
             "seq",

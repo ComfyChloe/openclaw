@@ -55,19 +55,21 @@ export function loadTranscriptSuffixEventsBoundedSync(
           );
         }
       }
-      const projected = projectTranscriptRetainedDataSql(
-        sql.ref("event_json"),
-        limits.retainedCustomDataIds ?? [],
-      );
       const metadata = executeSqliteQuerySync(
         database.db,
         db
           .selectFrom("transcript_events")
-          .select([
-            "seq",
-            /* kysely-allow-raw: reject oversized suffixes before acquiring their JSON payloads. */
-            sql<number>`OCTET_LENGTH(${projected}) + 1`.as("serialized_bytes"),
-          ])
+          .select((eb) => {
+            const projected = projectTranscriptRetainedDataSql(
+              eb.ref("event_json"),
+              limits.retainedCustomDataIds ?? [],
+            );
+            return [
+              "seq",
+              /* kysely-allow-raw: reject oversized suffixes before acquiring their JSON payloads. */
+              sql<number>`OCTET_LENGTH(${projected}) + 1`.as("serialized_bytes"),
+            ];
+          })
           .where("session_id", "=", resolved.sessionId)
           .where("seq", ">=", startSeq)
           .orderBy("seq", "asc")
@@ -94,7 +96,13 @@ export function loadTranscriptSuffixEventsBoundedSync(
         database.db,
         db
           .selectFrom("transcript_events")
-          .select([projected.as("event_json"), "seq"])
+          .select((eb) => [
+            projectTranscriptRetainedDataSql(
+              eb.ref("event_json"),
+              limits.retainedCustomDataIds ?? [],
+            ).as("event_json"),
+            "seq",
+          ])
           .where("session_id", "=", resolved.sessionId)
           .where(
             "seq",
