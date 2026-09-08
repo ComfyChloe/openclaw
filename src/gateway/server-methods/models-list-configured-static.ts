@@ -82,6 +82,7 @@ export function includeConfiguredStaticCatalogEntries(params: {
   cfg: OpenClawConfig;
   agentId: string;
   snapshot: ModelCatalogSnapshot;
+  defaultProvider?: string;
   defaultModel?: string;
   metadataSnapshot: PluginMetadataSnapshot;
   enabled: boolean;
@@ -92,7 +93,7 @@ export function includeConfiguredStaticCatalogEntries(params: {
   const policy = createModelVisibilityPolicy({
     cfg: params.cfg,
     catalog: [...params.snapshot.entries],
-    defaultProvider: DEFAULT_PROVIDER,
+    defaultProvider: params.defaultProvider ?? DEFAULT_PROVIDER,
     defaultModel: params.defaultModel,
     agentId: params.agentId,
     ...RUNTIME_MODEL_VISIBILITY_NORMALIZATION,

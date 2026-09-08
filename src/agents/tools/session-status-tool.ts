@@ -1156,15 +1156,10 @@ export function createSessionStatusTool(opts?: {
             resolveDefaultThinkingLevel: () =>
               resolveThinkingDefaultWithRuntimeCatalogCore({
                 cfg,
+                agentId,
                 provider: providerForCard,
                 model: defaultModelForCard,
-                loadRuntimeCatalog: () =>
-                  loadPublishedPreparedModelCatalog({
-                    config: cfg,
-                    agentId,
-                    agentDir: selectedAgentDir,
-                    readOnly: true,
-                  }),
+                loadRuntimeCatalog: async () => thinkingCatalog,
               }),
             isGroup,
             defaultGroupActivation: () => "mention",

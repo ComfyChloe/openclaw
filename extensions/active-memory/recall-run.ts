@@ -125,7 +125,7 @@ async function runRecallSubagent(params: {
   searchQuery: string;
   currentModelProviderId?: string;
   currentModelId?: string;
-  modelRef?: { provider: string; model: string };
+  modelRef?: ReturnType<typeof getModelRef>;
   conversationRecall?: ConversationRecallContext;
   storePath: string;
   fastMode?: ActiveMemoryFastMode;
@@ -273,8 +273,9 @@ async function runRecallSubagent(params: {
         agentDir,
         config: params.runtimeConfig,
         prompt,
-        provider: modelRef.provider,
-        model: modelRef.model,
+        provider: modelRef.modelInput ? undefined : modelRef.provider,
+        model: modelRef.modelInput ?? modelRef.model,
+        requestedRouteResolution: modelRef.requestedRouteResolution,
         lane: ACTIVE_MEMORY_RECALL_LANE,
         timeoutMs: embeddedTimeoutMs,
         runId: subagentSessionId,

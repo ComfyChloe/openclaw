@@ -121,6 +121,10 @@ export async function resolveEmbeddedRunModelSetup(params: {
     modelSelectionLocked: runParams.modelSelectionLocked,
     hookRunner: params.hookRunner,
     hookContext: params.hookContext,
+    normalization: {
+      manifestPlugins: params.preparedModelRuntime?.metadataSnapshot,
+      resolvedModelCatalog: params.preparedModelRuntime?.modelCatalog.entries,
+    },
   });
   const modelSelectionChangedByHook =
     hookSelection.provider !== params.provider || hookSelection.modelId !== params.modelId;

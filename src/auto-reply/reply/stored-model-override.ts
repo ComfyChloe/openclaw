@@ -2,37 +2,80 @@
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import { hasSessionAutoModelFallbackProvenance } from "../../agents/agent-scope.js";
 import { resolveCliRuntimeCanonicalProvider } from "../../agents/cli-backends.js";
+import { findModelInCatalog } from "../../agents/model-catalog-lookup.js";
+import type { ModelCatalogEntry } from "../../agents/model-catalog.types.js";
+import { parseRawModelRef } from "../../agents/model-selection-normalize.js";
+import { resolvePersistedOverrideModelRef } from "../../agents/model-selection-persisted.js";
+import { parseConfiguredModelRef } from "../../agents/model-selection-shared.js";
 import {
-  normalizeStoredOverrideModel,
-  resolvePersistedOverrideModelRef,
-} from "../../agents/model-selection-persisted.js";
-import { modelKey, normalizeModelRef } from "../../agents/model-selection.js";
-import { RUNTIME_MODEL_VISIBILITY_NORMALIZATION } from "../../agents/model-visibility-policy.js";
+  modelKey,
+  resolveModelAliasFromPair,
+  type ModelAliasIndex,
+} from "../../agents/model-selection.js";
 import type { SessionEntry } from "../../config/sessions/types.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import type { StoredModelOverride } from "../../sessions/stored-model-overrides.js";
 import type { RuntimeModelNormalization } from "./model-runtime-normalization.js";
 
-/** Normalizes a stored model ref, resolving runtime aliases only for CLI-bound sessions. */
-export function normalizeStoredRuntimeModelRef(
-  provider: string,
-  model: string,
-  cfg?: OpenClawConfig,
-  sessionEntry?: SessionEntry,
-  normalization: RuntimeModelNormalization = RUNTIME_MODEL_VISIBILITY_NORMALIZATION,
-) {
-  const normalized = normalizeModelRef(provider, model, normalization);
-  const hasCliSessionBinding =
-    sessionEntry?.cliSessionBindings?.[normalized.provider] !== undefined;
-  const canonicalProvider =
-    cfg && hasCliSessionBinding
-      ? resolveCliRuntimeCanonicalProvider({
-          runtime: normalized.provider,
-          config: cfg,
-          includeSetupRegistry: true,
+/** Project a saved selection without validating or repairing its persisted owner. */
+export function resolveStoredRuntimeModelSelection(params: {
+  cfg: OpenClawConfig;
+  sessionEntry?: SessionEntry;
+  storedOverride: StoredModelOverride;
+  defaultProvider: string;
+  catalog: readonly Pick<ModelCatalogEntry, "provider" | "id">[];
+  aliasIndex: ModelAliasIndex;
+  normalization: RuntimeModelNormalization;
+}): { provider: string; model: string; routeResolution: "resolved" } {
+  const { storedOverride, normalization } = params;
+  const raw = storedOverride.provider
+    ? modelKey(storedOverride.provider, storedOverride.model)
+    : storedOverride.model;
+  const input = parseRawModelRef(raw, params.defaultProvider) ?? {
+    provider: storedOverride.provider || params.defaultProvider,
+    model: storedOverride.model,
+  };
+  const cataloged = findModelInCatalog(params.catalog, input.provider, input.model);
+  const alias =
+    storedOverride.routeResolution === "raw" && !cataloged
+      ? resolveModelAliasFromPair({
+          cfg: params.cfg,
+          ...input,
+          defaultProvider: params.defaultProvider,
+          aliasIndex: params.aliasIndex,
+          ...normalization,
         })
-      : undefined;
-  return canonicalProvider ? { ...normalized, provider: canonicalProvider } : normalized;
+      : null;
+  const selected =
+    storedOverride.routeResolution === "resolved"
+      ? (resolvePersistedOverrideModelRef({
+          ...normalization,
+          defaultProvider: params.defaultProvider,
+          overrideProvider: storedOverride.provider,
+          overrideModel: storedOverride.model,
+          overrideRouteResolution: "resolved",
+        }) ?? input)
+      : (alias ??
+        (cataloged ? { provider: cataloged.provider, model: cataloged.id } : null) ??
+        parseConfiguredModelRef({
+          cfg: params.cfg,
+          raw,
+          defaultProvider: params.defaultProvider,
+          ...normalization,
+        }) ??
+        input);
+  const canonicalProvider = params.sessionEntry?.cliSessionBindings?.[selected.provider]
+    ? resolveCliRuntimeCanonicalProvider({
+        runtime: selected.provider,
+        config: params.cfg,
+        includeSetupRegistry: true,
+      })
+    : undefined;
+  return {
+    ...selected,
+    provider: canonicalProvider ?? selected.provider,
+    routeResolution: "resolved",
+  };
 }
 
 function resolveModelRefKey(params: {
@@ -40,20 +83,18 @@ function resolveModelRefKey(params: {
   overrideProvider?: string;
   overrideModel?: string;
 }): string | null {
-  const normalizedOverride = normalizeStoredOverrideModel({
-    providerOverride: params.overrideProvider,
-    modelOverride: params.overrideModel,
-  });
   const ref = resolvePersistedOverrideModelRef({
     defaultProvider: params.defaultProvider,
-    overrideProvider: normalizedOverride.providerOverride,
-    overrideModel: normalizedOverride.modelOverride,
+    overrideProvider: params.overrideProvider,
+    overrideModel: params.overrideModel,
+    overrideRouteResolution: "resolved",
+    allowManifestNormalization: false,
+    allowPluginNormalization: false,
   });
   if (!ref) {
     return null;
   }
-  const normalizedRef = normalizeModelRef(ref.provider, ref.model);
-  return modelKey(normalizedRef.provider, normalizedRef.model);
+  return modelKey(ref.provider, ref.model);
 }
 
 /** Detects heartbeat auto-fallback overrides that no longer match the primary model. */

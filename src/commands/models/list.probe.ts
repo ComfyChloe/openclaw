@@ -68,7 +68,7 @@ import type {
 } from "../../infra/embedded-state-lock.js";
 import type { GatewayLockIdentity, GatewayLockOptions } from "../../infra/gateway-lock.js";
 import { type SecretRefResolveCache, resolveSecretRefString } from "../../secrets/resolve.js";
-import { createLazyImportLoader } from "../../shared/lazy-promise.js";
+import { createLazyPromise } from "../../shared/lazy-promise.js";
 import { disposeOpenClawAgentDatabaseByPath } from "../../state/openclaw-agent-db.js";
 import { redactStatusSecrets } from "../status-all/format.js";
 import { buildProbeCandidateMap, selectProbeModel } from "./list.probe.models.js";
@@ -94,13 +94,9 @@ type ProbeRunEmbeddedAgent = (
 
 // The probe only calls runEmbeddedAgent; the widened loader type lets the call
 // request the isolated-read-only runtime generation without a call-site cast.
-const embeddedRunnerModuleLoader = createLazyImportLoader<{
+const loadEmbeddedRunnerModule = createLazyPromise<{
   runEmbeddedAgent: ProbeRunEmbeddedAgent;
 }>(() => import("../../agents/embedded-agent.js"));
-
-function loadEmbeddedRunnerModule() {
-  return embeddedRunnerModuleLoader.load();
-}
 
 /** Normalized probe status bucket for auth/model diagnostics. */
 export type AuthProbeStatus =
@@ -139,7 +135,7 @@ export type AuthProbeResult = {
 
 type AuthProbeTarget = {
   provider: string;
-  model?: { provider: string; model: string } | null;
+  model?: ReturnType<typeof selectProbeModel>;
   profileId?: string;
   label: string;
   source: "profile" | "env" | "models.json";
@@ -898,6 +894,7 @@ async function probeTarget(params: {
       prompt: PROBE_PROMPT,
       provider: target.model.provider,
       model: target.model.model,
+      requestedRouteResolution: target.model.requestedRouteResolution,
       modelFallbacksOverride: [],
       authProfileId: isolatedProfileId ?? target.profileId,
       authProfileIdSource: isolatedProfileId || target.profileId ? "user" : undefined,

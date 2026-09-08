@@ -63,13 +63,14 @@ export function resolveSessionModelOverrideSource(
   return hasUserPinnedModelSelection(entry) ? "user" : "auto";
 }
 
-/** Resolves persisted route provenance, including fallback pins from before the marker existed. */
+/** Resolves route provenance, including user and fallback pins written before route markers. */
 export function resolveSessionModelOverrideRouteResolution(
   entry:
     | Pick<
         SessionEntry,
         | "providerOverride"
         | "modelOverride"
+        | "modelOverrideSource"
         | "modelOverrideRouteResolution"
         | "modelOverrideFallbackOriginProvider"
         | "modelOverrideFallbackOriginModel"
@@ -78,7 +79,10 @@ export function resolveSessionModelOverrideRouteResolution(
 ): "raw" | "resolved" {
   return (
     entry?.modelOverrideRouteResolution ??
-    (hasSessionAutoModelFallbackProvenance(entry) ? "resolved" : "raw")
+    // Pre-marker user pins were stored from resolved catalog refs; explicit markers still win.
+    (hasUserPinnedModelSelection(entry) || hasSessionAutoModelFallbackProvenance(entry)
+      ? "resolved"
+      : "raw")
   );
 }
 

@@ -69,6 +69,91 @@ afterEach(() => {
 });
 
 describe("resolveModelRuntimePolicy", () => {
+  it.each([
+    { keys: ["openrouter/auto"], expected: "openclaw" },
+    { keys: ["openrouter/openrouter/auto"], expected: "codex" },
+    { keys: ["openrouter/auto", "openrouter/openrouter/auto"], expected: "codex" },
+    { keys: ["openrouter/openrouter/auto", "openrouter/auto"], expected: "codex" },
+    { keys: ["openrouter/auto", "OPENROUTER/openrouter/auto"], expected: "codex" },
+    { keys: ["OPENROUTER/openrouter/auto", "openrouter/auto"], expected: "codex" },
+  ])(
+    "uses canonical runtime settings before a short alias regardless of key order: $keys",
+    ({ keys, expected }) => {
+      const config: OpenClawConfig = {
+        agents: {
+          defaults: {
+            models: Object.fromEntries(
+              keys.map((key) => [
+                key,
+                { agentRuntime: { id: key === "openrouter/auto" ? "openclaw" : "codex" } },
+              ]),
+            ),
+          },
+        },
+      };
+      expect(
+        resolveModelRuntimePolicy({ config, provider: "openrouter", modelId: "openrouter/auto" })
+          .policy?.id,
+      ).toBe(expected);
+    },
+  );
+
+  it.each(["agent-model", "provider-model"])(
+    "keeps runtime policies separate across literal model namespaces in %s config",
+    (scope) => {
+      const config: OpenClawConfig =
+        scope === "agent-model"
+          ? {
+              agents: {
+                defaults: {
+                  models: {
+                    "custom/model": { agentRuntime: { id: "openclaw" } },
+                    "custom/custom/model": { agentRuntime: { id: "codex" } },
+                  },
+                },
+              },
+            }
+          : {
+              models: {
+                providers: {
+                  custom: {
+                    baseUrl: "https://example.invalid/v1",
+                    models: [
+                      createModelConfig("openclaw", "model"),
+                      createModelConfig("codex", "custom/model"),
+                    ],
+                  },
+                },
+              },
+            };
+      expect(
+        resolveModelRuntimePolicy({ config, provider: "custom", modelId: "model" }).policy?.id,
+      ).toBe("openclaw");
+      expect(
+        resolveModelRuntimePolicy({ config, provider: "custom", modelId: "custom/model" }).policy
+          ?.id,
+      ).toBe("codex");
+      expect(resolveModelRuntimePolicy({ config, modelId: "custom/custom/model" }).policy?.id).toBe(
+        "codex",
+      );
+    },
+  );
+
+  it("does not borrow another provider's runtime policy for a namespaced local model", () => {
+    const config: OpenClawConfig = {
+      agents: {
+        defaults: {
+          models: {
+            "vendor/model": { agentRuntime: { id: "codex" } },
+          },
+        },
+      },
+    };
+    expect(
+      resolveModelRuntimePolicy({ config, provider: "custom", modelId: "vendor/model" }),
+    ).toEqual({});
+  });
+
   it("ignores the QA force-runtime override when the private QA gate is unset", () => {
     deleteTestEnvValue("OPENCLAW_BUILD_PRIVATE_QA");
     setTestEnvValue("OPENCLAW_QA_FORCE_RUNTIME", "openclaw");
@@ -230,13 +315,15 @@ describe("resolveModelRuntimePolicy", () => {
   it.each([
     {
       name: "provider-owned model id",
+      provider: "openrouter",
       modelId: "anthropic/claude-opus-4.6",
     },
     {
-      name: "provider-qualified model id",
+      name: "provider-qualified model ref with inferred provider",
+      provider: "",
       modelId: "openrouter/anthropic/claude-opus-4.6",
     },
-  ])("honors the OpenRouter agent model policy for a $name", ({ modelId }) => {
+  ])("honors the OpenRouter agent model policy for a $name", ({ provider, modelId }) => {
     const config = {
       agents: {
         defaults: {
@@ -264,7 +351,7 @@ describe("resolveModelRuntimePolicy", () => {
     expect(
       resolveModelRuntimePolicy({
         config,
-        provider: "openrouter",
+        provider,
         modelId,
       }),
     ).toEqual({
@@ -279,12 +366,6 @@ describe("resolveModelRuntimePolicy", () => {
       name: "provider-owned model id",
       provider: "openrouter",
       modelId: "anthropic/claude-opus-4.6",
-      matchedProvider: undefined,
-    },
-    {
-      name: "provider-qualified model id",
-      provider: "openrouter",
-      modelId: "openrouter/anthropic/claude-opus-4.6",
       matchedProvider: undefined,
     },
     {

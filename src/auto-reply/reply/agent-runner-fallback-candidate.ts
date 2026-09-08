@@ -308,6 +308,7 @@ export async function runAgentFallbackCandidates(params: AgentFallbackCycleParam
         }
         const candidate = await runEmbeddedFallbackCandidate({
           ...common,
+          onConfiguredDefault: params.onConfiguredDefault,
           githubPublicationAvailable: await (githubPublicationAvailability ??=
             turn.sessionKey && params.effectiveRun.agentId
               ? prepareGitHubPublicationAvailability({

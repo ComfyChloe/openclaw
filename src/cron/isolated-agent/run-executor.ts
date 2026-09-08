@@ -778,6 +778,7 @@ function createCronPromptExecutor(
           provider: providerOverride,
           model: modelOverride,
           agentHarnessRuntimeOverride: sessionRuntimeOverride,
+          requestedRouteResolution: "resolved",
           modelFallbacksOverride: cronFallbacksOverride,
           authProfileId: params.liveSelection.authProfileId,
           authProfileIdSource: params.liveSelection.authProfileId

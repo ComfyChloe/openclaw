@@ -294,6 +294,10 @@ export const AgentParamsSchema = closedObject({
   agentId: Type.Optional(NonEmptyString),
   provider: Type.Optional(Type.String()),
   model: Type.Optional(Type.String()),
+  // A literal selected tuple skips input aliases; authorization and policy are unchanged.
+  requestedRouteResolution: Type.Optional(
+    Type.Union([Type.Literal("raw"), Type.Literal("resolved")]),
+  ),
   to: Type.Optional(Type.String()),
   replyTo: Type.Optional(Type.String()),
   sessionId: Type.Optional(Type.String()),

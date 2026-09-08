@@ -301,25 +301,31 @@ function getModelRef(
     modelProviderId?: string;
     modelId?: string;
   },
-): { provider: string; model: string } | undefined {
+):
+  | {
+      provider: string;
+      model: string;
+      modelInput?: string;
+      requestedRouteResolution: "raw" | "resolved";
+    }
+  | undefined {
   const currentRunModel =
-    ctx?.modelProviderId && ctx?.modelId ? `${ctx.modelProviderId}/${ctx.modelId}` : undefined;
-  const configuredDefaultModel = resolveAgentEffectiveModelPrimary(runtimeConfig, agentId)
+    ctx?.modelProviderId && ctx?.modelId
+      ? { provider: ctx.modelProviderId, model: ctx.modelId }
+      : undefined;
+  const configuredPrimary = resolveAgentEffectiveModelPrimary(runtimeConfig, agentId);
+  const configuredDefaultModel = configuredPrimary
     ? resolveDefaultModelForAgent({ cfg: runtimeConfig, agentId })
     : undefined;
   const defaultProvider = configuredDefaultModel?.provider ?? DEFAULT_PROVIDER;
-  const candidates = [
-    config.model,
-    currentRunModel,
-    configuredDefaultModel
-      ? `${configuredDefaultModel.provider}/${configuredDefaultModel.model}`
-      : undefined,
-    config.modelFallback,
-  ];
+  const candidates = [config.model, currentRunModel, configuredPrimary, config.modelFallback];
   for (const candidate of candidates) {
+    if (candidate && typeof candidate !== "string") {
+      return { ...candidate, requestedRouteResolution: "resolved" };
+    }
     const parsed = parseModelCandidate(candidate, defaultProvider);
     if (parsed) {
-      return parsed;
+      return { ...parsed, modelInput: candidate, requestedRouteResolution: "raw" };
     }
   }
   return undefined;

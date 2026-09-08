@@ -56,7 +56,6 @@ import {
 import { persistAgentSession } from "./attempt-execution.shared.js";
 import { createCommandCompactionAccounting } from "./compaction-accounting.js";
 import { createAgentCommandLifecycle } from "./lifecycle.js";
-import { normalizeAgentCommandModelRef } from "./model-ref.js";
 import type { EmbeddedModelSelection } from "./model-selection.js";
 import type { PreparedAgentCommandExecution } from "./prepare.js";
 import { loadAttemptExecutionRuntime, type AgentAttemptResult } from "./runtime-loaders.js";
@@ -616,13 +615,8 @@ export async function runEmbeddedAgentAttempt(params: {
           await deferredLifecycle.complete();
           throw new Error(retryLimitMessage, { cause: err });
         }
-        const switchRef = normalizeAgentCommandModelRef(
-          cfg,
-          err.provider,
-          err.model,
-          modelManifestContext,
-        );
-        if (!visibilityPolicy.allowsKey(modelKey(switchRef.provider, switchRef.model))) {
+        // The live-switch producer already resolved the pair that the retry executes.
+        if (!visibilityPolicy.allowsKey(modelKey(err.provider, err.model))) {
           log.info(
             `Live session model switch in subagent run ${runId}: ` +
               `rejected ${sanitizeForLog(err.provider)}/${sanitizeForLog(err.model)} (not in allowlist)`,

@@ -296,7 +296,7 @@ async function projectPreparedModelsProviderData(
   options: ModelsBrowseOptions,
   owner?: PreparedModelRuntimeSnapshot,
 ): Promise<PreparedModelsProviderData> {
-  const runtimeNormalization = resolveRuntimeNormalization(cfg);
+  const runtimeNormalization = resolveRuntimeNormalization(cfg, owner?.modelCatalog.entries);
   const resolvedDefault = resolveDefaultModelForAgent({
     cfg,
     agentId,

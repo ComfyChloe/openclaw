@@ -1,3 +1,4 @@
+import { findProviderModelConfig } from "../../config/model-provider-config.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import type { Model } from "../../llm/types.js";
 import type { PluginMetadataSnapshotOwnerMaps } from "../../plugins/plugin-metadata-snapshot.types.js";
@@ -13,7 +14,6 @@ import {
 import { mergeModelMediaInput, resolveConfiguredFallbackReasoning } from "./model.compat.js";
 import {
   clampModelMaxTokensToContextWindow,
-  findConfiguredProviderModel,
   hasConfiguredFallbackSurface,
   mergeConfiguredRuntimeModelParams,
   mergeConfiguredModelCost,
@@ -50,7 +50,7 @@ export function buildConfiguredFallbackModel(params: {
   const { provider, modelId, cfg, agentDir, workspaceDir, runtimeHooks } = params;
   const providerConfig = resolveConfiguredProviderConfig(cfg, provider);
   const requestTimeoutMs = resolveProviderRequestTimeoutMs(providerConfig?.timeoutSeconds);
-  const configuredModel = findConfiguredProviderModel(providerConfig, provider, modelId);
+  const configuredModel = findProviderModelConfig(providerConfig?.models, provider, modelId);
   if (!hasConfiguredFallbackSurface({ providerConfig, configuredModel, modelId })) {
     return undefined;
   }
@@ -187,6 +187,7 @@ export function buildConfiguredFallbackModel(params: {
               : {}),
             cost: mergeConfiguredModelCost({
               provider,
+              modelId,
               cfg,
               configuredModel,
               catalogCost: staticCatalogModel?.cost,

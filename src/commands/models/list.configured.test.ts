@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { normalizeProviderId } from "@openclaw/model-catalog-core/provider-id";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { loadPluginManifest } from "../../plugins/manifest.js";
 import { createPluginMetadataSnapshotFixture } from "../../plugins/plugin-metadata.test-support.js";
 
 const emptyPluginMetadataSnapshot = {
@@ -210,87 +211,99 @@ describe("resolveConfiguredEntries", () => {
 });
 
 describe("configured model list rows", () => {
-  it("keeps raw alias auth for self-prefixed implicit models in replace mode", async () => {
-    vi.stubEnv("OPENCLAW_BUNDLED_PLUGINS_DIR", path.resolve("extensions"));
-    const catalogEntry = {
-      id: "glm-4.7",
-      name: "GLM 4.7",
-      provider: "zai",
-      input: ["text"] as const,
-      contextWindow: 128_000,
-    };
-    mocks.loadPreparedModelCatalogSnapshot.mockResolvedValue({
-      entries: [catalogEntry],
-      routeVariants: [catalogEntry],
-    });
-    const cfg = {
-      agents: {
-        defaults: {
-          model: { primary: "z.ai/glm-4.7", fallbacks: ["google/gemini-stale"] },
-          models: { "openai/gpt-stale": {} },
-        },
-      },
-      models: {
-        mode: "replace" as const,
-        providers: {
-          "z.ai": {
-            baseUrl: "https://api.z.ai/v1",
-            models: [
-              {
-                id: "z.ai/glm-4.7",
-                name: "GLM 4.7",
-                reasoning: false,
-                input: ["text" as const],
-                cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-                contextWindow: 128_000,
-                maxTokens: 8_192,
-              },
-              {
-                id: "z.ai/glm-4.8",
-                name: "GLM 4.8",
-                reasoning: false,
-                input: ["text" as const],
-                cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-                contextWindow: 128_000,
-                maxTokens: 8_192,
-              },
-            ],
+  it.each(["zai", "z.ai", "z-ai"])(
+    "keeps raw %s auth for self-prefixed implicit models in replace mode",
+    async (sourceProvider) => {
+      vi.stubEnv("OPENCLAW_BUNDLED_PLUGINS_DIR", path.resolve("extensions"));
+      const loaded = loadPluginManifest(path.resolve("extensions/zai"));
+      if (!loaded.ok) {
+        throw new Error(loaded.error);
+      }
+      const metadataSnapshot = createPluginMetadataSnapshotFixture({ plugins: [loaded.manifest] });
+      const catalogEntry = {
+        id: "glm-4.7",
+        name: "GLM 4.7",
+        provider: "zai",
+        input: ["text"] as const,
+        contextWindow: 128_000,
+      };
+      mocks.loadPreparedModelCatalogSnapshot.mockResolvedValue({
+        entries: [catalogEntry],
+        routeVariants: [catalogEntry],
+      });
+      const cfg = {
+        agents: {
+          defaults: {
+            model: { primary: `${sourceProvider}/glm-4.7`, fallbacks: ["google/gemini-stale"] },
+            models: { "openai/gpt-stale": {} },
           },
         },
-      },
-    };
-    const { entries } = resolveConfiguredEntries(cfg);
-    const evaluateModelAuth = vi.fn((provider: string) => ({
-      availability: provider === "z.ai",
-      routeResolution: null,
-    }));
-    const rows = await buildModelListRows({
-      includePreparedCatalog: false,
-      entries,
-      context: {
-        cfg,
-        agentDir: "/tmp/openclaw-agent",
-        authIndex: { evaluateModelAuth },
-        canonicalizeProvider: createModelCatalogProviderAliasCanonicalizer({ cfg }).provider,
-        configuredByKey: new Map(entries.map((entry) => [entry.key, entry])),
-        discoveredKeys: new Set(),
-        filter: {},
-      },
-    });
+        models: {
+          mode: "replace" as const,
+          providers: {
+            [sourceProvider]: {
+              baseUrl: "https://api.z.ai/v1",
+              models: [
+                {
+                  id: `${sourceProvider}/glm-4.7`,
+                  name: "GLM 4.7",
+                  reasoning: false,
+                  input: ["text" as const],
+                  cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+                  contextWindow: 128_000,
+                  maxTokens: 8_192,
+                },
+                {
+                  id: `${sourceProvider}/glm-4.8`,
+                  name: "GLM 4.8",
+                  reasoning: false,
+                  input: ["text" as const],
+                  cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+                  contextWindow: 128_000,
+                  maxTokens: 8_192,
+                },
+              ],
+            },
+          },
+        },
+      };
+      const { entries } = resolveConfiguredEntries(cfg, metadataSnapshot);
+      const evaluateModelAuth = vi.fn((provider: string) => ({
+        availability: provider === sourceProvider,
+        routeResolution: null,
+      }));
+      const rows = await buildModelListRows({
+        includePreparedCatalog: false,
+        entries,
+        context: {
+          cfg,
+          metadataSnapshot,
+          agentDir: "/tmp/openclaw-agent",
+          authIndex: { evaluateModelAuth },
+          canonicalizeProvider: createModelCatalogProviderAliasCanonicalizer({
+            cfg,
+            metadataSnapshot,
+          }).provider,
+          configuredByKey: new Map(entries.map((entry) => [entry.key, entry])),
+          discoveredKeys: new Set(),
+          filter: {},
+        },
+      });
 
-    expect(rows.map((row) => row.key)).toEqual(["zai/glm-4.7", "zai/glm-4.8"]);
-    expect(rows[0]).toMatchObject({ name: "GLM 4.7", available: true });
-    expect(rows[1]).toMatchObject({ name: "GLM 4.8", available: true });
-    expect(mocks.loadPreparedModelCatalogSnapshot).not.toHaveBeenCalled();
-    expect(evaluateModelAuth).toHaveBeenCalledWith(
-      "z.ai",
-      expect.objectContaining({ modelId: "glm-4.7" }),
-    );
-    expect(evaluateModelAuth).toHaveBeenCalledWith(
-      "z.ai",
-      expect.objectContaining({ modelId: "glm-4.8" }),
-    );
-  });
+      expect(rows.map((row) => row.key)).toEqual(["zai/glm-4.7", "zai/glm-4.8"]);
+      expect(rows[0]).toMatchObject({ name: "GLM 4.7", available: true });
+      expect(rows[1]).toMatchObject({ name: "GLM 4.8", available: true });
+      expect(mocks.loadPreparedModelCatalogSnapshot).not.toHaveBeenCalled();
+      expect(evaluateModelAuth).toHaveBeenCalledWith(
+        sourceProvider,
+        expect.objectContaining({ modelId: "glm-4.7" }),
+      );
+      expect(evaluateModelAuth).toHaveBeenCalledWith(
+        sourceProvider,
+        expect.objectContaining({ modelId: "glm-4.8" }),
+      );
+    },
+  );
 
   it("drops a stale default outside models.providers in replace mode", async () => {
     const cfg = {

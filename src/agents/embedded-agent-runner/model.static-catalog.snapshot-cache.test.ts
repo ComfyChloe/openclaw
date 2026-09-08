@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { PluginManifestRecord } from "../../plugins/manifest-registry.types.js";
 import { clearPluginMetadataLifecycleCaches } from "../../plugins/plugin-metadata-lifecycle.js";
 import { createPluginMetadataSnapshotFixture } from "../../plugins/plugin-metadata.test-support.js";
+import { createStaticProviderModelIdNormalizer } from "../model-ref-shared.js";
+import { prepareConfiguredRuntimeModels } from "../prepared-model-runtime.configured.js";
 
 const manifestMocks = vi.hoisted(() => ({
   getGatewayPluginMetadataSnapshot: vi.fn(),
@@ -190,6 +192,50 @@ describe("bundled static model catalog snapshot cache", () => {
     expect(manifestMocks.loadPluginManifest).not.toHaveBeenCalled();
   });
 
+  it.each([false, true])(
+    "preserves executable IDs that are also input aliases (reverse=%s)",
+    (reverse) => {
+      const plugin = createMistralManifestPlugin();
+      const base = plugin.modelCatalog.providers.mistral.models[0]!;
+      const models = [
+        { ...base, id: "middle", contextWindow: 32000 },
+        { ...base, id: "final", contextWindow: 64000 },
+      ];
+      plugin.modelCatalog.providers.mistral.models = reverse ? models.toReversed() : models;
+      const metadataSnapshot = createPluginMetadataSnapshotFixture({
+        plugins: [
+          {
+            ...plugin,
+            modelIdNormalization: {
+              providers: { mistral: { aliases: { latest: "middle", middle: "final" } } },
+            },
+          },
+        ],
+      });
+      const resolveModel = createBundledStaticCatalogModelResolver({ cfg: {}, metadataSnapshot });
+      expect(resolveModel({ provider: "mistral", modelId: "middle" })).toMatchObject({
+        id: "middle",
+        contextWindow: 32000,
+      });
+      expect(resolveModel({ provider: "mistral", modelId: "latest" })).toBeUndefined();
+      expect(
+        prepareConfiguredRuntimeModels({
+          configuredModelRefs: [{ provider: "mistral", modelId: "latest" }],
+          metadataSnapshot,
+          providerStaticModels: [],
+          resolveStaticCatalogModel: resolveModel,
+          normalizeModelId: createStaticProviderModelIdNormalizer({
+            manifestPlugins: metadataSnapshot,
+          }),
+        })[0]?.model,
+      ).toMatchObject({ id: "middle", contextWindow: 32000 });
+      expect(resolveModel({ provider: "mistral", modelId: "final" })).toMatchObject({
+        id: "final",
+        contextWindow: 64000,
+      });
+    },
+  );
+
   it("pins lifecycle lookups to the supplied plugin generation", () => {
     const cfg = {};
     const capturedPlugin = {
@@ -231,7 +277,7 @@ describe("bundled static model catalog snapshot cache", () => {
     expect(resolveModel({ provider: "mistral", modelId: "mistral-medium-3-5" })?.id).toBe(
       "mistral-medium-3-5",
     );
-    expect(resolveModel({ provider: "mistral", modelId: "latest" })?.id).toBe("mistral-medium-3-5");
+    expect(resolveModel({ provider: "mistral", modelId: "latest" })).toBeUndefined();
     expect(resolveModel({ provider: "mistral", modelId: "mistral-medium-next" })).toBeUndefined();
     expect(manifestMocks.getCurrentPluginMetadataSnapshot).not.toHaveBeenCalled();
     expect(manifestMocks.listOpenClawPluginManifestMetadata).not.toHaveBeenCalled();

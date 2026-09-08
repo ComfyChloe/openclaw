@@ -67,7 +67,7 @@ describe("executeAgentTurn: primary probe routing", () => {
       }),
     ).toMatchObject({
       provider: "google",
-      model: "gemini-3.1-pro-preview",
+      model: "gemini-3-pro",
       requestedRouteResolution: "resolved",
       authProfileId: "google:fallback",
       authProfileIdSource: "auto",
@@ -104,10 +104,36 @@ describe("executeAgentTurn: primary probe routing", () => {
     ).toMatchObject({
       provider: "openai",
       model: "gpt-5.4",
-      requestedRouteResolution: "raw",
+      requestedRouteResolution: "resolved",
       authProfileId: "openai:work",
       authProfileIdSource: "user",
       modelOverrideSource: "user",
+      autoFallbackPrimaryProbe: undefined,
+    });
+  });
+
+  it("preserves raw queued input when the session has no model override", () => {
+    const run = createFollowupRun().run;
+    run.provider = "google";
+    run.model = "gemini-3-pro";
+    run.requestedRouteResolution = "raw";
+    run.autoFallbackPrimaryProbe = {
+      provider: "anthropic",
+      model: "claude-sonnet-4-6",
+      fallbackProvider: "google",
+      fallbackModel: "gemini-3-pro",
+    };
+
+    expect(
+      resolveRunAfterAutoFallbackPrimaryProbeRecheck({
+        run,
+        entry: { sessionId: "session", updatedAt: 1 },
+        sessionKey: "main",
+      }),
+    ).toMatchObject({
+      provider: "google",
+      model: "gemini-3-pro",
+      requestedRouteResolution: "raw",
       autoFallbackPrimaryProbe: undefined,
     });
   });

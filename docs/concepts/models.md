@@ -289,7 +289,8 @@ Without a scope flag, selections change only the current session. `agents.defaul
 - A user-selected `/model` ref is strict for that session: if it becomes unreachable, the reply fails visibly instead of silently falling back through `agents.defaults.model.fallbacks`. Configured defaults and cron job primaries still use fallback chains.
 - `/model status` is the detailed view: auth candidates per provider, and (when configured) the provider endpoint `baseUrl` plus `api` mode.
 - Model refs are parsed by splitting on the first `/`; type `provider/model`. If the model ID itself contains `/` (OpenRouter-style), include the provider prefix, e.g. `/model openrouter/moonshotai/kimi-k2`. If you omit the provider, OpenClaw tries: (1) alias match, (2) unique configured-provider match for that exact unprefixed model id, (3) the configured default provider (deprecated fallback) — and if that provider no longer exposes the configured default model, the first configured provider/model instead, to avoid surfacing a stale removed-provider default.
-- Model refs are normalized to lowercase; provider IDs are otherwise exact, so use the ID advertised by the plugin.
+- Provider IDs are normalized to lowercase. Model IDs retain their provider-local namespace and casing, except for aliases explicitly supported by that provider. For a custom provider named `custom`, model IDs `model` and `custom/model` are distinct: select them as `custom/model` and `custom/custom/model`. Status and fallback notices show the full ref.
+- Configured catalogs resolve provider aliases when they are built. Selecting one of those resulting model IDs preserves it when configuration is saved and loaded again. Retired-model migrations still apply.
 
 Full command behavior and config: [Slash commands](/tools/slash-commands).
 

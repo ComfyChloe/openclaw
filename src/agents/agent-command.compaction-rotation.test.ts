@@ -550,7 +550,16 @@ describe("agentCommand compaction transcript rotation", () => {
         allowModelOverride: false,
       },
       ...GATEWAY_INGRESS_ARGS,
-      { config: state.cfg ?? {}, pluginGeneration },
+      {
+        snapshot: {
+          config: state.cfg ?? {},
+          agentId: "main",
+          agentDir: state.agentDir ?? "/tmp/openclaw-agent",
+          workspaceDir: state.workspaceDir,
+          modelCatalog: { entries: [], routeVariants: [] },
+        },
+        pluginGeneration,
+      },
     );
 
     expect(storedEntryBeforeCompaction).toMatchObject({

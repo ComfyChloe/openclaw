@@ -17,6 +17,7 @@ import {
 } from "../plugins/provider-hook-runtime.js";
 import { resolveProviderStreamFn } from "../plugins/provider-runtime.js";
 import { ensureCustomApiRegistered } from "./custom-api-registry.js";
+import type { ProviderRequestCapability } from "./provider-attribution.js";
 import {
   unwrapHeaderSentinelsForProviderEgress,
   unwrapModelHeaderSentinelsForProviderEgress,
@@ -33,6 +34,7 @@ export function registerProviderStreamForModel<TApi extends Api>(params: {
   env?: NodeJS.ProcessEnv;
   allowRuntimePluginLoad?: boolean;
   wrapProviderStream?: boolean;
+  capability?: ProviderRequestCapability;
   apiRegistry?: ApiRegistry;
 }): StreamFn | undefined {
   const apiRegistry = params.apiRegistry ?? getModelLlmRuntime(params.model)?.registry;
@@ -101,6 +103,7 @@ export function registerProviderStreamForModel<TApi extends Api>(params: {
           modelId: runtimeModel.id,
           model: runtimeModel,
           streamFn,
+          ...(params.capability ? { capability: params.capability } : {}),
         }) ?? streamFn)
       : streamFn;
   const preparedStreamFn = runtimeHandle

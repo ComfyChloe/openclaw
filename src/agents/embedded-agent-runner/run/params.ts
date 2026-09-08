@@ -55,7 +55,10 @@ import type { ContextEngineTurnAttemptFacts } from "../../harness/context-engine
 import type { ExpectedAgentHarnessRuntimeArtifact } from "../../harness/runtime-artifact.types.js";
 import type { AgentInternalEvent } from "../../internal-events.js";
 import type { PreparedModelThinkingCapability } from "../../model-catalog-lookup.js";
-import type { ModelFallbackAttemptProvenance } from "../../model-fallback.types.js";
+import type {
+  ModelFallbackAttemptProvenance,
+  ModelFallbackRouteResolution,
+} from "../../model-fallback.types.js";
 import type { AgentRunSessionTarget } from "../../run-session-target.js";
 import type { AgentMessage } from "../../runtime/index.js";
 import type { ScheduledToolPolicyContext } from "../../scheduled-tool-policy.js";
@@ -270,6 +273,8 @@ export type RunEmbeddedAgentParams = {
   disableTools?: boolean;
   provider?: string;
   model?: string;
+  /** Raw input by default; resolved tuples retain their selected model ID through admission. */
+  requestedRouteResolution?: ModelFallbackRouteResolution;
   /** Outer model-fallback owner facts for this admitted attempt. */
   modelRoutingProvenance?: ModelFallbackAttemptProvenance;
   /** Vision capability resolved by the run owner from its prepared model catalog. */

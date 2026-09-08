@@ -7,13 +7,13 @@ import { resolveAgentConfig, tryResolveLegacyCompatibilityAgentId } from "../age
 import { DEFAULT_MODEL, DEFAULT_PROVIDER } from "../agents/defaults.js";
 import { formatFastModeValue, resolveFastModeState } from "../agents/fast-mode.js";
 import type { ModelCatalogEntry } from "../agents/model-catalog.types.js";
-import { legacyModelKey, modelKey } from "../agents/model-ref-shared.js";
 import {
   buildConfiguredModelCatalog,
   resolveConfiguredModelRef,
 } from "../agents/model-selection-shared.js";
 import { resolveThinkingDefault } from "../agents/model-thinking-default.js";
 import type { AmbientEnvTriggerPolicy } from "../channels/config-presence.js";
+import { resolveAgentModelConfigValue } from "../config/model-input.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { ensureSqliteLibrarySelected } from "../infra/bun-sqlite-library.js";
 import { getResolvedLoggerSettings } from "../logging.js";
@@ -140,12 +140,15 @@ function resolveExplicitStartupThinking(params: {
   defaultAgentThinking: unknown;
 }): StartupThinkLevel | undefined {
   const models = params.cfg.agents?.defaults?.models;
-  const canonicalKey = modelKey(params.provider, params.model);
-  const legacyKey = legacyModelKey(params.provider, params.model);
+  const modelThinking = resolveAgentModelConfigValue(
+    models,
+    params.provider,
+    params.model,
+    (entry) => normalizeStartupThinkLevel(entry.params?.thinking),
+  );
   return (
     normalizeStartupThinkLevel(params.defaultAgentThinking) ??
-    normalizeStartupThinkLevel(models?.[canonicalKey]?.params?.thinking) ??
-    normalizeStartupThinkLevel(legacyKey ? models?.[legacyKey]?.params?.thinking : undefined) ??
+    modelThinking ??
     normalizeStartupThinkLevel(params.cfg.agents?.defaults?.thinkingDefault)
   );
 }

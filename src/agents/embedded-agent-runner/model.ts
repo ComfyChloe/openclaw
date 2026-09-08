@@ -29,7 +29,6 @@ import {
   resolveRuntimeHooks,
 } from "./model.provider-hooks.js";
 import {
-  normalizeProviderModelRef,
   resolveDynamicModelAuthProfile,
   resolveExplicitModelWithRegistry,
   resolveModelWithPreparedRegistry,
@@ -39,8 +38,9 @@ import {
 import {
   resolveBundledProviderStaticCatalogModel,
   resolveBundledStaticCatalogModel,
+  resolveManifestModelCatalogProviderAliasMetadata,
 } from "./model.static-catalog.js";
-import { staticModelIdMatches } from "./model.static-id.js";
+import { findStaticModel } from "./model.static-id.js";
 
 export { resolveModelWithRegistry } from "./model.registry-resolution.js";
 
@@ -98,6 +98,7 @@ function resolvePreparedAgentSnapshot(
   return getPreparedModelRuntimeSnapshot({ ...base, workspaceDir: derivedWorkspaceDir });
 }
 
+/** Materializes the selected identity; a catalog miss must never replay input aliases. */
 export async function resolveModelAsync(
   provider: string,
   modelId: string,
@@ -150,7 +151,6 @@ export async function resolveModelAsync(
   const resolve = async () => {
     const workspaceDir =
       options?.workspaceDir ?? preparedModelRuntime?.workspaceDir ?? derivedWorkspaceDir;
-    const normalizedRef = normalizeProviderModelRef({ provider, modelId, cfg, workspaceDir });
     let { authStorage, modelRegistry } = options ?? {};
     if (!authStorage || !modelRegistry) {
       const stores =
@@ -162,25 +162,35 @@ export async function resolveModelAsync(
         ? stores.modelRegistry.fork(authStorage)
         : stores.modelRegistry;
     }
+    const manifestAlias = resolveManifestModelCatalogProviderAliasMetadata({
+      provider,
+      modelId,
+      cfg,
+      workspaceDir,
+    });
     const runtimeHooks = resolveRuntimeHooks(options);
+    const modelContext = {
+      provider: manifestAlias.provider,
+      modelId,
+      cfg,
+      agentDir: resolvedAgentDir,
+      workspaceDir,
+      runtimeHooks,
+    };
     let staticCatalogResolved = false;
     let staticCatalogModel: StaticCatalogFallbackModel | undefined;
     const getManifestStaticCatalogModel = () => {
       if (!staticCatalogResolved) {
         staticCatalogResolved = true;
         staticCatalogModel =
-          preparedModelRuntime?.configuredRuntimeModels?.find(
-            ({ modelId: candidateId, provider: rowProvider }) =>
-              staticModelIdMatches({
-                candidateId,
-                rowProvider,
-                provider: normalizedRef.provider,
-                modelId: normalizedRef.model,
-              }),
-          )?.model ??
+          findStaticModel(
+            preparedModelRuntime?.configuredRuntimeModels?.map(({ model }) => model) ?? [],
+            manifestAlias.provider,
+            modelId,
+          ) ??
           resolveBundledStaticCatalogModel({
-            provider: normalizedRef.provider,
-            modelId: normalizedRef.model,
+            provider: manifestAlias.provider,
+            modelId,
             cfg,
             workspaceDir,
             includeRuntimeDiscovery: true,
@@ -191,29 +201,17 @@ export async function resolveModelAsync(
       }
       return staticCatalogModel;
     };
-    if (normalizedRef.manifestAlias.ambiguous) {
+    if (manifestAlias.ambiguous) {
       return {
-        error: buildUnknownModelError({
-          provider: normalizedRef.provider,
-          modelId: normalizedRef.model,
-          cfg,
-          agentDir: resolvedAgentDir,
-          workspaceDir,
-          runtimeHooks,
-        }),
+        error: buildUnknownModelError(modelContext),
         authStorage,
         modelRegistry,
       };
     }
     const explicitModel = resolveExplicitModelWithRegistry({
-      provider: normalizedRef.provider,
-      modelId: normalizedRef.model,
+      ...modelContext,
       modelRegistry,
-      cfg,
-      agentDir: resolvedAgentDir,
-      manifestAlias: normalizedRef.manifestAlias,
-      workspaceDir,
-      runtimeHooks,
+      manifestAlias,
       // Inline rows carry configured transport and headers; only their captured config can reuse them.
       preparedInlineProviderModels:
         cfg === preparedModelRuntime?.config
@@ -223,39 +221,25 @@ export async function resolveModelAsync(
     });
     if (explicitModel?.kind === "suppressed") {
       const suppressedRuntimeModel = resolveRuntimePreferredSuppressedModel({
-        provider: normalizedRef.provider,
-        modelId: normalizedRef.model,
+        ...modelContext,
         modelRegistry,
-        cfg,
-        agentDir: resolvedAgentDir,
         ...(options?.agentRuntimeId ? { agentRuntimeId: options.agentRuntimeId } : {}),
-        manifestAlias: normalizedRef.manifestAlias,
-        workspaceDir,
+        manifestAlias,
         authProfileId: options?.authProfileId,
         authProfileMode: options?.authProfileMode,
         preferredProfile: options?.preferredProfile,
-        runtimeHooks,
         getStaticCatalogModel: getManifestStaticCatalogModel,
       });
       if (suppressedRuntimeModel) {
         return { model: suppressedRuntimeModel, authStorage, modelRegistry };
       }
       return {
-        error:
-          explicitModel.error ??
-          buildUnknownModelError({
-            provider: normalizedRef.provider,
-            modelId: normalizedRef.model,
-            cfg,
-            agentDir: resolvedAgentDir,
-            workspaceDir,
-            runtimeHooks,
-          }),
+        error: explicitModel.error ?? buildUnknownModelError(modelContext),
         authStorage,
         modelRegistry,
       };
     }
-    const providerConfig = resolveConfiguredProviderConfig(cfg, normalizedRef.provider);
+    const providerConfig = resolveConfiguredProviderConfig(cfg, manifestAlias.provider);
     const preparedMetadataSnapshot = preparedModelRuntime?.metadataSnapshot;
     let providerStaticCatalogLookup: Promise<ProviderRuntimeModel | undefined> | undefined;
     const resolveStaticCatalogModel = async () => {
@@ -265,8 +249,8 @@ export async function resolveModelAsync(
       return (
         getManifestStaticCatalogModel() ??
         (await (providerStaticCatalogLookup ??= resolveBundledProviderStaticCatalogModel({
-          provider: normalizedRef.provider,
-          modelId: normalizedRef.model,
+          provider: manifestAlias.provider,
+          modelId,
           cfg,
           workspaceDir,
           ...(preparedMetadataSnapshot ? { metadataSnapshot: preparedMetadataSnapshot } : {}),
@@ -279,39 +263,28 @@ export async function resolveModelAsync(
         return undefined;
       }
       const overriddenStaticCatalogModel = applyConfiguredProviderOverrides({
-        provider: normalizedRef.provider,
+        ...modelContext,
         discoveredModel: catalogModel,
         providerConfig,
-        modelId: normalizedRef.model,
-        cfg,
-        manifestAlias: normalizedRef.manifestAlias,
-        runtimeHooks,
-        workspaceDir,
+        manifestAlias,
         preferDiscoveredModelMetadata: true,
         preferDiscoveredTransport: options?.preferBundledStaticCatalogTransport,
         staticCatalogModel: catalogModel,
       });
       return normalizeResolvedModel({
-        provider: normalizedRef.provider,
-        cfg,
-        agentDir: resolvedAgentDir,
-        workspaceDir,
+        ...modelContext,
         model: overriddenStaticCatalogModel,
-        runtimeHooks,
       });
     };
     const resolveDynamicAttempt = async () => {
       const authProfile = resolveDynamicModelAuthProfile({
-        provider: normalizedRef.provider,
-        modelId: normalizedRef.model,
-        cfg,
-        agentDir: resolvedAgentDir,
+        ...modelContext,
         authProfileId: options?.authProfileId,
         authProfileMode: options?.authProfileMode,
         preferredProfile: options?.preferredProfile,
       });
       const preparedDynamicModel = await runtimeHooks.prepareProviderDynamicModel({
-        provider: normalizedRef.provider,
+        provider: manifestAlias.provider,
         config: cfg,
         workspaceDir,
         context: {
@@ -319,58 +292,41 @@ export async function resolveModelAsync(
           agentDir: resolvedAgentDir,
           ...(options?.agentRuntimeId ? { agentRuntimeId: options.agentRuntimeId } : {}),
           workspaceDir,
-          provider: normalizedRef.provider,
-          modelId: normalizedRef.model,
+          provider: manifestAlias.provider,
+          modelId,
           modelRegistry,
           providerConfig,
           ...authProfile,
         },
       });
       return resolveModelWithPreparedRegistry({
-        provider: normalizedRef.provider,
-        modelId: normalizedRef.model,
+        ...modelContext,
         modelRegistry,
-        cfg,
-        agentDir: resolvedAgentDir,
         ...(options?.agentRuntimeId ? { agentRuntimeId: options.agentRuntimeId } : {}),
-        manifestAlias: normalizedRef.manifestAlias,
-        workspaceDir,
+        manifestAlias,
         authProfileId: options?.authProfileId,
         authProfileMode: options?.authProfileMode,
         preferredProfile: options?.preferredProfile,
-        runtimeHooks,
         ...(preparedDynamicModel ? { preparedDynamicModel } : {}),
         getStaticCatalogModel: getManifestStaticCatalogModel,
         ...(options?.allowBundledStaticCatalogFallback ? { skipConfiguredFallback: true } : {}),
       });
     };
-    const providerRuntimeMetadataShouldWin = shouldCompareProviderRuntimeResolvedModel({
-      provider: normalizedRef.provider,
-      modelId: normalizedRef.model,
-      cfg,
-      agentDir: resolvedAgentDir,
-      workspaceDir,
-      runtimeHooks,
-    });
+    const providerRuntimeMetadataShouldWin =
+      shouldCompareProviderRuntimeResolvedModel(modelContext);
     let model =
       explicitModel?.kind === "resolved" && !providerRuntimeMetadataShouldWin
         ? explicitModel.model
         : undefined;
     model ??= await resolveDynamicAttempt();
     if (!model && !explicitModel && options?.allowBundledStaticCatalogFallback) {
-      model = await resolveStaticCatalogFallbackModel();
-    }
-    if (!model && !explicitModel && options?.allowBundledStaticCatalogFallback) {
-      model = buildConfiguredFallbackModel({
-        provider: normalizedRef.provider,
-        modelId: normalizedRef.model,
-        cfg,
-        agentDir: resolvedAgentDir,
-        manifestAlias: normalizedRef.manifestAlias,
-        workspaceDir,
-        runtimeHooks,
-        getStaticCatalogModel: getManifestStaticCatalogModel,
-      });
+      model =
+        (await resolveStaticCatalogFallbackModel()) ??
+        buildConfiguredFallbackModel({
+          ...modelContext,
+          manifestAlias,
+          getStaticCatalogModel: getManifestStaticCatalogModel,
+        });
     }
     if (model && options?.allowBundledStaticCatalogFallback) {
       const staticMediaInput = (await resolveStaticCatalogModel())?.mediaInput;
@@ -384,14 +340,7 @@ export async function resolveModelAsync(
       return { model, authStorage, modelRegistry };
     }
     return {
-      error: buildUnknownModelError({
-        provider: normalizedRef.provider,
-        modelId: normalizedRef.model,
-        cfg,
-        agentDir: resolvedAgentDir,
-        workspaceDir,
-        runtimeHooks,
-      }),
+      error: buildUnknownModelError(modelContext),
       authStorage,
       modelRegistry,
     };
@@ -471,8 +420,7 @@ function buildMissingProviderModelRegistrationHint(params: {
     return undefined;
   }
   const agentModelKey = modelKey(params.provider, params.modelId);
-  const configuredEntry =
-    configuredModels[agentModelKey] ?? configuredModels[`${params.provider}/${params.modelId}`];
+  const configuredEntry = configuredModels[agentModelKey];
   if (!configuredEntry) {
     return undefined;
   }

@@ -667,24 +667,21 @@ describe("createModelSelectionState catalog loading", () => {
     expect(loadModelCatalogLocal).toHaveBeenCalledOnce();
   });
 
-  it("prefers per-agent thinkingDefault over model and global defaults", async () => {
+  it.each([
+    { name: "agent entry", global: "low", entry: "minimal", expected: "minimal" },
+    { name: "agent model over global", global: "low", expected: "high" },
+    { name: "agent model alone", expected: "high" },
+  ] as const)("resolves the configured thinking default from $name", async (fixture) => {
     vi.mocked(loadModelCatalogLocal).mockClear();
     const cfg = {
       agents: {
-        defaults: {
-          thinkingDefault: "low",
-          models: {
-            "openai/gpt-5.4": {
-              params: { thinking: "high" },
-            },
+        defaults: "global" in fixture ? { thinkingDefault: fixture.global } : {},
+        entries: {
+          alpha: {
+            ...("entry" in fixture ? { thinkingDefault: fixture.entry } : {}),
+            models: { "openai/gpt-5.4": { params: { thinking: "high" } } },
           },
         },
-        list: [
-          {
-            id: "alpha",
-            thinkingDefault: "minimal",
-          },
-        ],
       },
     } as OpenClawConfig;
 
@@ -699,7 +696,8 @@ describe("createModelSelectionState catalog loading", () => {
       hasModelDirective: false,
     });
 
-    await expect(state.resolveDefaultThinkingLevel()).resolves.toBe("minimal");
+    await expect(state.resolveDefaultThinkingLevel()).resolves.toBe(fixture.expected);
+    expect(state.hasConfiguredThinkingDefault).toBe(true);
   });
 
   it("loads the full catalog for explicit model directives", async () => {
@@ -1231,13 +1229,13 @@ describe("createModelSelectionState respects session model override", () => {
     expect(state.resetModelOverride).toBe(false);
   });
 
-  it("keeps provider-qualified stored overrides when providerOverride is also persisted", async () => {
+  it("keeps exact namespaced stored overrides through allowlist checks", async () => {
     const cfg = {
       agents: {
         defaults: {
           model: { primary: "openai/gpt-5.5" },
           models: {
-            "openai/gpt-5.5": {},
+            "openai/openai/gpt-5.5": {},
             "openai/gpt-5.4": {},
           },
         },
@@ -1248,6 +1246,7 @@ describe("createModelSelectionState respects session model override", () => {
       providerOverride: "openai",
       modelOverride: "openai/gpt-5.5",
       modelOverrideSource: "user",
+      modelOverrideRouteResolution: "resolved",
     });
     const sessionStore = { [sessionKey]: sessionEntry };
 
@@ -1265,19 +1264,19 @@ describe("createModelSelectionState respects session model override", () => {
     });
 
     expect(state.provider).toBe("openai");
-    expect(state.model).toBe("gpt-5.5");
+    expect(state.model).toBe("openai/gpt-5.5");
     expect(state.resetModelOverride).toBe(false);
     expect(sessionStore[sessionKey]?.providerOverride).toBe("openai");
     expect(sessionStore[sessionKey]?.modelOverride).toBe("openai/gpt-5.5");
   });
 
-  it("normalizes provider-qualified parent stored overrides before allowlist checks", async () => {
+  it("keeps exact namespaced parent overrides through allowlist checks", async () => {
     const cfg = {
       agents: {
         defaults: {
           model: { primary: "openai/gpt-5.5" },
           models: {
-            "openai/gpt-5.5": {},
+            "openai/openai/gpt-5.5": {},
             "openai/gpt-5.4": {},
           },
         },
@@ -1290,6 +1289,7 @@ describe("createModelSelectionState respects session model override", () => {
       providerOverride: "openai",
       modelOverride: "openai/gpt-5.5",
       modelOverrideSource: "user",
+      modelOverrideRouteResolution: "resolved",
     });
     const sessionStore = { [sessionKey]: sessionEntry, [parentSessionKey]: parentEntry };
 
@@ -1308,7 +1308,7 @@ describe("createModelSelectionState respects session model override", () => {
     });
 
     expect(state.provider).toBe("openai");
-    expect(state.model).toBe("gpt-5.5");
+    expect(state.model).toBe("openai/gpt-5.5");
     expect(state.resetModelOverride).toBe(false);
     expect(sessionStore[parentSessionKey]?.modelOverride).toBe("openai/gpt-5.5");
     expect(sessionStore[sessionKey]?.modelOverride).toBeUndefined();
@@ -1453,13 +1453,8 @@ describe("createModelSelectionState respects session model override", () => {
       config: cfg,
       includeSetupRegistry: true,
     };
-    expect(cliBackendsMocks.resolveCliRuntimeCanonicalProvider).toHaveBeenCalledTimes(2);
-    expect(cliBackendsMocks.resolveCliRuntimeCanonicalProvider).toHaveBeenNthCalledWith(
-      1,
-      expectedCanonicalProviderRequest,
-    );
-    expect(cliBackendsMocks.resolveCliRuntimeCanonicalProvider).toHaveBeenNthCalledWith(
-      2,
+    expect(cliBackendsMocks.resolveCliRuntimeCanonicalProvider).toHaveBeenCalledOnce();
+    expect(cliBackendsMocks.resolveCliRuntimeCanonicalProvider).toHaveBeenCalledWith(
       expectedCanonicalProviderRequest,
     );
   });
@@ -1667,7 +1662,8 @@ describe("createModelSelectionState respects session model override", () => {
 
     expect(state.provider).toBe("openai");
     expect(state.model).toBe("gpt-added-after-startup");
-    expect(state.requestedRouteResolution).toBe("raw");
+    expect(state.requestedRouteResolution).toBe("resolved");
+    expect(sessionStore[sessionKey]?.modelOverrideRouteResolution).toBeUndefined();
     expect(state.resetModelOverride).toBe(false);
     expect(sessionStore[sessionKey]?.providerOverride).toBe("openai");
     expect(sessionStore[sessionKey]?.modelOverride).toBe("gpt-added-after-startup");
@@ -2224,7 +2220,8 @@ describe("createModelSelectionState auto-failover overrides", () => {
 
     expect(state.provider).toBe("openrouter");
     expect(state.model).toBe("minimax/minimax-m2.7");
-    expect(state.requestedRouteResolution).toBe("raw");
+    expect(state.requestedRouteResolution).toBe("resolved");
+    expect(sessionStore[sessionKey]?.modelOverrideRouteResolution).toBeUndefined();
     expect(sessionStore[sessionKey]?.modelOverride).toBe("minimax/minimax-m2.7");
     expect(state.resetModelOverride).toBe(false);
   });

@@ -1,3 +1,4 @@
+import { err, ok, type Result } from "@openclaw/normalization-core/result";
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import { inheritSessionCreationPolicy } from "../../../config/sessions/session-entry-provenance.js";
 import type { OpenClawConfig } from "../../../config/types.openclaw.js";
@@ -5,13 +6,18 @@ import { isIncognitoSessionKey } from "../../../routing/session-key.js";
 import { resolveUserPath } from "../../../utils.js";
 import { resolveAgentDir } from "../../agent-scope-config.js";
 import { findModelCatalogEntry } from "../../model-catalog-lookup.js";
-import type { ModelCatalogEntry } from "../../model-catalog.types.js";
+import { resolveSubagentSpawnModelInput } from "../../model-selection-config.js";
 import {
+  buildModelAliasIndex,
   findNormalizedProviderValue,
   resolveAllowedModelRef,
   resolveDefaultModelForAgent,
+  resolveModelRefFromString,
+  type ModelRef,
 } from "../../model-selection.js";
 import { supportsModelTools } from "../../model-tool-support.js";
+import type { PreparedModelRuntimeSnapshot } from "../../prepared-model-runtime.types.js";
+import { withPreparedModelSelection } from "../../prepared-model-selection.js";
 import { summarizeSpawnError } from "../../spawn-pipeline.js";
 import { resolveSpawnSandboxError, mintSpawnSessionKey } from "../../spawn-plan.js";
 import { resolveRequesterOriginForChild } from "../../spawn-requester-origin.js";
@@ -26,7 +32,7 @@ import type {
   SpawnSubagentResult,
 } from "./subagent-spawn-contract.js";
 import { getSubagentSpawnDeps } from "./subagent-spawn-deps.js";
-import { resolveSubagentModelAndThinkingPlan, splitModelRef } from "./subagent-spawn-plan.js";
+import { resolveSubagentModelAndThinkingPlan } from "./subagent-spawn-plan.js";
 import {
   readRequesterFastMode,
   readRequesterThinkingLevel,
@@ -37,95 +43,96 @@ import {
   resolveSandboxRuntimeStatus,
 } from "./subagent-spawn.runtime.js";
 
-function buildResolvedSubagentModelMetadata(resolvedModel?: string): {
-  resolvedModel?: string;
-  resolvedProvider?: string;
-} {
-  const modelRef = resolvedModel?.trim();
-  if (!modelRef) {
-    return {};
-  }
-  const { provider } = splitModelRef(modelRef);
-  return {
-    resolvedModel: modelRef,
-    ...(provider ? { resolvedProvider: provider } : {}),
-  };
-}
-
-async function resolveSpawnModelError(params: {
-  cfg: OpenClawConfig;
+async function resolveSpawnModelSelection(params: {
+  runtime: PreparedModelRuntimeSnapshot;
   targetAgentId: string;
-  targetAgentDir: string;
-  workspaceDir?: string;
+  workspaceDir: string;
   request: SpawnSubagentParams;
-  resolvedModel?: string;
-}): Promise<string | undefined> {
-  const { cfg, targetAgentId } = params;
-  const requestedModel = normalizeOptionalString(params.request.model);
-  if (!requestedModel && !params.request.outputSchema) {
-    return undefined;
-  }
-  const defaults = resolveDefaultModelForAgent({ cfg, agentId: targetAgentId });
-  const selected = splitModelRef(params.resolvedModel);
-  const provider = selected.provider ?? defaults.provider;
-  let catalog: ModelCatalogEntry[];
-  try {
-    catalog = await getSubagentSpawnDeps().loadPreparedModelCatalog({
-      config: params.cfg,
-      agentDir: params.targetAgentDir,
-      workspaceDir: params.workspaceDir,
-      readOnly: true,
-      providerDiscoveryProviderIds: [provider],
-      scopedLiveProviderDiscovery: true,
+  modelInput: string;
+}): Promise<Result<ModelRef, string>> {
+  const { runtime, targetAgentId, modelInput } = params;
+  const cfg = runtime.config;
+  const normalization = {
+    manifestPlugins: runtime.metadataSnapshot,
+    resolvedModelCatalog: runtime.modelCatalog.entries,
+  };
+  let defaults = resolveDefaultModelForAgent({ cfg, agentId: targetAgentId, ...normalization });
+  let catalog = runtime.modelCatalog.entries;
+  if (params.request.model?.trim() || params.request.outputSchema) {
+    // Live capability proof remains scoped, and the retained generation owns its normalization.
+    const discoveryRef = resolveModelRefFromString({
+      cfg,
+      agentId: targetAgentId,
+      raw: modelInput,
+      defaultProvider: defaults.provider,
+      aliasIndex: buildModelAliasIndex({
+        cfg,
+        agentId: targetAgentId,
+        defaultProvider: defaults.provider,
+        ...normalization,
+        allowPluginNormalization: false,
+      }),
+      ...normalization,
+      allowPluginNormalization: false,
     });
-  } catch (error) {
-    return `sessions_spawn could not verify ${requestedModel ? "the requested model" : "outputSchema model capabilities"}: ${summarizeSpawnError(error)}`;
+    try {
+      catalog = await getSubagentSpawnDeps().loadPreparedModelCatalog({
+        config: cfg,
+        agentId: targetAgentId,
+        agentDir: runtime.agentDir,
+        workspaceDir: params.workspaceDir,
+        readOnly: true,
+        providerDiscoveryProviderIds: [discoveryRef?.ref.provider ?? defaults.provider],
+        scopedLiveProviderDiscovery: true,
+      });
+    } catch (error) {
+      return err(
+        `sessions_spawn could not verify the selected model: ${summarizeSpawnError(error)}`,
+      );
+    }
+    defaults = resolveDefaultModelForAgent({
+      cfg,
+      agentId: targetAgentId,
+      manifestPlugins: runtime.metadataSnapshot,
+      resolvedModelCatalog: catalog,
+    });
   }
-
-  if (!requestedModel) {
-    const model = selected.model ?? defaults.model;
-    const entry = model && findModelCatalogEntry(catalog, { provider, modelId: model });
-    return entry && !supportsModelTools(entry)
-      ? `sessions_spawn outputSchema requires a tool-capable target model; "${provider}/${model}" declares compat.supportsTools=false.`
-      : undefined;
-  }
-  const selection = {
+  const resolved = resolveAllowedModelRef({
     cfg,
     catalog,
+    raw: modelInput,
     defaultProvider: defaults.provider,
     defaultModel: defaults.model,
     agentId: targetAgentId,
-  };
-  const resolved = resolveAllowedModelRef({
-    ...selection,
-    raw: requestedModel,
+    manifestPlugins: runtime.metadataSnapshot,
+    resolvedModelCatalog: catalog,
   });
   if ("error" in resolved) {
-    return `sessions_spawn model "${requestedModel}" is not usable: ${resolved.error}`;
+    return err(`sessions_spawn model "${modelInput}" is not usable: ${resolved.error}`);
   }
-
-  const entry = findModelCatalogEntry(catalog, {
-    provider: resolved.ref.provider,
-    modelId: resolved.ref.model,
-  });
-  if (!entry) {
-    const resolvedProvider = resolved.ref.provider;
-    const knownProvider =
-      findNormalizedProviderValue(cfg.models?.providers, resolvedProvider) ||
-      catalog.some((catalogEntry) => catalogEntry.provider === resolvedProvider) ||
-      getSubagentSpawnDeps().resolveProviderRefOwnership({
-        provider: resolvedProvider,
-        config: cfg,
-        workspaceDir: params.workspaceDir,
-      }).status === "owned";
-    if (!knownProvider) {
-      return `sessions_spawn model "${requestedModel}" is not usable: unknown model provider "${resolvedProvider}"`;
-    }
+  const { provider, model } = resolved.ref;
+  const entry = findModelCatalogEntry(catalog, { provider, modelId: model });
+  if (
+    !entry &&
+    !findNormalizedProviderValue(cfg.models?.providers, provider) &&
+    !catalog.some((candidate) => candidate.provider === provider) &&
+    getSubagentSpawnDeps().resolveProviderRefOwnership({
+      provider,
+      config: cfg,
+      workspaceDir: params.workspaceDir,
+      metadataSnapshot: runtime.metadataSnapshot,
+    }).status !== "owned"
+  ) {
+    return err(
+      `sessions_spawn model "${modelInput}" is not usable: unknown model provider "${provider}"`,
+    );
   }
   if (params.request.outputSchema && entry && !supportsModelTools(entry)) {
-    return `sessions_spawn outputSchema requires a tool-capable target model; "${resolved.ref.provider}/${resolved.ref.model}" declares compat.supportsTools=false.`;
+    return err(
+      `sessions_spawn outputSchema requires a tool-capable target model; "${provider}/${model}" declares compat.supportsTools=false.`,
+    );
   }
-  return undefined;
+  return ok(resolved.ref);
 }
 
 type ResolvedSubagentChildPlan = {
@@ -139,9 +146,12 @@ type ResolvedSubagentChildPlan = {
   childRuntimeSandboxed: boolean;
   creationPolicy: ReturnType<typeof inheritSessionCreationPolicy>;
   targetAgentDir: string;
-  modelPlan: Extract<ReturnType<typeof resolveSubagentModelAndThinkingPlan>, { status: "ok" }>;
+  modelPlan: Extract<
+    Awaited<ReturnType<typeof resolveSubagentModelAndThinkingPlan>>,
+    { status: "ok" }
+  >;
   launchAuthorization?: SubagentLaunchAuthorization;
-  resolvedModelMetadata: ReturnType<typeof buildResolvedSubagentModelMetadata>;
+  resolvedModelMetadata: { resolvedModel: string; resolvedProvider: string };
 };
 
 type ResolveSubagentChildPlanResult =
@@ -245,8 +255,6 @@ export async function resolveSubagentChildPlan(params: {
     };
   }
   const targetAgentDir = resolveAgentDir(params.cfg, params.targetAgentId);
-  const requesterAgentConfig = resolveAgentConfig(params.cfg, params.requesterAgentId);
-  const targetAgentConfig = resolveAgentConfig(params.cfg, params.targetAgentId);
   // The active turn owns inherited effort; saved preferences may already describe
   // a later turn and cannot represent one-shot overrides.
   const callerThinkingRaw =
@@ -264,54 +272,68 @@ export async function resolveSubagentChildPlan(params: {
           requesterAgentId: params.requesterAgentId,
         })
       : params.request.fastMode;
-  const modelPlan = resolveSubagentModelAndThinkingPlan({
-    cfg: params.cfg,
-    targetAgentId: params.targetAgentId,
-    requesterAgentConfig,
-    targetAgentConfig,
-    modelOverride: params.request.model,
-    thinkingOverrideRaw: params.request.thinking,
-    callerThinkingRaw,
-    fastMode: inheritedFastMode,
-  });
+  const modelPlan = await withPreparedModelSelection(
+    {
+      cfg: params.cfg,
+      agentId: params.targetAgentId,
+      agentDir: targetAgentDir,
+      workspaceDir: spawnedWorkspaceDir,
+      assertCurrent: params.ctx.assertActive,
+    },
+    ({ config, metadataSnapshot }) => {
+      const preparation = {
+        cfg: config,
+        agentId: params.targetAgentId,
+        manifestPlugins: metadataSnapshot,
+        allowPluginNormalization: false,
+      };
+      const defaultProvider = resolveDefaultModelForAgent(preparation).provider;
+      const ref = resolveModelRefFromString({
+        ...preparation,
+        raw: resolveSubagentSpawnModelInput({
+          ...preparation,
+          modelOverride: params.request.model,
+        }),
+        defaultProvider,
+        aliasIndex: buildModelAliasIndex({ ...preparation, defaultProvider }),
+      });
+      return ref
+        ? [{ provider: ref.ref.provider, modelId: ref.ref.model, agentId: params.targetAgentId }]
+        : [];
+    },
+    async ({ preparedModelRuntime: runtime, workspaceDir }) =>
+      await resolveSubagentModelAndThinkingPlan({
+        cfg: runtime.config,
+        targetAgentId: params.targetAgentId,
+        requesterAgentConfig: resolveAgentConfig(runtime.config, params.requesterAgentId),
+        targetAgentConfig: resolveAgentConfig(runtime.config, params.targetAgentId),
+        modelOverride: params.request.model,
+        thinkingOverrideRaw: params.request.thinking,
+        callerThinkingRaw,
+        fastMode: inheritedFastMode,
+        resolveModel: (modelInput) =>
+          resolveSpawnModelSelection({
+            runtime,
+            targetAgentId: params.targetAgentId,
+            workspaceDir,
+            request: params.request,
+            modelInput,
+          }),
+      }),
+  );
   if (modelPlan.status === "error") {
     return {
       ok: false,
       result: {
         status: "error",
         error: modelPlan.error,
-      },
-    };
-  }
-  const { resolvedModel } = modelPlan;
-  const modelError = await resolveSpawnModelError({
-    cfg: params.cfg,
-    targetAgentId: params.targetAgentId,
-    targetAgentDir,
-    workspaceDir: spawnedWorkspaceDir,
-    request: params.request,
-    resolvedModel,
-  });
-  if (modelError) {
-    return {
-      ok: false,
-      result: {
-        status: "error",
-        error: modelError,
         ...(params.request.outputSchema ? { childSessionKey } : {}),
       },
     };
   }
-  const resolvedLaunchModel = splitModelRef(resolvedModel);
-  const launchAuthorization: SubagentLaunchAuthorization | undefined =
-    params.request.model?.trim() && resolvedLaunchModel.model
-      ? {
-          modelOverride: {
-            ...(resolvedLaunchModel.provider ? { provider: resolvedLaunchModel.provider } : {}),
-            model: resolvedLaunchModel.model,
-          },
-        }
-      : undefined;
+  const launchAuthorization: SubagentLaunchAuthorization | undefined = params.request.model?.trim()
+    ? { modelOverride: modelPlan.modelSelection }
+    : undefined;
   return {
     ok: true,
     resolved: {
@@ -327,7 +349,10 @@ export async function resolveSubagentChildPlan(params: {
       targetAgentDir,
       modelPlan,
       launchAuthorization,
-      resolvedModelMetadata: buildResolvedSubagentModelMetadata(resolvedModel),
+      resolvedModelMetadata: {
+        resolvedModel: modelPlan.resolvedModel,
+        resolvedProvider: modelPlan.modelSelection.provider,
+      },
     },
   };
 }

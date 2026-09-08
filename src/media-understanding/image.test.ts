@@ -1,9 +1,11 @@
+import { collectManifestModelIdNormalizationPolicies } from "@openclaw/model-catalog-core/provider-model-id-normalization";
 import { expectDefined } from "@openclaw/normalization-core/expect";
 // Image runtime tests cover model-backed image routing, auth/profile handling,
 // provider payload transforms, and MiniMax/Copilot special paths.
 import { createRequireRecord } from "openclaw/plugin-sdk/test-fixtures";
 import { describe, expect, it, vi } from "vitest";
 import { attachModelProviderRequestTransport } from "../agents/provider-request-config.js";
+import { createEmptyPluginMetadataSnapshot } from "../agents/test-helpers/embedded-agent-runner-e2e-mocks.js";
 import { mintSecretSentinel } from "../secrets/sentinel.js";
 import {
   API_KEY_FIELD,
@@ -40,10 +42,166 @@ type AuthRequestCall = {
   store?: unknown;
 };
 
-const { describeImageWithModelCore, describeImagesWithModelCore } = await import("./image.js");
+const {
+  describeImageWithModelCore,
+  describeImagesWithModelCore,
+  describeImageWithResolvedModelCore,
+  describeImagesWithResolvedModelCore,
+} = await import("./image.js");
 
 describe("describeImageWithModelCore", () => {
   installImageRuntimeTestHooks({ apiKey: "test-api-key" });
+
+  it.each([
+    "raw-latest",
+    "raw-captured-middle",
+    "resolved-middle",
+    "resolved-multiple-middle",
+  ] as const)("keeps the intended image model through the %s boundary", async (mode) => {
+    const metadata = createEmptyPluginMetadataSnapshot();
+    const modelCatalog = {
+      entries: mode === "raw-captured-middle" ? [{ provider: "image-fixture", id: "middle" }] : [],
+    };
+    acquireAgentRunPreparedModelRuntimeMock.mockResolvedValueOnce({
+      snapshot: {
+        config: {},
+        agentDir: "/tmp/openclaw-agent",
+        modelCatalog,
+        metadataSnapshot: {
+          ...metadata,
+          owners: {
+            ...metadata.owners,
+            modelIdNormalizationPolicies: collectManifestModelIdNormalizationPolicies([
+              {
+                modelIdNormalization: {
+                  providers: {
+                    "image-fixture": { aliases: { latest: "middle", middle: "final" } },
+                  },
+                },
+              },
+            ]),
+          },
+        },
+        createStores: () => ({ authStorage: preparedAuthStorage, modelRegistry: {} }),
+      },
+      release: releasePreparedModelRuntimeMock,
+    });
+    discoverModelsMock.mockReturnValue({
+      find: (provider: string, id: string) => ({
+        provider,
+        id,
+        api: "openai-completions",
+        input: ["text", "image"],
+        baseUrl: "https://image.example/v1",
+      }),
+    });
+    completeMock.mockResolvedValue({
+      role: "assistant",
+      api: "openai-completions",
+      provider: "image-fixture",
+      model: "middle",
+      stopReason: "stop",
+      timestamp: 1,
+      content: [{ type: "text", text: "image identity ok" }],
+    });
+    const request = {
+      cfg: {},
+      agentDir: "/tmp/openclaw-agent",
+      provider: "image-fixture",
+      model: mode === "raw-latest" ? "latest" : "middle",
+      timeoutMs: 1000,
+    };
+    const input = {
+      buffer: Buffer.from("png-bytes"),
+      mime: "image/png",
+      fileName: "synthetic.png",
+    };
+    const result =
+      mode === "resolved-multiple-middle"
+        ? await describeImagesWithResolvedModelCore({ ...request, images: [input, input] })
+        : await (
+            mode === "resolved-middle"
+              ? describeImageWithResolvedModelCore
+              : describeImageWithModelCore
+          )({ ...request, ...input });
+    expect(result).toEqual({ text: "image identity ok", model: "middle" });
+    expect(completeMock.mock.calls[0]?.[0]).toMatchObject({
+      provider: "image-fixture",
+      id: "middle",
+    });
+    expect(releasePreparedModelRuntimeMock).toHaveBeenCalledOnce();
+  });
+
+  it.each(["minimax", "minimax-cn", "minimax-portal", "minimax-portal-cn", "MiniMax-CN"])(
+    "uses the selected VLM model for %s raw-alias fallback",
+    async (provider) => {
+      const cfg =
+        provider === "MiniMax-CN"
+          ? {
+              models: {
+                providers: {
+                  [provider]: {
+                    apiKey: "test-api-key",
+                    baseUrl: "https://regional-key.example/v1",
+                    models: [],
+                  },
+                },
+              },
+            }
+          : {};
+      const metadata = createEmptyPluginMetadataSnapshot();
+      acquireAgentRunPreparedModelRuntimeMock.mockResolvedValueOnce({
+        snapshot: {
+          config: cfg,
+          agentDir: "/tmp/openclaw-agent",
+          modelCatalog: { entries: [] },
+          metadataSnapshot: {
+            ...metadata,
+            owners: {
+              ...metadata.owners,
+              modelIdNormalizationPolicies: collectManifestModelIdNormalizationPolicies([
+                {
+                  modelIdNormalization: {
+                    providers: { [provider]: { aliases: { latest: "MiniMax-VL-01" } } },
+                  },
+                },
+              ]),
+            },
+          },
+          createStores: () => ({ authStorage: preparedAuthStorage, modelRegistry: {} }),
+        },
+        release: releasePreparedModelRuntimeMock,
+      });
+      resolveModelAsyncMock.mockResolvedValueOnce({
+        authStorage: preparedAuthStorage,
+        modelRegistry: { find: () => undefined },
+        error: `Unknown model: ${provider}/MiniMax-VL-01`,
+      });
+      const result = await describeImageWithModelCore({
+        cfg,
+        agentDir: "/tmp/openclaw-agent",
+        provider,
+        model: "latest",
+        buffer: Buffer.from("png-bytes"),
+        fileName: "image.png",
+        mime: "image/png",
+        prompt: "Describe the image.",
+        timeoutMs: 1000,
+      });
+      expect(result).toEqual({ text: "portal ok", model: "MiniMax-VL-01" });
+      expect(fetchMock.mock.calls[0]?.[0]).toBe(
+        provider === "MiniMax-CN"
+          ? "https://regional-key.example/v1/coding_plan/vlm"
+          : provider.endsWith("-cn")
+            ? "https://api.minimaxi.com/v1/coding_plan/vlm"
+            : "https://api.minimax.io/v1/coding_plan/vlm",
+      );
+      expect(resolveApiKeyForProviderCoreMock).toHaveBeenCalledWith(
+        expect.objectContaining({ provider: provider.replace(/-cn$/, "") }),
+      );
+      expect(releasePreparedModelRuntimeMock).toHaveBeenCalledOnce();
+    },
+  );
 
   function getApiKeyForModelCall(index = 0): AuthRequestCall {
     const call = (getApiKeyForModelMock.mock.calls as unknown[][]).at(index);
@@ -247,6 +405,7 @@ describe("describeImageWithModelCore", () => {
       cfg: {},
       agentDir: "/tmp/openclaw-agent",
       wrapProviderStream: true,
+      capability: "image",
     });
     expect(completeMock).toHaveBeenCalledOnce();
     expect(fetchMock).not.toHaveBeenCalled();
@@ -525,7 +684,10 @@ describe("describeImageWithModelCore", () => {
         agentDir: "/tmp/openclaw-agent",
         workspaceDir: "/tmp/openclaw-workspace",
       }),
-      { catalogMode: "static", abortSignal: expect.any(AbortSignal) },
+      expect.objectContaining({
+        catalogMode: "static",
+        abortSignal: expect.any(AbortSignal),
+      }),
     );
     expect(releasePreparedModelRuntimeMock).toHaveBeenCalledOnce();
     expect(resolveModelAsyncMock).toHaveBeenCalledWith(
@@ -556,6 +718,7 @@ describe("describeImageWithModelCore", () => {
       agentDir: "/tmp/openclaw-agent",
       workspaceDir: "/tmp/openclaw-workspace",
       wrapProviderStream: true,
+      capability: "image",
     });
   });
 
@@ -667,6 +830,7 @@ describe("describeImageWithModelCore", () => {
       cfg: {},
       agentDir: "/tmp/openclaw-agent",
       wrapProviderStream: true,
+      capability: "image",
     });
     expect(streamFn).toHaveBeenCalledOnce();
     expect(completeMock).not.toHaveBeenCalled();

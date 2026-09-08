@@ -5,108 +5,16 @@ import type { SessionEntry } from "../../../config/sessions/types.js";
 import type { OpenClawConfig } from "../../../config/types.openclaw.js";
 import { resolveIncognitoOpenClawAgentSqlitePath } from "../../../state/openclaw-agent-db.js";
 import { resolveUserPath } from "../../../utils.js";
-import {
-  inheritedToolAllowPatch,
-  inheritedToolDenyPatch,
-  normalizeInheritedToolAllowlist,
-  normalizeInheritedToolDenylist,
-} from "../../inherited-tool-deny.js";
+import { inheritedToolAllowPatch, inheritedToolDenyPatch } from "../../inherited-tool-deny.js";
+import type { resolveSpawnAdmission } from "../../spawn-plan.js";
 import type { PreparedSessionPermissionPolicy } from "../../tool-fs-policy.types.js";
 import { getSubagentSpawnDeps } from "./subagent-spawn-deps.js";
-import { splitModelRef } from "./subagent-spawn-plan.js";
+import type { resolveSubagentModelAndThinkingPlan } from "./subagent-spawn-plan.js";
 import {
   loadSessionEntry,
   resolveGatewaySessionStoreTarget,
   upsertSessionEntryCore,
 } from "./subagent-spawn.runtime.js";
-
-function buildDirectChildSessionPatch(patch: Record<string, unknown>): Partial<SessionEntry> {
-  const entry: Partial<SessionEntry> = {};
-  const spawnDepth = patch.spawnDepth;
-  if (typeof spawnDepth === "number" && Number.isFinite(spawnDepth) && spawnDepth >= 0) {
-    entry.spawnDepth = Math.floor(spawnDepth);
-  }
-  if (patch.subagentRole === "orchestrator" || patch.subagentRole === "leaf") {
-    entry.subagentRole = patch.subagentRole;
-  }
-  if (patch.subagentControlScope === "children" || patch.subagentControlScope === "none") {
-    entry.subagentControlScope = patch.subagentControlScope;
-  }
-  if (patch.inheritedToolPolicyVersion === 1) {
-    entry.inheritedToolPolicyVersion = 1;
-  }
-  if (patch.incognito === true) {
-    entry.incognito = true;
-  }
-  if (typeof patch.spawnedBy === "string" && patch.spawnedBy.trim()) {
-    entry.spawnedBy = patch.spawnedBy.trim();
-  }
-  if (
-    typeof patch.completionOwnerSessionKey === "string" &&
-    patch.completionOwnerSessionKey.trim()
-  ) {
-    entry.completionOwnerSessionKey = patch.completionOwnerSessionKey.trim();
-  }
-  if (typeof patch.parentSessionKey === "string" && patch.parentSessionKey.trim()) {
-    entry.parentSessionKey = patch.parentSessionKey.trim();
-  }
-  if (typeof patch.spawnedWorkspaceDir === "string" && patch.spawnedWorkspaceDir.trim()) {
-    entry.spawnedWorkspaceDir = patch.spawnedWorkspaceDir.trim();
-  }
-  if (typeof patch.spawnedCwd === "string" && patch.spawnedCwd.trim()) {
-    entry.spawnedCwd = patch.spawnedCwd.trim();
-  }
-  const inheritedToolDeny = normalizeInheritedToolDenylist(patch.inheritedToolDeny);
-  if (inheritedToolDeny.length > 0) {
-    entry.inheritedToolDeny = inheritedToolDeny;
-  }
-  const inheritedToolAllow = normalizeInheritedToolAllowlist(patch.inheritedToolAllow);
-  if (inheritedToolAllow.length > 0) {
-    entry.inheritedToolAllow = inheritedToolAllow;
-  }
-  if (typeof patch.thinkingLevel === "string" && patch.thinkingLevel.trim()) {
-    entry.thinkingLevel = patch.thinkingLevel.trim();
-  }
-  const authProfileOverride = normalizeOptionalString(patch.authProfileOverride);
-  if (authProfileOverride) {
-    entry.authProfileOverride = authProfileOverride;
-    entry.authProfileOverrideSource = patch.authProfileOverrideSource === "auto" ? "auto" : "user";
-  }
-  if (patch.fastMode === true || patch.fastMode === false || patch.fastMode === "auto") {
-    entry.fastMode = patch.fastMode;
-  }
-  if (typeof patch.swarmGroupId === "string" && patch.swarmGroupId.trim()) {
-    entry.swarmGroupId = patch.swarmGroupId.trim();
-  }
-  if (patch.swarmCollector === true) {
-    entry.swarmCollector = true;
-  }
-  if (patch.swarmOutputSchema && typeof patch.swarmOutputSchema === "object") {
-    entry.swarmOutputSchema = patch.swarmOutputSchema as Record<string, unknown>;
-  }
-  if (typeof patch.model === "string" && patch.model.trim()) {
-    const { provider, model } = splitModelRef(patch.model.trim());
-    if (model) {
-      entry.model = model;
-      entry.modelOverride = model;
-      entry.modelOverrideSource = patch.modelOverrideSource === "auto" ? "auto" : "user";
-      entry.modelOverrideRouteResolution = "resolved";
-      const fallbackOriginProvider = normalizeOptionalString(
-        patch.modelOverrideFallbackOriginProvider,
-      );
-      const fallbackOriginModel = normalizeOptionalString(patch.modelOverrideFallbackOriginModel);
-      if (fallbackOriginProvider && fallbackOriginModel) {
-        entry.modelOverrideFallbackOriginProvider = fallbackOriginProvider;
-        entry.modelOverrideFallbackOriginModel = fallbackOriginModel;
-      }
-      if (provider) {
-        entry.modelProvider = provider;
-        entry.providerOverride = provider;
-      }
-    }
-  }
-  return entry;
-}
 
 export function loadSubagentConfig() {
   return getSubagentSpawnDeps().getRuntimeConfig();
@@ -125,27 +33,32 @@ export async function createInitialSubagentSession(params: {
   spawnedWorkspaceDir?: string;
   spawnedCwd?: string;
   sessionPermissionPolicy?: PreparedSessionPermissionPolicy;
-  admissionPatch?: Record<string, unknown>;
+  admissionPatch?: Extract<
+    ReturnType<typeof resolveSpawnAdmission>,
+    { ok: true }
+  >["childSessionPatch"];
   inheritedToolAllowlist?: string[];
   inheritedToolDenylist?: string[];
-  modelPatch: Record<string, unknown>;
+  modelPatch: Extract<
+    Awaited<ReturnType<typeof resolveSubagentModelAndThinkingPlan>>,
+    { status: "ok" }
+  >["initialSessionPatch"];
   swarmGroupId?: string;
   collect: boolean;
   outputSchema?: Record<string, unknown>;
 }): Promise<{ status: "ok"; entry?: SessionEntry } | { status: "error"; error: string }> {
-  const initialChildSessionPatch: Record<string, unknown> = {
-    spawnedBy: params.requesterInternalKey,
-    completionOwnerSessionKey: params.completionOwnerSessionKey,
-    // Navigation and control lineage commit with the creation stamp so a
-    // launch failure cannot leave a durable but parentless child row.
-    parentSessionKey: params.requesterInternalKey,
+  const requesterKey = normalizeOptionalString(params.requesterInternalKey);
+  const completionOwnerKey = normalizeOptionalString(params.completionOwnerSessionKey);
+  const initialChildSessionPatch: Partial<SessionEntry> = {
+    // Navigation and control lineage commit together; retain stored key normalization.
+    ...(requesterKey ? { spawnedBy: requesterKey, parentSessionKey: requesterKey } : {}),
+    ...(completionOwnerKey ? { completionOwnerSessionKey: completionOwnerKey } : {}),
     ...(params.spawnedWorkspaceDir ? { spawnedWorkspaceDir: params.spawnedWorkspaceDir } : {}),
     ...(params.spawnedCwd ? { spawnedCwd: params.spawnedCwd } : {}),
     ...params.admissionPatch,
     inheritedToolPolicyVersion: 1,
     ...inheritedToolAllowPatch(params.inheritedToolAllowlist),
     ...inheritedToolDenyPatch(params.inheritedToolDenylist),
-    ...params.modelPatch,
     ...(params.swarmGroupId ? { swarmGroupId: params.swarmGroupId } : {}),
     ...(params.collect ? { swarmCollector: true } : {}),
     ...(params.outputSchema ? { swarmOutputSchema: params.outputSchema } : {}),
@@ -183,7 +96,9 @@ export async function createInitialSubagentSession(params: {
         sessionKey: target.canonicalKey,
       },
       {
-        ...buildDirectChildSessionPatch(initialChildSessionPatch),
+        ...initialChildSessionPatch,
+        // Admission produced this canonical pair; do not parse model-local slashes again.
+        ...params.modelPatch,
         // Native spawn keeps agent RPC label semantics, not sessions.patch's uniqueness policy.
         ...(params.label ? { label: params.label } : {}),
         ...(params.sessionPermissionPolicy

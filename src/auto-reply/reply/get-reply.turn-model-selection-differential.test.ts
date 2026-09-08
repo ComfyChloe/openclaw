@@ -41,6 +41,11 @@ const mocks = vi.hoisted(() => ({
   handleInlineActions: vi.fn(),
   initSessionState: vi.fn(),
   resolveReplyDirectives: vi.fn(),
+  normalizeProviderModel: vi.fn(),
+}));
+
+vi.mock("../../agents/provider-model-normalization.runtime.js", () => ({
+  normalizeProviderModelIdWithRuntime: mocks.normalizeProviderModel,
 }));
 
 registerGetReplyBaselineBypass();
@@ -150,6 +155,7 @@ beforeAll(async () => {
 });
 
 beforeEach(async () => {
+  mocks.normalizeProviderModel.mockReset();
   state = await createOpenClawTestState({
     label: "turn-model-reply",
     env: { OPENCLAW_TEST_FAST: "1" },
@@ -309,6 +315,32 @@ describe("getReplyFromConfig channel model input boundary", () => {
 });
 
 describe("turn model selection reply-path differential", () => {
+  it("projects a raw stored model before directive routing", async () => {
+    mocks.normalizeProviderModel.mockImplementation(
+      ({ context }: { context: { modelId: string } }) =>
+        context.modelId === "latest"
+          ? TURN_MODEL_SESSION_REF.model
+          : context.modelId === TURN_MODEL_SESSION_REF.model
+            ? "final"
+            : undefined,
+    );
+    const fixture = {
+      ...TURN_MODEL_DIFFERENTIAL_FIXTURES[0]!,
+      child: {
+        ...TURN_MODEL_DIFFERENTIAL_FIXTURES[0]!.child,
+        providerOverride: TURN_MODEL_SESSION_REF.provider,
+        modelOverride: "latest",
+      },
+    };
+    const storePath = path.join(state.sessionsDir("main"), "sessions.json");
+    const sessionKey = "agent:main:telegram:group:selection";
+    const sessionStore = await seedFixtureStore(storePath, sessionKey, fixture);
+    const cfg = createConfig({ storePath, workspaceDir: state.workspaceDir });
+    await expect(
+      observeReplySelection({ fixture, cfg, sessionKey, sessionStore }),
+    ).resolves.toEqual(turnModelVerdict(TURN_MODEL_SESSION_REF));
+  });
+
   it.each(TURN_MODEL_DIFFERENTIAL_FIXTURES)("pins observed $name behavior", async (fixture) => {
     const storePath = path.join(state.sessionsDir("main"), "sessions.json");
     const sessionKey = "agent:main:telegram:group:selection";

@@ -47,7 +47,33 @@ const compactRuntimeMocks = vi.hoisted(() => ({
   compactEmbeddedAgentSessionOnDemand: vi.fn(),
 }));
 
-vi.mock("../simple-completion-runtime.js", () => completionMocks);
+vi.mock("../simple-completion-runtime.js", () => ({
+  ...completionMocks,
+  withPreparedSimpleCompletionSelection: async (
+    params: Parameters<
+      typeof import("../simple-completion-runtime.js").withPreparedSimpleCompletionSelection
+    >[0],
+    run: (selection: unknown, context: object) => Promise<unknown>,
+  ) => {
+    const selection = completionMocks.resolveSimpleCompletionSelectionForAgent(params);
+    const runtime = { config: params.cfg, agentDir: selection?.agentDir };
+    return await run(selection, {
+      preparedModelRuntime: runtime,
+      assertCurrent: () => params.abortSignal?.throwIfAborted(),
+      borrowPreparedRuntime: () => runtime,
+    });
+  },
+  acquireSimpleCompletionModelForAgent: async (
+    ...[params, validateSelection]: Parameters<
+      typeof import("../simple-completion-runtime.js").acquireSimpleCompletionModelForAgent
+    >
+  ) => {
+    const selection = completionMocks.resolveSimpleCompletionSelectionForAgent(params);
+    validateSelection?.({ selection, config: params.cfg });
+    const prepared = await completionMocks.acquireSimpleCompletionModelForAgent(params);
+    return "error" in prepared ? prepared : { ...prepared, config: params.cfg };
+  },
+}));
 vi.mock("./compact.runtime.js", () => compactRuntimeMocks);
 
 // Keep this dedicated leaf on the compaction composition boundary. Runtime/auth/lane policy is
@@ -177,6 +203,8 @@ describe("compactEmbeddedRunForRecovery", () => {
     completionMocks.completeWithPreparedSimpleCompletionModel.mockReset();
     completionMocks.resolveSimpleCompletionSelectionForAgent.mockReset();
     completionMocks.acquireSimpleCompletionModelForAgent.mockResolvedValue({
+      config: {},
+      assertCurrent: vi.fn(),
       selection: { provider: "openai", modelId: "gpt-5.5", agentDir: "/tmp/main" },
       model: {
         provider: "openai",

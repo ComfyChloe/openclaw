@@ -53,6 +53,7 @@ export type AgentTurnInternalResult =
       fallbackExhausted?: true;
       fallbackAttempts: RuntimeFallbackAttempt[];
       didLogHeartbeatStrip: boolean;
+      configuredDefault?: { provider: string; model: string };
       autoCompactionCount: number;
       /** Payload keys sent directly (not via pipeline) during tool flush. */
       directlySentBlockKeys?: Set<string>;
@@ -79,6 +80,8 @@ type SettledAgentTurnBase = {
   autoCompactionCount: number;
   compaction?: AgentTurnCompaction;
   didLogHeartbeatStrip: boolean;
+  /** Captured at runtime admission, before its lease closes or fallback changes selection. */
+  configuredDefault?: { provider: string; model: string };
   directlySentBlockKeys?: Set<string>;
   directlySentBlockPayloads?: ReplyPayload[];
 };

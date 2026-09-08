@@ -1,8 +1,12 @@
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { resolveAmbientOwnerAgentId } from "../agents/agent-scope-config.js";
 import { resolveCliRuntimeCanonicalProvider } from "../agents/cli-backends.js";
-import type { CodexCliApiKeyCredential } from "../agents/cli-credentials.js";
 import { CliExecutionAuthProfileError } from "../agents/cli-execution-auth.js";
 import { normalizeProviderId } from "../agents/model-selection.js";
+import type { PreparedModelSelectionContext } from "../agents/prepared-model-selection.js";
+import { withPreparedSimpleCompletionSelection } from "../agents/simple-completion-runtime.js";
 import {
   ANTHROPIC_API_DEFAULT_MODEL_REF,
   CLAUDE_CLI_DEFAULT_MODEL_REF,
@@ -28,28 +32,24 @@ import {
 import { resolveProviderInstallCatalogEntry } from "../plugins/provider-install-catalog.js";
 import { resolvePluginProvidersCore } from "../plugins/providers.runtime.js";
 import type { ProviderAuthResult } from "../plugins/types.js";
-import type { RuntimeEnv } from "../runtime.js";
 import { createPluginCapabilityConsentPrompter } from "../wizard/plugin-capability-consent.js";
-import type { WizardPrompter } from "../wizard/prompts.js";
-import {
-  resolveSystemAgentConfiguredRouteFromConfig,
-  type SystemAgentConfigSnapshot,
-} from "./inference-route.js";
+import { resolveSystemAgentConfiguredRouteFromConfig } from "./inference-route.js";
 import { createQuickstartNotePrompter } from "./setup-apply.js";
 import {
   supportsSetupManualSecret,
   supportsSetupTextInference,
 } from "./setup-inference-auth-options.js";
 import {
-  type ActivateSetupInferenceDeps,
+  type ActivateSetupInferenceResult,
   SetupInferenceCancelledError,
   type SetupInferenceFailureStatus,
-  type SetupInferenceKind,
   parseProviderAutoSetupChoiceId,
   throwIfSetupInferenceCancelled,
   waitForProviderAuth,
 } from "./setup-inference-core.js";
+import { cleanupSetupInferenceTempDir } from "./setup-inference-persist.js";
 import {
+  type SetupInferencePlanBuildParams,
   type SetupInferenceTestPlan,
   buildPreparedProviderTestPlan,
   canonicalizeSetupModelRef,
@@ -59,7 +59,7 @@ import {
 import { runProviderManualSecretMethod } from "./setup-inference-plan-provider-auth.js";
 
 async function prepareSetupProviderAuthChoice(
-  params: Parameters<typeof buildTestPlan>[0],
+  params: SetupInferencePlanBuildParams,
   choice: ProviderAuthChoiceMetadata,
 ) {
   // Carry callable auth methods past the lease, never an unbound enabled config.
@@ -100,27 +100,122 @@ async function prepareSetupProviderAuthChoice(
   });
 }
 
-export async function buildTestPlan(params: {
-  kind: SetupInferenceKind | "api-key" | "provider-auth";
-  modelRef?: string;
-  authChoice?: string;
-  apiKey?: string;
-  cfg: OpenClawConfig;
-  sourceCfg: OpenClawConfig;
-  configSnapshot?: SystemAgentConfigSnapshot;
-  workspaceDir: string;
-  pluginWorkspaceDir: string;
-  agentDir: string;
-  runtime: RuntimeEnv;
-  prompter?: WizardPrompter;
-  signal?: AbortSignal;
-  isCancelled?: () => boolean;
-  beforePersistentEffect?: () => void | Promise<void>;
-  isRemoteProviderAuth?: boolean;
-  routeAgentId?: string;
-  codexCliApiKey?: CodexCliApiKeyCredential;
-  deps: ActivateSetupInferenceDeps;
-}): Promise<SetupInferenceTestPlan | { error: string; status?: SetupInferenceFailureStatus }> {
+type SetupInferencePlanResult =
+  | SetupInferenceTestPlan
+  | { error: string; status?: SetupInferenceFailureStatus };
+
+export type SetupInferencePlanScope = {
+  tempDir: string;
+  testAgentDir: string;
+  selection?: PreparedModelSelectionContext;
+};
+
+/** Keep selected facts and temporary resources alive through their consuming operation. */
+export async function withSetupInferencePlan<T>(
+  params: Omit<
+    SetupInferencePlanBuildParams,
+    "workspaceDir" | "agentDir" | "pluginWorkspaceDir"
+  > & {
+    pluginWorkspaceDir?: string;
+  },
+  run: (plan: SetupInferenceTestPlan, scope: SetupInferencePlanScope) => Promise<T>,
+): Promise<T | Extract<ActivateSetupInferenceResult, { ok: false }>> {
+  const tempDir = await (
+    params.deps.createTempDir ??
+    (() => fs.mkdtemp(path.join(os.tmpdir(), "openclaw-setup-inference-")))
+  )();
+  try {
+    const testAgentDir = path.join(tempDir, "agent");
+    const prepared = {
+      ...params,
+      routeAgentId: resolveAmbientOwnerAgentId(params.cfg, params.routeAgentId),
+      workspaceDir: tempDir,
+      pluginWorkspaceDir: params.pluginWorkspaceDir ?? tempDir,
+      agentDir: testAgentDir,
+    };
+    const consumePlan = async (
+      plan: SetupInferencePlanResult,
+      selection?: PreparedModelSelectionContext,
+    ): Promise<T | Extract<ActivateSetupInferenceResult, { ok: false }>> =>
+      "error" in plan
+        ? { ok: false, status: plan.status ?? "unavailable", error: plan.error }
+        : await run(plan, { tempDir, testAgentDir, selection });
+    if (params.kind !== "existing-model") {
+      return await consumePlan(await buildProviderSetupInferencePlan(prepared));
+    }
+    return await withPreparedSimpleCompletionSelection(
+      {
+        cfg: params.cfg,
+        agentId: prepared.routeAgentId,
+        readOnly: true,
+        abortSignal: params.signal,
+      },
+      async (_selection, selection) =>
+        await consumePlan(await buildExistingSetupInferencePlan(prepared, selection), selection),
+    );
+  } finally {
+    await cleanupSetupInferenceTempDir({ tempDir, deps: params.deps, runtime: params.runtime });
+  }
+}
+
+async function buildExistingSetupInferencePlan(
+  params: SetupInferencePlanBuildParams,
+  context: PreparedModelSelectionContext,
+): Promise<SetupInferencePlanResult> {
+  const cfg = context.preparedModelRuntime.config;
+  const { metadataSnapshot, modelCatalog } = context.preparedModelRuntime;
+  let route;
+  try {
+    route = await resolveSystemAgentConfiguredRouteFromConfig(
+      cfg,
+      params.routeAgentId,
+      {
+        loadAuthProfileStoreForRuntime: params.deps.loadAuthProfileStoreForRuntime,
+        pluginMetadataPlugins: metadataSnapshot.plugins,
+        resolvedModelCatalog: modelCatalog.entries,
+      },
+      params.configSnapshot,
+    );
+  } catch (error) {
+    if (error instanceof CliExecutionAuthProfileError) {
+      return { error: error.message, status: "auth" as const };
+    }
+    throw error;
+  }
+  if (!route) {
+    return { error: "No configured default-agent inference route is available." };
+  }
+  const requestedModelRef = params.modelRef?.trim();
+  const requestedTarget = requestedModelRef
+    ? canonicalizeSetupModelRef({
+        cfg,
+        raw: requestedModelRef,
+        defaultProvider: route.provider,
+        agentId: route.agentId,
+        manifestPlugins: metadataSnapshot,
+        resolvedModelCatalog: modelCatalog.entries,
+      })
+    : undefined;
+  if (requestedModelRef && requestedTarget !== route.modelLabel) {
+    return {
+      error: `The configured default model changed from ${requestedModelRef} to ${route.modelLabel}. Try setup again.`,
+    };
+  }
+  const { runConfig, sourceConfig: _sourceConfig, modelLabel, agentId, ...selection } = route;
+  return {
+    ...selection,
+    modelRef: modelLabel,
+    requestedRouteResolution: "resolved",
+    config: cfg,
+    executionConfig: runConfig,
+    agentId: "openclaw",
+    routeAgentId: agentId,
+  };
+}
+
+async function buildProviderSetupInferencePlan(
+  params: SetupInferencePlanBuildParams,
+): Promise<SetupInferencePlanResult> {
   const { kind, cfg, workspaceDir } = params;
   const routeAgentId = resolveAmbientOwnerAgentId(cfg, params.routeAgentId);
   const resolveRouteModelRef = (defaultModelRef: string): string | { error: string } => {
@@ -208,70 +303,34 @@ export async function buildTestPlan(params: {
     }
   }
   switch (kind) {
-    case "existing-model": {
-      let route;
-      try {
-        route = await resolveSystemAgentConfiguredRouteFromConfig(
-          cfg,
-          params.routeAgentId,
-          { loadAuthProfileStoreForRuntime: params.deps.loadAuthProfileStoreForRuntime },
-          params.configSnapshot,
-        );
-      } catch (error) {
-        if (error instanceof CliExecutionAuthProfileError) {
-          return { error: error.message, status: "auth" as const };
-        }
-        throw error;
-      }
-      if (!route) {
-        return { error: "No configured default-agent inference route is available." };
-      }
-      const requestedModelRef = params.modelRef?.trim();
-      const requestedTarget = requestedModelRef
-        ? canonicalizeSetupModelRef({
-            cfg,
-            raw: requestedModelRef,
-            defaultProvider: route.provider,
-          })
-        : undefined;
-      if (requestedModelRef && requestedTarget !== route.modelLabel) {
-        return {
-          error: `The configured default model changed from ${requestedModelRef} to ${route.modelLabel}. Try setup again.`,
-        };
-      }
-      return {
-        runner: route.runner,
-        provider: route.provider,
-        model: route.model,
-        modelRef: route.modelLabel,
-        config: cfg,
-        executionConfig: route.runConfig,
-        agentId: "openclaw",
-        routeAgentId: route.agentId,
-        agentDir: route.agentDir,
-        ...(route.runner === "embedded" && route.agentHarnessRuntimeOverride
-          ? { agentHarnessRuntimeOverride: route.agentHarnessRuntimeOverride }
-          : {}),
-        ...(route.authProfileId ? { authProfileId: route.authProfileId } : {}),
-      };
-    }
-    case "claude-cli": {
-      const modelRef = resolveRouteModelRef(CLAUDE_CLI_DEFAULT_MODEL_REF);
+    case "claude-cli":
+    case "gemini-cli":
+    case "openai-api-key":
+    case "anthropic-api-key": {
+      const modelRef = resolveRouteModelRef(
+        {
+          "claude-cli": CLAUDE_CLI_DEFAULT_MODEL_REF,
+          "gemini-cli": GEMINI_CLI_DEFAULT_MODEL_REF,
+          "openai-api-key": OPENAI_API_DEFAULT_MODEL_REF,
+          "anthropic-api-key": ANTHROPIC_API_DEFAULT_MODEL_REF,
+        }[kind],
+      );
       if (typeof modelRef !== "string") {
         return modelRef;
       }
       const ref = parseRef(modelRef);
-      // Backend metadata owns whether a CLI runtime aliases a canonical provider.
-      // Standalone CLI backends keep their runtime provider as the durable key.
+      // Only a registered CLI alias changes the provider persisted by this choice.
       const persistProvider =
-        resolveCliRuntimeCanonicalProvider({
-          runtime: ref.provider,
-          config: cfg,
-          env: process.env,
-          includeSetupRegistry: true,
-        }) ?? ref.provider;
+        kind === "claude-cli"
+          ? (resolveCliRuntimeCanonicalProvider({
+              runtime: ref.provider,
+              config: cfg,
+              env: process.env,
+              includeSetupRegistry: true,
+            }) ?? ref.provider)
+          : ref.provider;
       return {
-        runner: "cli",
+        runner: kind === "claude-cli" || kind === "gemini-cli" ? "cli" : "embedded",
         ...ref,
         modelRef,
         config: cfg,
@@ -280,28 +339,24 @@ export async function buildTestPlan(params: {
         persistModelRef: `${persistProvider}/${ref.model}`,
       };
     }
-    case "gemini-cli": {
-      const modelRef = resolveRouteModelRef(GEMINI_CLI_DEFAULT_MODEL_REF);
-      if (typeof modelRef !== "string") {
-        return modelRef;
-      }
-      const ref = parseRef(modelRef);
-      return {
-        runner: "cli",
-        ...ref,
-        modelRef,
-        config: cfg,
-        agentId: "openclaw",
-        routeAgentId,
-        persistModelRef: modelRef,
-      };
-    }
     case "codex-cli": {
       const modelRef = resolveRouteModelRef(CODEX_APP_SERVER_DEFAULT_MODEL_REF);
       if (typeof modelRef !== "string") {
         return modelRef;
       }
       const ref = parseRef(modelRef);
+      const plan: SetupInferenceTestPlan = {
+        runner: "embedded",
+        ...ref,
+        modelRef,
+        agentHarnessRuntimeOverride: "codex",
+        config: cfg,
+        agentId: "openclaw",
+        routeAgentId,
+        agentDir: params.agentDir,
+        cleanupBundleMcpOnRunEnd: true,
+        persistModelRef: modelRef,
+      };
       if (params.codexCliApiKey) {
         const preparedAuth = prepareManualAuthForActivation({
           baseConfig: cfg,
@@ -318,69 +373,15 @@ export async function buildTestPlan(params: {
           providerId: ref.provider,
           agentId: routeAgentId,
         });
-        return {
-          runner: "embedded",
-          ...ref,
-          modelRef,
-          agentHarnessRuntimeOverride: "codex",
-          config: preparedAuth.config,
-          agentId: "openclaw",
-          routeAgentId,
-          agentDir: params.agentDir,
-          cleanupBundleMcpOnRunEnd: true,
-          authProfileId: preparedAuth.selectedProfileId,
-          persistModelRef: modelRef,
-          manualAuth: {
-            profiles: preparedAuth.profiles,
-            sourceConfigBase: params.sourceCfg,
-            configPatch: createMergePatch(cfg, preparedAuth.config),
-          },
+        plan.config = preparedAuth.config;
+        plan.authProfileId = preparedAuth.selectedProfileId;
+        plan.manualAuth = {
+          profiles: preparedAuth.profiles,
+          sourceConfigBase: params.sourceCfg,
+          configPatch: createMergePatch(cfg, preparedAuth.config),
         };
       }
-      return {
-        runner: "embedded",
-        ...ref,
-        modelRef,
-        agentHarnessRuntimeOverride: "codex",
-        config: cfg,
-        agentId: "openclaw",
-        routeAgentId,
-        agentDir: params.agentDir,
-        cleanupBundleMcpOnRunEnd: true,
-        persistModelRef: modelRef,
-      };
-    }
-    case "openai-api-key": {
-      const modelRef = resolveRouteModelRef(OPENAI_API_DEFAULT_MODEL_REF);
-      if (typeof modelRef !== "string") {
-        return modelRef;
-      }
-      const ref = parseRef(modelRef);
-      return {
-        runner: "embedded",
-        ...ref,
-        modelRef,
-        config: cfg,
-        agentId: "openclaw",
-        routeAgentId,
-        persistModelRef: modelRef,
-      };
-    }
-    case "anthropic-api-key": {
-      const modelRef = resolveRouteModelRef(ANTHROPIC_API_DEFAULT_MODEL_REF);
-      if (typeof modelRef !== "string") {
-        return modelRef;
-      }
-      const ref = parseRef(modelRef);
-      return {
-        runner: "embedded",
-        ...ref,
-        modelRef,
-        config: cfg,
-        agentId: "openclaw",
-        routeAgentId,
-        persistModelRef: modelRef,
-      };
+      return plan;
     }
     case "api-key":
     case "provider-auth": {

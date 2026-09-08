@@ -105,7 +105,7 @@ describe("Ollama probe targets", () => {
     expect(plan.targets).toEqual([
       {
         provider: "ollama",
-        model: { provider: "ollama", model: "gemma4:latest" },
+        model: { provider: "ollama", model: "gemma4:latest", requestedRouteResolution: "raw" },
         label: "models.json",
         source: "models.json",
         mode: "api_key",
@@ -174,7 +174,7 @@ describe("Ollama probe targets", () => {
     expect(plan.targets).toEqual([
       expect.objectContaining({
         provider: "ollama",
-        model: { provider: "ollama", model: "kimi-k2.6" },
+        model: { provider: "ollama", model: "kimi-k2.6", requestedRouteResolution: "resolved" },
       }),
     ]);
   });
@@ -283,6 +283,14 @@ describe("automatic probe model lifecycle", () => {
         candidates: buildProbeCandidateMap(requestedModels ?? []),
         catalog,
       }),
-    ).toEqual(expectedModel === null ? null : { provider, model: expectedModel });
+    ).toEqual(
+      expectedModel === null
+        ? null
+        : {
+            provider,
+            model: expectedModel,
+            requestedRouteResolution: requestedModels?.length ? "raw" : "resolved",
+          },
+    );
   });
 });

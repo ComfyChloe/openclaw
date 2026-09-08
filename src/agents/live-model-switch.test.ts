@@ -15,11 +15,8 @@ vi.mock("./embedded-agent.js", () => {
   return {};
 });
 
-vi.mock("./model-selection.js", async () => {
-  const actual =
-    await vi.importActual<typeof import("./model-selection.js")>("./model-selection.js");
+vi.mock("./model-selection.js", () => {
   return {
-    normalizeStoredOverrideModel: actual.normalizeStoredOverrideModel,
     resolveDefaultModelForAgent: (...args: unknown[]) =>
       state.resolveDefaultModelForAgentMock(...args),
     resolvePersistedSelectedModelRef: (...args: unknown[]) =>
@@ -179,10 +176,12 @@ describe("live model switch", () => {
       authProfileId: "profile-gpt",
       authProfileIdSource: "user",
     });
-    expect(state.resolveDefaultModelForAgentMock).toHaveBeenCalledWith({
-      cfg: { session: { store: "/tmp/custom-store.json" } },
-      agentId: "reply",
-    });
+    expect(state.resolveDefaultModelForAgentMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        cfg: { session: { store: "/tmp/custom-store.json" } },
+        agentId: "reply",
+      }),
+    );
     expect(state.resolveStorePathMock).toHaveBeenCalledWith("/tmp/custom-store.json", {
       agentId: "reply",
     });
@@ -282,7 +281,7 @@ describe("live model switch", () => {
     });
   });
 
-  it("strips duplicated provider prefixes from persisted overrides", () => {
+  it("preserves literal provider namespaces in persisted overrides", () => {
     expect(
       resolvePendingSelection({
         providerOverride: "openai",
@@ -290,18 +289,17 @@ describe("live model switch", () => {
       }),
     ).toEqual({
       provider: "openai",
-      model: "gpt-5.4",
+      model: "openai/gpt-5.4",
       authProfileId: undefined,
       authProfileIdSource: undefined,
     });
   });
 
-  it("routes normalized overrides back through persisted ref resolution", () => {
-    // Normalization strips duplicate provider prefixes before handing the
-    // choice to the shared persisted-ref resolver.
+  it.each(["user", undefined] as const)("passes selected provenance with source=%s", (source) => {
     resolvePendingSelection({
       providerOverride: "z-ai",
       modelOverride: "z-ai/deepseek-chat",
+      ...(source ? { modelOverrideSource: source } : {}),
     });
 
     expect(state.resolvePersistedSelectedModelRefMock).toHaveBeenCalledWith({
@@ -309,7 +307,8 @@ describe("live model switch", () => {
       runtimeProvider: undefined,
       runtimeModel: undefined,
       overrideProvider: "z-ai",
-      overrideModel: "deepseek-chat",
+      overrideModel: "z-ai/deepseek-chat",
+      overrideRouteResolution: "resolved",
     });
   });
 
@@ -549,6 +548,27 @@ describe("live model switch", () => {
 
       expect(sessionEntry).not.toHaveProperty("liveModelSwitchPending");
     });
+
+    it.each(["middle", "fallback"])(
+      "compares %s with the recorded default after the runtime closes",
+      async (modelUsed) => {
+        const sessionEntry = { liveModelSwitchPending: true };
+        state.loadSessionStoreMock.mockReturnValue({ main: sessionEntry });
+        state.resolveDefaultModelForAgentMock.mockReturnValue({
+          provider: "custom",
+          model: "later-generation",
+        });
+        const { consolidateLiveModelSwitchAfterRun } = await loadModule();
+        await consolidateLiveModelSwitchAfterRun({
+          ...consolidateParams,
+          providerUsed: "custom",
+          modelUsed,
+          configuredDefault: { provider: "custom", model: "middle" },
+        });
+        expect(sessionEntry.liveModelSwitchPending).toBe(modelUsed === "middle" ? undefined : true);
+        expect(state.resolveDefaultModelForAgentMock).not.toHaveBeenCalled();
+      },
+    );
 
     it("keeps the pending flag when the run executed a different model", async () => {
       const sessionEntry = {

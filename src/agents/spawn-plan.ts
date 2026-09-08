@@ -279,7 +279,7 @@ export function resolveSpawnAdmission(params: {
       maxSpawnDepth?: number;
       childSessionPatch?: {
         spawnDepth: number;
-        subagentRole: "orchestrator" | "leaf" | null;
+        subagentRole?: "orchestrator" | "leaf";
         subagentControlScope: "children" | "none";
       };
     }
@@ -357,7 +357,7 @@ export function resolveSpawnAdmission(params: {
     maxSpawnDepth,
     childSessionPatch: {
       spawnDepth: capabilities.depth,
-      subagentRole: capabilities.role === "main" ? null : capabilities.role,
+      ...(capabilities.role === "main" ? {} : { subagentRole: capabilities.role }),
       subagentControlScope: capabilities.controlScope,
     },
   };

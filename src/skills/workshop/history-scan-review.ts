@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { RunEmbeddedAgentParams } from "../../agents/embedded-agent-runner/run/params.js";
 import { SessionManager } from "../../agents/sessions/index.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import {
@@ -22,7 +23,10 @@ export async function runSkillHistoryScanReview(params: {
   agentId: string;
   config: OpenClawConfig;
   env?: NodeJS.ProcessEnv;
-  modelRef: { model: string; provider: string };
+  modelRef: Pick<
+    RunEmbeddedAgentParams,
+    "provider" | "model" | "requestedRouteResolution" | "authProfileId" | "authProfileIdSource"
+  >;
   onComplete: (ideasFound: number) => Promise<void>;
   onProgress: (progress: SkillWorkshopProposalReviewProgress) => Promise<void>;
   progress: SkillWorkshopProposalReviewProgress;
@@ -62,8 +66,7 @@ export async function runSkillHistoryScanReview(params: {
     workspaceDir: params.workspaceDir,
     config: params.config,
     prompt: buildSkillHistoryScanPrompt({ sessions: params.sessions }),
-    provider: params.modelRef.provider,
-    model: params.modelRef.model,
+    ...params.modelRef,
     timeoutMs: HISTORY_SCAN_TIMEOUT_MS,
     runId: params.runId,
     toolsAllow: ["skill_workshop"],

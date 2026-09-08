@@ -174,6 +174,7 @@ export function installImageRuntimeTestHooks({
           config: input.config,
           workspaceDir: input.workspaceDir,
           metadataSnapshot: createEmptyPluginMetadataSnapshot(input.workspaceDir),
+          modelCatalog: { entries: [] },
           createStores: () => ({
             authStorage: preparedAuthStorage,
             modelRegistry: {},

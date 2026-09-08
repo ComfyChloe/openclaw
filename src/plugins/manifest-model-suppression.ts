@@ -169,7 +169,7 @@ export function buildManifestBuiltInModelSuppressionResolver(params: {
 
   const resolver: ManifestModelSuppressionResolver = (input) => {
     const provider = normalizeLowercaseStringOrEmpty(input.provider);
-    const modelId = normalizeLowercaseStringOrEmpty(input.id);
+    const modelId = input.id?.trim();
     if (!provider || !modelId) {
       return undefined;
     }

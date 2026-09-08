@@ -235,7 +235,8 @@ function wrapResponseStream(stream: ProviderStream, state: TransformState): Prov
 export function wrapOpencodeProviderStream(ctx: ProviderWrapStreamFnContext): StreamFn {
   const underlying = ctx.streamFn ?? streamSimple;
   return (model, context, options) => {
-    if (model.api !== "openai-responses") {
+    const isResponses = model.api === "openai-responses";
+    if (!isResponses && ctx.capability !== "image") {
       return underlying(model, context, options);
     }
     const originalOnPayload = options?.onPayload;
@@ -247,6 +248,17 @@ export function wrapOpencodeProviderStream(ctx: ProviderWrapStreamFnContext): St
         state.fields = new Map();
         state.alias = undefined;
         if (isRecord(finalPayload)) {
+          // Image descriptions omit disabled reasoning; ordinary text calls retain their policy.
+          const reasoning = finalPayload.reasoning;
+          if (
+            ctx.capability === "image" &&
+            (reasoning === "none" || (isRecord(reasoning) && reasoning.effort === "none"))
+          ) {
+            delete finalPayload.reasoning;
+          }
+          if (!isResponses) {
+            return finalPayload;
+          }
           state.fields = rewriteDynamicRecordSchemas(finalPayload);
           for (const call of payloadFunctions(finalPayload)) {
             if (call.type === "function_call") {
@@ -258,7 +270,8 @@ export function wrapOpencodeProviderStream(ctx: ProviderWrapStreamFnContext): St
         return finalPayload;
       },
     });
-    const wrap = (stream: ProviderStream) => wrapResponseStream(stream, state);
+    const wrap = (stream: ProviderStream) =>
+      isResponses ? wrapResponseStream(stream, state) : stream;
     return maybeStream && typeof maybeStream === "object" && "then" in maybeStream
       ? Promise.resolve(maybeStream).then(wrap)
       : wrap(maybeStream);

@@ -445,15 +445,6 @@ export async function spawnAcpDirect(
         actor: { type: "agent", id: requesterAgentId },
       });
       const storePath = resolveSessionStorePathCore(cfg.session?.store, { agentId: targetAgentId });
-      const childSessionPatch = admission.childSessionPatch
-        ? {
-            spawnDepth: admission.childSessionPatch.spawnDepth,
-            ...(admission.childSessionPatch.subagentRole
-              ? { subagentRole: admission.childSessionPatch.subagentRole }
-              : {}),
-            subagentControlScope: admission.childSessionPatch.subagentControlScope,
-          }
-        : {};
       childCreationEntry =
         (await upsertSessionEntryCore(
           { storePath, sessionKey, agentId: targetAgentId },
@@ -464,7 +455,7 @@ export async function spawnAcpDirect(
             // Navigation parent is stamped at creation so the durable tree edge
             // does not depend on the control-lineage field.
             parentSessionKey: requesterInternalKey,
-            ...childSessionPatch,
+            ...admission.childSessionPatch,
             inheritedToolPolicyVersion: 1,
             ...inheritedToolAllowPatch(ctx.inheritedToolAllowlist),
             ...inheritedToolDenyPatch(ctx.inheritedToolDenylist),

@@ -1,6 +1,3 @@
-import fs from "node:fs/promises";
-import os from "node:os";
-import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { resolveAmbientOwnerAgentId } from "../agents/agent-scope-config.js";
 import { resolveAgentEffectiveModelPrimary } from "../agents/agent-scope.js";
@@ -26,12 +23,9 @@ import {
   redactSetupInferenceError,
 } from "./setup-inference-core.js";
 import { revalidateStableSetupInferenceOwner } from "./setup-inference-owner.js";
-import {
-  cleanupSetupInferenceTempDir,
-  persistManualAuthProfiles,
-} from "./setup-inference-persist.js";
+import { persistManualAuthProfiles } from "./setup-inference-persist.js";
 import type { SetupInferenceTestPlan } from "./setup-inference-plan-helpers.js";
-import { buildTestPlan } from "./setup-inference-plan.js";
+import { withSetupInferencePlan, type SetupInferencePlanScope } from "./setup-inference-plan.js";
 import { runSetupInferenceTest } from "./setup-inference-test.js";
 import {
   captureSystemAgentOwnerPluginArtifacts,
@@ -84,64 +78,77 @@ export async function verifySetupInference(
     };
   }
   const cfg: OpenClawConfig = snapshot.runtimeConfig ?? snapshot.config;
-  const baselineRoute = await projectInferenceRoute(cfg, params.agentId);
   let verifiedBinding: SystemAgentVerifiedInferenceBinding | undefined;
-  const verification = await verifySetupInferenceConfig({
-    config: cfg,
-    configSnapshot: snapshot,
-    runtime: params.runtime,
-    requireExecutionOwner: params.bindSession === true,
-    ...(params.agentId ? { agentId: params.agentId } : {}),
-    ...(params.timeoutMs !== undefined ? { timeoutMs: params.timeoutMs } : {}),
-    ...(params.deps ? { deps: params.deps } : {}),
-    ...(params.bindSession
-      ? {
-          onVerifiedExecution: (
-            _auth: AgentExecutionAuthBinding,
-            binding: SystemAgentVerifiedInferenceBinding,
-          ) => {
-            verifiedBinding = binding;
-          },
-        }
-      : {}),
-  });
-  if (!verification.ok) {
-    return verification;
-  }
-  const latestSnapshot = await readSnapshot().catch(() => null);
-  const latestConfig =
-    latestSnapshot?.exists && latestSnapshot.valid
-      ? (latestSnapshot.runtimeConfig ?? latestSnapshot.config)
-      : undefined;
-  const latestRoute = latestConfig
-    ? await projectInferenceRoute(latestConfig, params.agentId)
-    : undefined;
-  if (!latestRoute || !sameDefaultInferenceRoute(baselineRoute, latestRoute)) {
-    return {
-      ok: false,
-      status: "unknown",
-      error:
-        "The inference route changed during its live test. Review current model/auth/runtime settings and retry.",
-    };
-  }
-  if (!params.bindSession) {
-    return verification;
-  }
-  const configuredRoute = await resolveSystemAgentConfiguredRouteFromConfig(
-    cfg,
-    params.agentId,
-    {},
-    snapshot,
+  return await withSetupInferenceVerification(
+    {
+      config: cfg,
+      configSnapshot: snapshot,
+      runtime: params.runtime,
+      requireExecutionOwner: params.bindSession === true,
+      ...(params.agentId ? { agentId: params.agentId } : {}),
+      ...(params.timeoutMs !== undefined ? { timeoutMs: params.timeoutMs } : {}),
+      ...(params.deps ? { deps: params.deps } : {}),
+      ...(params.bindSession
+        ? {
+            onVerifiedExecution: (
+              _auth: AgentExecutionAuthBinding,
+              binding: SystemAgentVerifiedInferenceBinding,
+            ) => {
+              verifiedBinding = binding;
+            },
+          }
+        : {}),
+    },
+    async (verify, scope) => {
+      if (!scope?.selection) {
+        return await verify();
+      }
+      const { metadataSnapshot, modelCatalog } = scope.selection.preparedModelRuntime;
+      const routeDeps = {
+        pluginMetadataPlugins: metadataSnapshot.plugins,
+        resolvedModelCatalog: modelCatalog.entries,
+      };
+      const baselineRoute = await projectInferenceRoute(cfg, params.agentId, routeDeps);
+      const verification = await verify();
+      if (!verification.ok) {
+        return verification;
+      }
+      const latestSnapshot = await readSnapshot().catch(() => null);
+      const latestConfig =
+        latestSnapshot?.exists && latestSnapshot.valid
+          ? (latestSnapshot.runtimeConfig ?? latestSnapshot.config)
+          : undefined;
+      const latestRoute = latestConfig
+        ? await projectInferenceRoute(latestConfig, params.agentId, routeDeps)
+        : undefined;
+      if (!latestRoute || !sameDefaultInferenceRoute(baselineRoute, latestRoute)) {
+        return {
+          ok: false,
+          status: "unknown",
+          error:
+            "The inference route changed during its live test. Review current model/auth/runtime settings and retry.",
+        };
+      }
+      if (!params.bindSession) {
+        return verification;
+      }
+      const configuredRoute = await resolveSystemAgentConfiguredRouteFromConfig(
+        cfg,
+        params.agentId,
+        routeDeps,
+        snapshot,
+      );
+      if (!configuredRoute || !verifiedBinding) {
+        return {
+          ok: false,
+          status: "unknown",
+          error:
+            "The successful inference run did not report an exact execution binding. Retry setup before starting OpenClaw.",
+        };
+      }
+      return { ...verification, binding: verifiedBinding };
+    },
   );
-  if (!configuredRoute || !verifiedBinding) {
-    return {
-      ok: false,
-      status: "unknown",
-      error:
-        "The successful inference run did not report an exact execution binding. Retry setup before starting OpenClaw.",
-    };
-  }
-  return { ...verification, binding: verifiedBinding };
 }
 
 type BoundSetupInferenceVerifier = (params: {
@@ -241,6 +248,16 @@ export async function verifySetupInferenceConfig(params: {
   /** Reject a successful turn unless its runner reports the exact execution owner. */
   requireExecutionOwner?: boolean;
 }): Promise<VerifySetupInferenceResult> {
+  return await withSetupInferenceVerification(params, (verify) => verify());
+}
+
+async function withSetupInferenceVerification<T>(
+  params: Parameters<typeof verifySetupInferenceConfig>[0],
+  run: (
+    verify: () => Promise<VerifySetupInferenceResult>,
+    scope?: SetupInferencePlanScope,
+  ) => Promise<T>,
+): Promise<T | Extract<VerifySetupInferenceResult, { ok: false }>> {
   const deps: ActivateSetupInferenceDeps = {
     ...params.deps,
     ...(params.timeoutMs !== undefined ? { timeoutMs: params.timeoutMs } : {}),
@@ -248,234 +265,228 @@ export async function verifySetupInferenceConfig(params: {
   const cfg = params.config;
   const routeAgentId = resolveAmbientOwnerAgentId(cfg, params.agentId);
   if (!resolveAgentEffectiveModelPrimary(cfg, routeAgentId)) {
-    return {
+    return await run(async () => ({
       ok: false,
       status: "unavailable",
       error: "No agent model is configured. Run `openclaw onboard` first.",
-    };
+    }));
   }
-  const tempDir = await (
-    deps.createTempDir ?? (() => fs.mkdtemp(path.join(os.tmpdir(), "openclaw-setup-inference-")))
-  )();
-  try {
-    const builtPlan = await buildTestPlan({
+  return await withSetupInferencePlan(
+    {
       kind: "existing-model",
       cfg,
       sourceCfg: cfg,
       configSnapshot: params.configSnapshot,
-      workspaceDir: tempDir,
-      pluginWorkspaceDir: tempDir,
-      agentDir: path.join(tempDir, "agent"),
       runtime: params.runtime,
       routeAgentId,
       deps,
-    });
-    if ("error" in builtPlan) {
-      return {
-        ok: false,
-        status: builtPlan.status ?? "unavailable",
-        error: builtPlan.error,
-      };
-    }
-    let plan: SetupInferenceTestPlan = params.agentDir
-      ? { ...builtPlan, agentDir: params.agentDir }
-      : builtPlan;
-    if (params.authProfiles && params.authProfiles.length > 0) {
-      const selectedProfile = plan.authProfileId
-        ? params.authProfiles.find((profile) => profile.profileId === plan.authProfileId)
-        : params.authProfiles.find(
-            (profile) =>
-              normalizeProviderId(profile.credential.provider) ===
-              normalizeProviderId(plan.provider),
-          );
-      if (!selectedProfile) {
-        return {
-          ok: false,
-          status: "auth",
-          error: plan.authProfileId
-            ? "The staged credential does not match the configured auth profile."
-            : "The staged credential does not belong to the configured inference provider.",
-        };
-      }
-      const stagedAgentDir = path.join(tempDir, "agent");
-      const staged = await persistManualAuthProfiles({
-        profiles: params.authProfiles,
-        agentDir: stagedAgentDir,
-        deps,
-      });
-      if (staged.status !== "persisted") {
-        return {
-          ok: false,
-          status: "unknown",
-          error:
-            "Could not stage the credential for its live inference test; try again in a moment.",
-        };
-      }
-      plan = {
-        ...plan,
-        agentDir: stagedAgentDir,
-        authProfileId: selectedProfile.profileId,
-      };
-    }
-    const readStagedAuthProfiles = (): ProviderAuthResult["profiles"] | undefined => {
-      if (!params.authProfiles || params.authProfiles.length === 0) {
-        return undefined;
-      }
-      const loadStore = deps.loadAuthProfileStoreForRuntime ?? loadAuthProfileStoreForRuntime;
-      const { profiles } = loadStore(plan.agentDir, {
-        readOnly: true,
-        allowKeychainPrompt: false,
-        config: plan.config,
-        externalCliProviderIds: [plan.provider],
-      });
-      return params.authProfiles.map((profile) => {
-        const credential = profiles[profile.profileId];
-        if (!credential) {
-          throw new Error("staged profile missing after verification");
+    },
+    async (builtPlan, scope) => {
+      const { tempDir, testAgentDir } = scope;
+      const routeDeps = scope.selection
+        ? {
+            pluginMetadataPlugins: scope.selection.preparedModelRuntime.metadataSnapshot.plugins,
+            resolvedModelCatalog: scope.selection.preparedModelRuntime.modelCatalog.entries,
+          }
+        : {};
+      const verify = async (): Promise<VerifySetupInferenceResult> => {
+        let plan: SetupInferenceTestPlan = params.agentDir
+          ? { ...builtPlan, agentDir: params.agentDir }
+          : builtPlan;
+        if (params.authProfiles && params.authProfiles.length > 0) {
+          const selectedProfile = plan.authProfileId
+            ? params.authProfiles.find((profile) => profile.profileId === plan.authProfileId)
+            : params.authProfiles.find(
+                (profile) =>
+                  normalizeProviderId(profile.credential.provider) ===
+                  normalizeProviderId(plan.provider),
+              );
+          if (!selectedProfile) {
+            return {
+              ok: false,
+              status: "auth",
+              error: plan.authProfileId
+                ? "The staged credential does not match the configured auth profile."
+                : "The staged credential does not belong to the configured inference provider.",
+            };
+          }
+          const staged = await persistManualAuthProfiles({
+            profiles: params.authProfiles,
+            agentDir: testAgentDir,
+            deps,
+          });
+          if (staged.status !== "persisted") {
+            return {
+              ok: false,
+              status: "unknown",
+              error:
+                "Could not stage the credential for its live inference test; try again in a moment.",
+            };
+          }
+          plan = {
+            ...plan,
+            agentDir: testAgentDir,
+            authProfileId: selectedProfile.profileId,
+          };
         }
-        return { ...profile, credential };
-      });
-    };
-    const retainStagedAuthProfiles = () => {
-      try {
-        return { ok: true as const, authProfiles: readStagedAuthProfiles() };
-      } catch {
-        return {
-          ok: false as const,
-          result: {
-            ok: false as const,
-            status: "unknown" as const,
-            error: "Could not retain the credential after its live inference test.",
-          },
+        const readStagedAuthProfiles = (): ProviderAuthResult["profiles"] | undefined => {
+          if (!params.authProfiles || params.authProfiles.length === 0) {
+            return undefined;
+          }
+          const loadStore = deps.loadAuthProfileStoreForRuntime ?? loadAuthProfileStoreForRuntime;
+          const { profiles } = loadStore(plan.agentDir, {
+            readOnly: true,
+            allowKeychainPrompt: false,
+            config: plan.config,
+            externalCliProviderIds: [plan.provider],
+          });
+          return params.authProfiles.map((profile) => {
+            const credential = profiles[profile.profileId];
+            if (!credential) {
+              throw new Error("staged profile missing after verification");
+            }
+            return { ...profile, credential };
+          });
         };
-      }
-    };
-    const requiresExecutionOwner =
-      params.requireExecutionOwner === true || params.onVerifiedExecution !== undefined;
-    let configuredRoute:
-      | NonNullable<Awaited<ReturnType<typeof resolveSystemAgentConfiguredRouteFromConfig>>>
-      | undefined;
-    let stagedOwnerPluginArtifacts: SystemAgentOwnerPluginArtifactSnapshot | undefined;
-    if (requiresExecutionOwner) {
-      configuredRoute =
-        (await resolveSystemAgentConfiguredRouteFromConfig(
-          cfg,
-          routeAgentId,
-          {},
-          params.configSnapshot,
-        )) ?? undefined;
-      if (!configuredRoute) {
-        return {
-          ok: false,
-          status: "unknown",
-          error: "The verified inference route could not be resolved for owner validation.",
+        const retainStagedAuthProfiles = () => {
+          try {
+            return { ok: true as const, authProfiles: readStagedAuthProfiles() };
+          } catch {
+            return {
+              ok: false as const,
+              result: {
+                ok: false as const,
+                status: "unknown" as const,
+                error: "Could not retain the credential after its live inference test.",
+              },
+            };
+          }
         };
-      }
-      try {
-        stagedOwnerPluginArtifacts = (
-          deps.captureSystemAgentOwnerPluginArtifacts ?? captureSystemAgentOwnerPluginArtifacts
-        )({
-          config: cfg,
-          executionRoute: configuredRoute,
-          deps,
-        });
-      } catch (error) {
-        return {
-          ok: false,
-          status: "unavailable",
-          error: `Could not bind the configured inference plugin runtime. Refresh or reinstall the plugin and retry. (${await redactSetupInferenceError(error)})`,
-        };
-      }
-    }
-    let test = await runSetupInferenceTest({
-      plan,
-      tempDir,
-      deps,
-      authProfileStateMode: "read-only",
-      requireExecutionOwner: requiresExecutionOwner,
-      verifyAgentTools: params.verifyAgentTools,
-    });
-    let retained = retainStagedAuthProfiles();
-    if (!retained.ok) {
-      return retained.result;
-    }
-    let authProfiles = retained.authProfiles;
-    if (test.ok) {
-      const verifiedProfileId = test.auth.authProfileId;
-      if (plan.authProfileId && verifiedProfileId !== plan.authProfileId) {
-        return {
-          ok: false,
-          status: "auth",
-          error: `The inference run used profile "${verifiedProfileId ?? "unknown"}" instead of the configured profile "${plan.authProfileId}".`,
-          ...(authProfiles ? { authProfiles } : {}),
-        };
-      }
-      if (params.onVerifiedExecution && !plan.authProfileId && verifiedProfileId) {
-        // Auto-selection may rotate through several profiles before succeeding.
-        // Re-run once with the winner locked so the session proof cannot bind a
-        // credential that never completed an exact, non-rotating turn.
-        test = await runSetupInferenceTest({
-          plan: { ...plan, authProfileId: verifiedProfileId },
+        const requiresExecutionOwner =
+          params.requireExecutionOwner === true || params.onVerifiedExecution !== undefined;
+        let configuredRoute: SystemAgentConfiguredRoute | undefined;
+        let stagedOwnerPluginArtifacts: SystemAgentOwnerPluginArtifactSnapshot | undefined;
+        if (requiresExecutionOwner) {
+          configuredRoute =
+            (await resolveSystemAgentConfiguredRouteFromConfig(
+              cfg,
+              routeAgentId,
+              routeDeps,
+              params.configSnapshot,
+            )) ?? undefined;
+          if (!configuredRoute) {
+            return {
+              ok: false,
+              status: "unknown",
+              error: "The verified inference route could not be resolved for owner validation.",
+            };
+          }
+          try {
+            stagedOwnerPluginArtifacts = (
+              deps.captureSystemAgentOwnerPluginArtifacts ?? captureSystemAgentOwnerPluginArtifacts
+            )({
+              config: cfg,
+              executionRoute: configuredRoute,
+              deps,
+            });
+          } catch (error) {
+            return {
+              ok: false,
+              status: "unavailable",
+              error: `Could not bind the configured inference plugin runtime. Refresh or reinstall the plugin and retry. (${await redactSetupInferenceError(error)})`,
+            };
+          }
+        }
+        let test = await runSetupInferenceTest({
+          plan,
           tempDir,
           deps,
           authProfileStateMode: "read-only",
-          requireExecutionOwner: true,
+          requireExecutionOwner: requiresExecutionOwner,
           verifyAgentTools: params.verifyAgentTools,
         });
-        retained = retainStagedAuthProfiles();
+        let retained = retainStagedAuthProfiles();
         if (!retained.ok) {
           return retained.result;
         }
-        authProfiles = retained.authProfiles;
-        if (!test.ok) {
+        let authProfiles = retained.authProfiles;
+        if (test.ok) {
+          const verifiedProfileId = test.auth.authProfileId;
+          if (plan.authProfileId && verifiedProfileId !== plan.authProfileId) {
+            return {
+              ok: false,
+              status: "auth",
+              error: `The inference run used profile "${verifiedProfileId ?? "unknown"}" instead of the configured profile "${plan.authProfileId}".`,
+              ...(authProfiles ? { authProfiles } : {}),
+            };
+          }
+          if (params.onVerifiedExecution && !plan.authProfileId && verifiedProfileId) {
+            // Auto-selection may rotate through several profiles before succeeding.
+            // Re-run once with the winner locked so the session proof cannot bind a
+            // credential that never completed an exact, non-rotating turn.
+            test = await runSetupInferenceTest({
+              plan: { ...plan, authProfileId: verifiedProfileId },
+              tempDir,
+              deps,
+              authProfileStateMode: "read-only",
+              requireExecutionOwner: true,
+              verifyAgentTools: params.verifyAgentTools,
+            });
+            retained = retainStagedAuthProfiles();
+            if (!retained.ok) {
+              return retained.result;
+            }
+            authProfiles = retained.authProfiles;
+            if (!test.ok) {
+              return {
+                ...test,
+                error: await redactSetupInferenceError(test.error),
+                ...(authProfiles ? { authProfiles } : {}),
+              };
+            }
+            if (test.auth.authProfileId !== verifiedProfileId) {
+              return {
+                ok: false,
+                status: "auth",
+                error: "The selected inference credential changed during its locked verification.",
+                ...(authProfiles ? { authProfiles } : {}),
+              };
+            }
+          }
+          if (params.requireExecutionOwner || params.onVerifiedExecution) {
+            try {
+              const binding = await revalidateStableSetupInferenceOwner({
+                route: configuredRoute!,
+                auth: test.auth,
+                stagedOwnerPluginArtifacts,
+                deps,
+              });
+              params.onVerifiedExecution?.(test.auth, binding);
+            } catch (error) {
+              return {
+                ok: false,
+                status: "auth",
+                error: await redactSetupInferenceError(error),
+                ...(authProfiles ? { authProfiles } : {}),
+              };
+            }
+          }
           return {
-            ...test,
-            error: await redactSetupInferenceError(test.error),
+            ok: true,
+            latencyMs: test.latencyMs,
+            modelRef: plan.modelRef,
             ...(authProfiles ? { authProfiles } : {}),
           };
         }
-        if (test.auth.authProfileId !== verifiedProfileId) {
-          return {
-            ok: false,
-            status: "auth",
-            error: "The selected inference credential changed during its locked verification.",
-            ...(authProfiles ? { authProfiles } : {}),
-          };
-        }
-      }
-      if (params.requireExecutionOwner || params.onVerifiedExecution) {
-        try {
-          const binding = await revalidateStableSetupInferenceOwner({
-            route: configuredRoute!,
-            auth: test.auth,
-            stagedOwnerPluginArtifacts,
-            deps,
-          });
-          params.onVerifiedExecution?.(test.auth, binding);
-        } catch (error) {
-          return {
-            ok: false,
-            status: "auth",
-            error: await redactSetupInferenceError(error),
-            ...(authProfiles ? { authProfiles } : {}),
-          };
-        }
-      }
-      return {
-        ok: true,
-        latencyMs: test.latencyMs,
-        modelRef: plan.modelRef,
-        ...(authProfiles ? { authProfiles } : {}),
+        return {
+          ...test,
+          error: await redactSetupInferenceError(test.error),
+          ...(authProfiles ? { authProfiles } : {}),
+        };
       };
-    }
-    return {
-      ...test,
-      error: await redactSetupInferenceError(test.error),
-      ...(authProfiles ? { authProfiles } : {}),
-    };
-  } finally {
-    await cleanupSetupInferenceTempDir({ tempDir, deps, runtime: params.runtime });
-  }
+      return await run(verify, scope);
+    },
+  );
 }
 
 /** Run one tool-free completion through the configured setup inference route. */
@@ -525,54 +536,41 @@ export async function completeSetupInferenceConfig(params: {
   if (!resolveAgentEffectiveModelPrimary(params.config, routeAgentId)) {
     return { ok: false, status: "unavailable", error: "No agent model is configured." };
   }
-  const tempDir = await (
-    deps.createTempDir ?? (() => fs.mkdtemp(path.join(os.tmpdir(), "openclaw-setup-inference-")))
-  )();
-  try {
-    const plan = await buildTestPlan({
+  return await withSetupInferencePlan(
+    {
       kind: "existing-model",
       cfg: params.config,
       sourceCfg: params.config,
       configSnapshot: params.configSnapshot,
-      workspaceDir: tempDir,
-      pluginWorkspaceDir: tempDir,
-      agentDir: path.join(tempDir, "agent"),
       runtime: params.runtime,
       routeAgentId,
       deps,
-    });
-    if ("error" in plan) {
+    },
+    async (plan, { tempDir }): Promise<CompleteSetupInferenceResult> => {
+      const result = await runSetupInferenceTest({
+        plan,
+        prompt: params.prompt,
+        tempDir,
+        deps,
+        authProfileStateMode: "read-only",
+        requireExecutionOwner: false,
+      });
+      if (!result.ok) {
+        return { ...result, error: await redactSetupInferenceError(result.error) };
+      }
+      if (plan.authProfileId && result.auth.authProfileId !== plan.authProfileId) {
+        return {
+          ok: false,
+          status: "auth",
+          error: "The inference completion used a different credential than the configured route.",
+        };
+      }
       return {
-        ok: false,
-        status: plan.status ?? "unavailable",
-        error: plan.error,
+        ok: true,
+        modelRef: plan.modelRef,
+        latencyMs: result.latencyMs,
+        text: result.text,
       };
-    }
-    const result = await runSetupInferenceTest({
-      plan,
-      prompt: params.prompt,
-      tempDir,
-      deps,
-      authProfileStateMode: "read-only",
-      requireExecutionOwner: false,
-    });
-    if (!result.ok) {
-      return { ...result, error: await redactSetupInferenceError(result.error) };
-    }
-    if (plan.authProfileId && result.auth.authProfileId !== plan.authProfileId) {
-      return {
-        ok: false,
-        status: "auth",
-        error: "The inference completion used a different credential than the configured route.",
-      };
-    }
-    return {
-      ok: true,
-      modelRef: plan.modelRef,
-      latencyMs: result.latencyMs,
-      text: result.text,
-    };
-  } finally {
-    await cleanupSetupInferenceTempDir({ tempDir, deps, runtime: params.runtime });
-  }
+    },
+  );
 }

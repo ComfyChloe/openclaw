@@ -8,6 +8,7 @@ import { createPluginMetadataSnapshotFixture } from "../plugins/plugin-metadata.
 import * as activeThinkingPolicy from "../plugins/provider-thinking-active.js";
 import { prepareModelCatalogThinkingPolicies } from "../plugins/provider-thinking.js";
 import type { ProviderDefaultThinkingPolicyContext } from "../plugins/provider-thinking.types.js";
+import { makeModel } from "./embedded-agent-runner/model.test-harness.js";
 import {
   findModelCatalogRouteDonor,
   type ModelCatalogRoutePolicy,
@@ -327,35 +328,67 @@ describe("projectModelCatalogEntryForRoute", () => {
     });
   });
 
-  it("merges logical overrides from canonical duplicate model rows", () => {
-    const cfg = {
-      models: {
-        providers: {
-          openai: {
-            models: [
-              { id: "openai/gpt-5.5", name: "Configured GPT-5.5" },
-              { id: "gpt-5.5", name: "Ignored duplicate name", contextTokens: 160_000 },
-            ],
+  it.each([false, true])(
+    "prefers exact logical rows while inheriting alias fields (reversed=%s)",
+    (reverse) => {
+      const rows = [
+        { id: "openai/gpt-5.5", name: "Alias name", contextTokens: 160_000 },
+        { id: "gpt-5.5", name: "Exact name" },
+      ];
+      const cfg = {
+        models: {
+          providers: {
+            openai: {
+              models: reverse ? rows.toReversed() : rows,
+            },
           },
         },
-      },
-    } as unknown as OpenClawConfig;
-    const canonicalPolicy: ModelCatalogRoutePolicy = {
-      ...routePolicy,
-      resolveIdentity: (entry) => {
-        const id = entry.id.replace(/^openai\//u, "");
-        return { id, key: `${entry.provider}/${id}` };
-      },
-    };
+      } as unknown as OpenClawConfig;
+      const canonicalPolicy: ModelCatalogRoutePolicy = {
+        ...routePolicy,
+        resolveIdentity: (entry) => {
+          const id = entry.id.replace(/^openai\//u, "");
+          return { id, key: `${entry.provider}/${id}` };
+        },
+      };
 
-    expect(
-      resolveConfiguredModelCatalogOverrides({
-        cfg,
-        entry: platformEntry,
-        policy: canonicalPolicy,
-      }),
-    ).toEqual({ name: "Configured GPT-5.5", contextTokens: 160_000 });
-  });
+      expect(
+        resolveConfiguredModelCatalogOverrides({
+          cfg,
+          entry: platformEntry,
+          policy: canonicalPolicy,
+        }),
+      ).toEqual({ name: "Exact name", contextTokens: 160_000 });
+    },
+  );
+
+  it.each([false, true])(
+    "keeps case-distinct catalog settings separate (reversed=%s)",
+    (reverse) => {
+      const rows = [
+        { ...makeModel("Model"), name: "Upper" },
+        { ...makeModel("model"), name: "Lower" },
+      ];
+      const cfg: OpenClawConfig = {
+        models: {
+          providers: {
+            custom: {
+              baseUrl: "https://models.example.test",
+              models: reverse ? rows.toReversed() : rows,
+            },
+          },
+        },
+      };
+      for (const [id, name] of [
+        ["Model", "Upper"],
+        ["model", "Lower"],
+      ] as const) {
+        expect(
+          resolveConfiguredModelCatalogOverrides({ cfg, entry: { provider: "custom", id } }),
+        ).toMatchObject({ name });
+      }
+    },
+  );
 
   it("preserves literal provider-scoped model ids", () => {
     const cfg = {

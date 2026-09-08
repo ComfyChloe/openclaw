@@ -341,10 +341,7 @@ export function startAgentRunExecution(params: {
       const execution = dispatchAdmittedAgentRun(
         withAgentRunDispatchExecutionIdentity(
           {
-            commandRuntimeContext: {
-              config: prepared.replyDispatchRuntime.config,
-              pluginGeneration: prepared.replyDispatchRuntime.pluginGeneration,
-            },
+            commandRuntimeContext: prepared.preparedModelRuntimeLease,
             cronCreatorAuthority: prepared.cronCreatorAuthority,
             ingressOpts: {
               skillLibraryAuthoring,
@@ -355,6 +352,7 @@ export function startAgentRunExecution(params: {
               agentId: ingressAgentId,
               provider: prepared.effectiveProviderOverride,
               model: prepared.effectiveModelOverride,
+              requestedRouteResolution: prepared.effectiveRequestedRouteResolution,
               to: params.delivery.resolvedTo,
               sessionId: params.resolvedSessionId,
               sessionKey: params.resolvedSessionKey,

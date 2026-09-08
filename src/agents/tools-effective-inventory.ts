@@ -7,11 +7,9 @@ import {
   findNormalizedProviderValue,
   normalizeProviderId,
 } from "@openclaw/model-catalog-core/provider-id";
-import {
-  normalizeLowercaseStringOrEmpty,
-  normalizeOptionalString,
-} from "@openclaw/normalization-core/string-coerce";
+import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import type { OpenClawConfig } from "../config/config.js";
+import { findProviderModelConfig } from "../config/model-provider-config.js";
 import { extractModelCompat } from "../plugins/provider-model-compat.js";
 import type { ProviderRuntimeModel } from "../plugins/provider-runtime-model.types.js";
 import { normalizeProviderTransportWithPlugin } from "../plugins/provider-runtime.js";
@@ -20,7 +18,6 @@ import { createOpenClawCodingTools } from "./agent-tools.js";
 import { resolveEffectiveToolPolicy } from "./agent-tools.policy.js";
 import { resolveModelAsync } from "./embedded-agent-runner/model.js";
 import { resolveBundledStaticCatalogModel } from "./embedded-agent-runner/model.static-catalog.js";
-import { normalizeStaticProviderModelId } from "./model-ref-shared.js";
 import { acquireReadOnlyPreparedModelRuntime } from "./prepared-model-runtime.js";
 import { normalizeToolPolicyName } from "./tool-policy.js";
 import { buildRuntimeCompatibleToolInventory } from "./tools-effective-inventory-build.js";
@@ -171,16 +168,7 @@ function resolveStaticToolInventoryRuntimeModelContext(params: {
   const workspaceDir = params.workspaceDir ?? resolveAgentWorkspaceDir(params.cfg, agentId);
   const providerConfig = findNormalizedProviderValue(params.cfg.models?.providers, provider);
   const configuredModels = Array.isArray(providerConfig?.models) ? providerConfig.models : [];
-  const normalizedModelId = normalizeStaticProviderModelId(provider, modelId);
-  const normalizedModelKey = normalizeLowercaseStringOrEmpty(normalizedModelId);
-  const providerPrefixedModelKey = normalizeLowercaseStringOrEmpty(
-    `${provider}/${normalizedModelId}`,
-  );
-  const configuredModel = configuredModels.find((model) => {
-    const id = normalizeStaticProviderModelId(provider, model.id);
-    const key = normalizeLowercaseStringOrEmpty(id);
-    return key === normalizedModelKey || key === providerPrefixedModelKey;
-  });
+  const configuredModel = findProviderModelConfig(configuredModels, provider, modelId);
   const bundledStaticModel = resolveBundledStaticCatalogModel({
     provider,
     modelId,
@@ -201,7 +189,7 @@ function resolveStaticToolInventoryRuntimeModelContext(params: {
       runtimeModel: {
         ...bundledStaticModel,
         ...configuredModel,
-        id: configuredModel.id,
+        id: modelId,
         name: configuredModel.name ?? bundledStaticModel?.name ?? configuredModel.id,
         provider,
         api: configuredApi,
@@ -290,20 +278,7 @@ export function resolveConfiguredModelCompat(params: {
   }
   const providerConfig = findNormalizedProviderValue(params.cfg.models?.providers, provider);
   const models = Array.isArray(providerConfig?.models) ? providerConfig.models : [];
-  if (models.length === 0) {
-    return undefined;
-  }
-  const normalizedModelId = normalizeStaticProviderModelId(provider, modelId);
-  const normalizedModelKey = normalizeLowercaseStringOrEmpty(normalizedModelId);
-  const providerPrefixedModelKey = normalizeLowercaseStringOrEmpty(
-    `${provider}/${normalizedModelId}`,
-  );
-  const match = models.find((model) => {
-    const id = normalizeStaticProviderModelId(provider, model.id);
-    const key = normalizeLowercaseStringOrEmpty(id);
-    return key === normalizedModelKey || key === providerPrefixedModelKey;
-  });
-  return extractModelCompat(match);
+  return extractModelCompat(findProviderModelConfig(models, provider, modelId));
 }
 
 /** Resolves the grouped effective tool inventory and user-visible filtering notices. */

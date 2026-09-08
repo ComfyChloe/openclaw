@@ -34,6 +34,8 @@ families](/plugins/sdk-provider-plugins/hook-families) for the shared builders.
   <Tab title="Custom headers">
     For providers that need custom request headers or body modifications:
 
+    `ctx.capability` identifies the host's request capability, such as `image`, when the caller provides that fact. Use it to scope media-specific payload transformations.
+
     ```typescript
     // wrapStreamFn returns a StreamFn derived from ctx.streamFn
     wrapStreamFn: (ctx) => {

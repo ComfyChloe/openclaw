@@ -22,6 +22,8 @@ OpenClaw uses the `zai` provider with a Z.AI API key.
 GLM is a model family, not a separate provider. In OpenClaw, GLM models use
 refs such as `zai/glm-5.3`: provider `zai`, model id `glm-5.3`.
 
+Legacy duplicated prefixes remain supported when both provider spellings match, such as `z.ai/z.ai/glm-5.3`. Z.AI removes one matching prefix while preserving the model's casing; mixed spellings such as `z.ai/zai/glm-5.3` remain distinct model IDs. Exact IDs already present in the selected catalog keep their namespace.
+
 ## Getting started
 
 Install the provider plugin first:

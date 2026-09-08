@@ -38,13 +38,19 @@ describe("plugin manifest model catalog", () => {
     );
   });
 
-  it("allows cli backends to own manifest model catalog rows", () => {
+  it("keeps catalog aliases and model-id policies within their declared owners", () => {
     const dir = makePluginDir();
     writeManifest(dir, {
       id: "anthropic",
-      providers: ["anthropic"],
+      providers: ["Anthropic"],
       cliBackends: ["claude-cli"],
       modelCatalog: {
+        aliases: {
+          "anthropic-compat": { provider: " ANTHROPIC " },
+          "cli-compat": { provider: "claude-cli" },
+          foreign: { provider: "unowned" },
+          chained: { provider: "anthropic-compat" },
+        },
         providers: {
           "claude-cli": {
             models: [{ id: "claude-sonnet-4-6" }],
@@ -52,6 +58,17 @@ describe("plugin manifest model catalog", () => {
         },
         discovery: {
           "claude-cli": "static",
+        },
+      },
+      modelIdNormalization: {
+        providers: {
+          anthropic: { stripPrefixes: ["anthropic/"] },
+          "anthropic-compat": { stripPrefixes: ["anthropic-compat/"] },
+          "claude-cli": { stripPrefixes: ["claude-cli/"] },
+          "cli-compat": { stripPrefixes: ["cli-compat/"] },
+          foreign: { stripPrefixes: ["foreign/"] },
+          chained: { stripPrefixes: ["chained/"] },
+          unowned: { stripPrefixes: ["unowned/"] },
         },
       },
       configSchema: { type: "object" },
@@ -63,7 +80,18 @@ describe("plugin manifest model catalog", () => {
     if (!result.ok) {
       throw new Error(result.error);
     }
+    expect(result.manifest.providers).toEqual(["Anthropic"]);
+    expect(result.manifest.modelIdNormalization).toEqual({
+      providers: {
+        anthropic: { stripPrefixes: ["anthropic/"] },
+        "anthropic-compat": { stripPrefixes: ["anthropic-compat/"] },
+      },
+    });
     expect(result.manifest.modelCatalog).toEqual({
+      aliases: {
+        "anthropic-compat": { provider: "anthropic" },
+        "cli-compat": { provider: "claude-cli" },
+      },
       providers: {
         "claude-cli": {
           models: [{ id: "claude-sonnet-4-6" }],

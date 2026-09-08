@@ -1,6 +1,7 @@
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import type { ThinkLevel } from "../../../auto-reply/thinking.js";
 import { DEFAULT_MODEL, DEFAULT_PROVIDER } from "../../defaults.js";
+import { normalizeModelRef, normalizeProviderId } from "../../model-ref-shared.js";
 import {
   buildModelAliasIndex,
   resolveDefaultModelForAgent,
@@ -88,26 +89,33 @@ export function resolveInitialEmbeddedRunModel(params: {
   agentId?: string;
   provider?: string;
   model?: string;
+  requestedRouteResolution?: RunEmbeddedAgentParams["requestedRouteResolution"];
+  normalization?: Parameters<typeof normalizeModelRef>[2];
 }): { provider: string; modelId: string } {
-  const cfg = params.config ?? {};
+  const explicitProvider = normalizeProviderId(params.provider ?? "") || undefined;
+  const explicitModel = normalizeOptionalString(params.model);
   // Preliminary route identification stays static; prepared metadata owns
   // plugin and workspace normalization once the runtime context exists.
-  const staticPreliminaryNormalization = {
-    allowManifestNormalization: false,
-    allowPluginNormalization: false,
-  } as const;
+  const normalization =
+    params.normalization ??
+    ({
+      allowManifestNormalization: false,
+      allowPluginNormalization: false,
+    } as const);
+  if (explicitProvider && explicitModel) {
+    const selected =
+      params.requestedRouteResolution === "resolved"
+        ? { provider: explicitProvider, model: explicitModel }
+        : normalizeModelRef(explicitProvider, explicitModel, normalization);
+    return { provider: selected.provider, modelId: selected.model };
+  }
+  const cfg = params.config ?? {};
   const configuredDefault = resolveDefaultModelForAgent({
     cfg,
     agentId: params.agentId,
-    ...staticPreliminaryNormalization,
+    ...normalization,
   });
-  const explicitProvider = normalizeOptionalString(params.provider);
-  const explicitModel = normalizeOptionalString(params.model);
   const defaultProvider = configuredDefault.provider || DEFAULT_PROVIDER;
-
-  if (explicitProvider && explicitModel) {
-    return { provider: explicitProvider, modelId: explicitModel };
-  }
 
   if (explicitModel) {
     const provider = explicitProvider ?? defaultProvider;
@@ -115,7 +123,7 @@ export function resolveInitialEmbeddedRunModel(params: {
       cfg,
       agentId: params.agentId,
       defaultProvider: provider,
-      ...staticPreliminaryNormalization,
+      ...normalization,
     });
     const resolved = resolveModelRefFromString({
       cfg,
@@ -123,7 +131,7 @@ export function resolveInitialEmbeddedRunModel(params: {
       raw: explicitModel,
       defaultProvider: provider,
       aliasIndex,
-      ...staticPreliminaryNormalization,
+      ...normalization,
     });
     return {
       provider: explicitProvider ?? resolved?.ref.provider ?? provider,

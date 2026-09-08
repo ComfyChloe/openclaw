@@ -61,8 +61,9 @@ export function resolveConfiguredModelCatalogOverrides(params: {
   if (!providerConfig) {
     return undefined;
   }
+  // This map is provider-scoped; a global key could collide with an authored prefixed ID.
   const normalizeConfiguredModelId = (modelId: string) =>
-    params.policy?.resolveIdentity({ provider: params.entry.provider, id: modelId })?.key ??
+    params.policy?.resolveIdentity({ provider: params.entry.provider, id: modelId })?.id ??
     modelId.trim();
   const model = resolveMergedModelProviderModels({
     models: providerConfig.models,

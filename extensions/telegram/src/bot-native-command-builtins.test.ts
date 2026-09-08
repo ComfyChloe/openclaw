@@ -403,44 +403,55 @@ describe("Telegram native command built-ins", () => {
     expect(replyMocks.dispatchReplyWithBufferedBlockDispatcher).not.toHaveBeenCalled();
   });
 
-  it("uses per-agent thinking defaults before target model and global thinking defaults", async () => {
-    const cfg = {
-      agents: {
-        defaults: {
-          thinkingDefault: "low",
-          models: {
-            "anthropic/claude-opus-4-7": {
-              params: { thinking: "xhigh" },
+  it.each([
+    { thinkingDefault: "minimal", modelThinking: "high", expected: "minimal" },
+    { thinkingDefault: undefined, modelThinking: "high", expected: "high" },
+    { thinkingDefault: undefined, modelThinking: false, expected: "off" },
+  ] as const)(
+    "uses routed agent thinking defaults ($expected)",
+    async ({ thinkingDefault, modelThinking, expected }) => {
+      const cfg = {
+        agents: {
+          defaults: {
+            thinkingDefault: "low",
+            models: {
+              "anthropic/claude-opus-4-7": {
+                params: { thinking: "xhigh" },
+              },
+            },
+          },
+          entries: {
+            main: {},
+            alpha: {
+              model: { primary: "anthropic/claude-opus-4-7" },
+              models: {
+                "anthropic/claude-opus-4-7": { params: { thinking: modelThinking } },
+              },
+              ...(thinkingDefault ? { thinkingDefault } : {}),
             },
           },
         },
-        list: [
-          {
-            id: "alpha",
-            model: { primary: "anthropic/claude-opus-4-7" },
-            thinkingDefault: "minimal",
-          },
-        ],
-      },
-    } as OpenClawConfig;
-    sessionMocks.sessionStoreEntries.mockReturnValue({});
+        bindings: [{ agentId: "alpha", match: { channel: "telegram", accountId: "default" } }],
+      } as OpenClawConfig;
+      sessionMocks.sessionStoreEntries.mockReturnValue({});
 
-    const { handler, sendMessage } = registerAndResolveCommandHandler({
-      commandName: "think",
-      cfg,
-      allowFrom: ["*"],
-    });
-    await handler(createTelegramPrivateCommandContext());
+      const { handler, sendMessage } = registerAndResolveCommandHandler({
+        commandName: "think",
+        cfg,
+        allowFrom: ["*"],
+      });
+      await handler(createTelegramPrivateCommandContext());
 
-    expectSendMessageCall({
-      sendMessage,
-      chatId: 100,
-      textIncludes: "Current thinking level: minimal.\nChoose level for /think.",
-      requireReplyMarkup: true,
-      label: "agent thinking menu",
-    });
-    expect(replyMocks.dispatchReplyWithBufferedBlockDispatcher).not.toHaveBeenCalled();
-  });
+      expectSendMessageCall({
+        sendMessage,
+        chatId: 100,
+        textIncludes: `Current thinking level: ${expected}.\nChoose level for /think.`,
+        requireReplyMarkup: true,
+        label: "agent thinking menu",
+      });
+      expect(replyMocks.dispatchReplyWithBufferedBlockDispatcher).not.toHaveBeenCalled();
+    },
+  );
 
   it("does not load the session store when a native argument menu is skipped", async () => {
     const { handler } = registerAndResolveCommandHandler({

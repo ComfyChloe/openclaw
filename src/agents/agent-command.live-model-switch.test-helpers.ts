@@ -289,7 +289,7 @@ function configuredPrimary(cfg?: unknown): string {
   return (typeof raw === "string" ? raw : raw?.primary) ?? "anthropic/claude";
 }
 
-export function resolveTestConfiguredModelRef({ cfg }: { cfg?: unknown }) {
+function resolveTestConfiguredModelRef({ cfg }: { cfg?: unknown }) {
   const [provider = "anthropic", ...modelParts] = configuredPrimary(cfg).split("/");
   return { provider, model: modelParts.join("/") || "claude" };
 }

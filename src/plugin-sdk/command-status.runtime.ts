@@ -1,14 +1,18 @@
 // Command status runtime helpers collect agent/session state for plugin command status output.
 import { listAgentEntries, resolveSessionAgentId } from "../agents/agent-scope.js";
-import { resolveDefaultModelForAgent } from "../agents/model-selection.js";
+import { resolveReasoningDefault } from "../agents/model-selection.js";
+import { resolveThinkingDefaultCore } from "../agents/model-thinking-default-core.js";
+import { createModelVisibilityPolicy } from "../agents/model-visibility-policy.js";
 import { buildStatusReply } from "../auto-reply/reply/commands-status.js";
 import type { CommandContext } from "../auto-reply/reply/commands-types.js";
 import { resolveDefaultModel } from "../auto-reply/reply/directive-handling.defaults.js";
 import { resolveCurrentDirectiveLevels } from "../auto-reply/reply/directive-handling.levels.js";
-import { createModelSelectionState } from "../auto-reply/reply/model-selection.js";
+import { resolveRuntimeNormalization } from "../auto-reply/reply/model-runtime-normalization.js";
+import { resolveStoredRuntimeModelSelection } from "../auto-reply/reply/stored-model-override.js";
 import type { ReplyPayload } from "../auto-reply/types.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { loadGatewaySessionEntryReadOnly } from "../gateway/session-utils.js";
+import { readStoredModelOverride } from "../sessions/stored-model-overrides.js";
 
 /** Inputs for rendering direct-session status replies outside the active channel turn. */
 export type ResolveDirectStatusReplyForSessionParams = {
@@ -32,14 +36,14 @@ export type ResolveDirectStatusReplyForSessionParams = {
 
 /**
  * Builds a direct `/status` reply for an arbitrary session key.
- * Unauthorized requesters may see the session exists, but configured reasoning
- * state is masked so private agent/session defaults are not leaked.
+ * Reads captured selection and capability facts without running admission or
+ * repairing session pins. Unauthorized requests are suppressed before lookup.
  */
 export async function resolveDirectStatusReplyForSessionCore(
   params: ResolveDirectStatusReplyForSessionParams,
 ): Promise<ReplyPayload | undefined> {
   const requestedSessionKey = params.sessionKey.trim();
-  if (!requestedSessionKey) {
+  if (!requestedSessionKey || !params.isAuthorizedSender) {
     return undefined;
   }
 
@@ -55,35 +59,64 @@ export async function resolveDirectStatusReplyForSessionCore(
   const agentEntry = listAgentEntries(statusCfg).find(
     (entry) => entry.id?.trim().toLowerCase() === statusAgentId,
   );
-  const statusModel = resolveDefaultModelForAgent({
-    cfg: statusCfg,
+  const { getAvailablePreparedModelCatalogSnapshot } =
+    await import("../agents/prepared-model-catalog.js");
+  const preparedModelCatalog = getAvailablePreparedModelCatalogSnapshot({
+    config: statusCfg,
     agentId: statusAgentId,
   });
+  const { manifestPlugins } = resolveRuntimeNormalization(statusCfg);
+  // Missing prepared metadata is a known absence for this read, not permission to discover it.
+  const normalization = {
+    manifestPlugins: manifestPlugins ?? [],
+    resolvedModelCatalog: preparedModelCatalog?.entries,
+    allowManifestNormalization: true,
+    allowPluginNormalization: false,
+  };
   const { defaultProvider, defaultModel } = resolveDefaultModel({
     cfg: statusCfg,
     agentId: statusAgentId,
+    ...normalization,
   });
   const selectedProvider =
-    statusEntry?.providerOverride?.trim() ||
-    statusEntry?.modelProvider?.trim() ||
-    statusModel.provider;
+    statusEntry?.providerOverride?.trim() || statusEntry?.modelProvider?.trim() || defaultProvider;
   const selectedModel =
-    statusEntry?.modelOverride?.trim() || statusEntry?.model?.trim() || statusModel.model;
-  const modelState = await createModelSelectionState({
+    statusEntry?.modelOverride?.trim() || statusEntry?.model?.trim() || defaultModel;
+  const modelPolicy = createModelVisibilityPolicy({
     cfg: statusCfg,
     agentId: statusAgentId,
-    agentCfg,
+    catalog: preparedModelCatalog?.entries ?? [],
+    defaultProvider,
+    defaultModel,
+    ...normalization,
+  });
+  const thinkingCatalog = modelPolicy.allowedCatalog;
+  const storedOverride = readStoredModelOverride({
     sessionEntry: statusEntry,
     sessionStore: statusLoaded.store,
     sessionKey: statusSessionKey,
     parentSessionKey: statusEntry?.parentSessionKey,
-    storePath: statusLoaded.storePath,
-    defaultProvider,
-    defaultModel,
-    provider: selectedProvider,
-    model: selectedModel,
-    hasModelDirective: false,
   });
+  const thinkingSelection = storedOverride
+    ? resolveStoredRuntimeModelSelection({
+        cfg: statusCfg,
+        sessionEntry: statusEntry,
+        storedOverride,
+        defaultProvider,
+        catalog: preparedModelCatalog?.entries ?? thinkingCatalog,
+        aliasIndex: modelPolicy.selectionAliasIndex,
+        normalization,
+      })
+    : { provider: selectedProvider, model: selectedModel };
+  const resolveDefaultThinkingLevel = async () =>
+    agentEntry?.thinkingDefault ??
+    resolveThinkingDefaultCore({
+      cfg: statusCfg,
+      agentId: statusAgentId,
+      ...thinkingSelection,
+      catalog: thinkingCatalog,
+      providerPolicySource: "active",
+    });
   const {
     currentThinkLevel,
     currentFastMode,
@@ -94,24 +127,20 @@ export async function resolveDirectStatusReplyForSessionCore(
     sessionEntry: statusEntry,
     agentEntry,
     agentCfg,
-    resolveDefaultThinkingLevel: () => modelState.resolveDefaultThinkingLevel(),
+    resolveDefaultThinkingLevel,
   });
-  const thinkingCatalog = await modelState.resolveThinkingCatalog();
   let resolvedReasoningLevel = currentReasoningLevel;
   const hasAgentReasoningDefault =
     (agentEntry?.reasoningDefault !== undefined && agentEntry.reasoningDefault !== null) ||
     (agentCfg?.reasoningDefault !== undefined && agentCfg.reasoningDefault !== null);
   const sessionReasoningExplicitlySet =
     statusEntry?.reasoningLevel !== undefined && statusEntry.reasoningLevel !== null;
-  const canUseReasoningState = params.senderIsOwner || params.isAuthorizedSender;
-  if (!canUseReasoningState && (sessionReasoningExplicitlySet || hasAgentReasoningDefault)) {
-    // Reasoning defaults can reveal agent/session configuration; unauthenticated
-    // direct status callers get the conservative display value instead.
-    resolvedReasoningLevel = "off";
-  }
   const reasoningExplicitlySet = sessionReasoningExplicitlySet || hasAgentReasoningDefault;
   if (!reasoningExplicitlySet && resolvedReasoningLevel === "off" && currentThinkLevel === "off") {
-    resolvedReasoningLevel = await modelState.resolveDefaultReasoningLevel();
+    resolvedReasoningLevel = resolveReasoningDefault({
+      ...thinkingSelection,
+      catalog: thinkingCatalog,
+    });
   }
 
   const command: CommandContext = {
@@ -143,7 +172,7 @@ export async function resolveDirectStatusReplyForSessionCore(
     resolvedVerboseLevel: currentVerboseLevel ?? "off",
     resolvedReasoningLevel,
     resolvedElevatedLevel: currentElevatedLevel,
-    resolveDefaultThinkingLevel: () => modelState.resolveDefaultThinkingLevel(),
+    resolveDefaultThinkingLevel,
     isGroup: params.isGroup,
     defaultGroupActivation: params.defaultGroupActivation,
   });

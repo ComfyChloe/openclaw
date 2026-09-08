@@ -10,6 +10,7 @@ import {
   cliBackendAcceptsAuthProfileForwarding,
   resolveCliExecutionAuthProfileId,
 } from "../agents/cli-execution-auth.js";
+import type { ModelManifestNormalizationContext } from "../agents/model-ref-shared.js";
 import { copyConfigResolutionFacts } from "../config/resolution-facts.js";
 import { createRuntimeConfigReader } from "../config/runtime-snapshot.js";
 import type { ConfigFileSnapshot, OpenClawConfig } from "../config/types.openclaw.js";
@@ -39,10 +40,11 @@ export type SystemAgentConfiguredRouteDeps = {
   readConfigFileSnapshot?: typeof import("../config/config.js").readConfigFileSnapshot;
   loadAuthProfileStoreForRuntime?: typeof import("../agents/auth-profiles/store-runtime.js").loadAuthProfileStoreForRuntime;
   pluginMetadataPlugins?: PluginMetadataSnapshot["plugins"];
+  resolvedModelCatalog?: ModelManifestNormalizationContext["resolvedModelCatalog"];
 };
 type SystemAgentRouteProjectionDeps = Pick<
   SystemAgentConfiguredRouteDeps,
-  "loadAuthProfileStoreForRuntime" | "pluginMetadataPlugins"
+  "loadAuthProfileStoreForRuntime" | "pluginMetadataPlugins" | "resolvedModelCatalog"
 >;
 
 /** The canonical source and default-materialized view from one authoritative read. */
@@ -126,6 +128,7 @@ export async function resolveSystemAgentConfiguredRouteFromConfig(
     cfg: runConfig,
     agentId: modelOwnerAgentId,
     manifestPlugins: deps.pluginMetadataPlugins,
+    resolvedModelCatalog: deps.resolvedModelCatalog,
   });
   if (!selection) {
     return null;

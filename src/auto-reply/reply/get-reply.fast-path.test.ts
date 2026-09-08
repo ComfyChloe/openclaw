@@ -45,10 +45,13 @@ registerGetReplyBaselineBypass();
 
 type LoadModelCatalogFn =
   typeof import("../../agents/prepared-model-catalog.js").loadPreparedModelCatalog;
+type GetAvailableModelCatalogFn =
+  typeof import("../../agents/prepared-model-catalog.js").getAvailablePreparedModelCatalogSnapshot;
 
 const mocks = vi.hoisted(() => ({
   buildStatusReply: vi.fn(),
   ensureAgentWorkspace: vi.fn(),
+  getAvailableModelCatalog: vi.fn<GetAvailableModelCatalogFn>(),
   handleCommands: vi.fn(),
   handleInlineActions: vi.fn(),
   initSessionState: vi.fn(),
@@ -65,6 +68,7 @@ vi.mock("./commands-status.js", () => ({
 }));
 
 vi.mock("../../agents/prepared-model-catalog.js", () => ({
+  getAvailablePreparedModelCatalogSnapshot: mocks.getAvailableModelCatalog,
   loadProviderScopedThinkingCatalog: vi.fn(async () => []),
   loadPreparedModelCatalog: mocks.loadModelCatalog,
 }));
@@ -150,6 +154,20 @@ describe("getReplyFromConfig fast test bootstrap", () => {
   let state: OpenClawTestState;
   let isolatedStorePath: string;
 
+  function expectStatusBeforeBootstrap(cfg: OpenClawConfig) {
+    expect(mocks.getAvailableModelCatalog).toHaveBeenCalledExactlyOnceWith({
+      config: cfg,
+      agentId: "main",
+      agentDir: state.agentDir("main"),
+      workspaceDir: state.workspaceDir,
+    });
+    expect(mocks.loadModelCatalog).not.toHaveBeenCalled();
+    expect(mocks.ensureAgentWorkspace).not.toHaveBeenCalled();
+    expect(mocks.initSessionState).not.toHaveBeenCalled();
+    expect(mocks.resolveReplyDirectives).not.toHaveBeenCalled();
+    expect(vi.mocked(runPreparedReplyMock)).not.toHaveBeenCalled();
+  }
+
   beforeAll(async () => {
     await loadGetReplyRuntimeForTest();
   });
@@ -204,14 +222,18 @@ describe("getReplyFromConfig fast test bootstrap", () => {
     mocks.handleInlineActions.mockResolvedValue({ kind: "reply", reply: { text: "ok" } });
     mocks.initSessionState.mockReset();
     mocks.loadModelCatalog.mockReset();
-    mocks.loadModelCatalog.mockResolvedValue([
-      {
-        provider: "openai",
-        id: "gpt-5.5",
-        name: "GPT-5.5",
-        reasoning: true,
-      },
-    ]);
+    mocks.getAvailableModelCatalog.mockReset();
+    mocks.getAvailableModelCatalog.mockReturnValue({
+      entries: [
+        {
+          provider: "openai",
+          id: "gpt-5.5",
+          name: "GPT-5.5",
+          reasoning: true,
+        },
+      ],
+      routeVariants: [],
+    });
     mocks.resolveReplyDirectives.mockReset();
     vi.mocked(resolveDefaultModelMock).mockReset();
     vi.mocked(resolveDefaultModelMock).mockReturnValue({
@@ -498,20 +520,7 @@ describe("getReplyFromConfig fast test bootstrap", () => {
     }
     expect(reply.text.includes("OpenClaw")).toBe(true);
     expect(reply.text.includes("Think: medium")).toBe(true);
-    expect(mocks.loadModelCatalog).toHaveBeenCalledWith(
-      expect.objectContaining({
-        config: cfg,
-        agentId: "main",
-        agentDir: state.agentDir("main"),
-      }),
-    );
-    expect(mocks.loadModelCatalog.mock.calls[0]?.[0]).toMatchObject({
-      workspaceDir: state.workspaceDir,
-    });
-    expect(mocks.ensureAgentWorkspace).not.toHaveBeenCalled();
-    expect(mocks.initSessionState).not.toHaveBeenCalled();
-    expect(mocks.resolveReplyDirectives).not.toHaveBeenCalled();
-    expect(vi.mocked(runPreparedReplyMock)).not.toHaveBeenCalled();
+    expectStatusBeforeBootstrap(cfg);
   });
 
   it("uses configured agent thinking defaults for native /status", async () => {
@@ -558,17 +567,7 @@ describe("getReplyFromConfig fast test bootstrap", () => {
       throw new Error("expected single reply payload");
     }
     expect(reply.text).toContain("Think: high");
-    expect(mocks.loadModelCatalog).toHaveBeenCalledExactlyOnceWith({
-      config: cfg,
-      agentId: "main",
-      agentDir: state.agentDir("main"),
-      workspaceDir: state.workspaceDir,
-      readOnly: true,
-    });
-    expect(mocks.ensureAgentWorkspace).not.toHaveBeenCalled();
-    expect(mocks.initSessionState).not.toHaveBeenCalled();
-    expect(mocks.resolveReplyDirectives).not.toHaveBeenCalled();
-    expect(vi.mocked(runPreparedReplyMock)).not.toHaveBeenCalled();
+    expectStatusBeforeBootstrap(cfg);
   });
 
   it("uses the target session thinking override for native /status", async () => {
@@ -617,17 +616,7 @@ describe("getReplyFromConfig fast test bootstrap", () => {
     }
     expect(reply.text).toContain("Think: xhigh");
     expect(getReplyPayloadMetadata(reply)?.deliverDespiteSourceReplySuppression).toBe(true);
-    expect(mocks.loadModelCatalog).toHaveBeenCalledExactlyOnceWith({
-      config: cfg,
-      agentId: "main",
-      agentDir: state.agentDir("main"),
-      workspaceDir: state.workspaceDir,
-      readOnly: true,
-    });
-    expect(mocks.ensureAgentWorkspace).not.toHaveBeenCalled();
-    expect(mocks.initSessionState).not.toHaveBeenCalled();
-    expect(mocks.resolveReplyDirectives).not.toHaveBeenCalled();
-    expect(vi.mocked(runPreparedReplyMock)).not.toHaveBeenCalled();
+    expectStatusBeforeBootstrap(cfg);
   });
 
   it("handles native slash directives before workspace bootstrap", async () => {

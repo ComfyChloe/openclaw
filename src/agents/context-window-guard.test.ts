@@ -1,14 +1,54 @@
 // Covers context-window guard thresholds and user-facing warning/block text.
 import { describe, expect, it } from "vitest";
 import type { OpenClawConfig } from "../config/config.js";
+import { resolveAuthoredModelContextTokens } from "./context-resolution.js";
 import {
   evaluateContextWindowGuard,
   formatContextWindowBlockMessage,
   formatContextWindowWarningMessage,
   resolveContextWindowInfo,
 } from "./context-window-guard.js";
+import { makeModel } from "./embedded-agent-runner/model.test-harness.js";
 
 describe("context-window-guard", () => {
+  it.each(["alias", "duplicate"])(
+    "inherits omitted context caps from an exact row's %s",
+    (kind) => {
+      setCurrentManifestModelIdNormalizationPolicies(
+        new Map([["custom", { aliases: { latest: "middle" } }]]),
+      );
+      try {
+        const exact = makeModel("middle");
+        const inherited = {
+          ...makeModel(kind === "alias" ? "latest" : "middle"),
+          contextTokens: 32000,
+        };
+        const cfg = {
+          models: {
+            providers: {
+              custom: {
+                baseUrl: "https://example.invalid/v1",
+                models: kind === "alias" ? [inherited, exact] : [exact, inherited],
+              },
+            },
+          },
+        } satisfies OpenClawConfig;
+        expect(
+          resolveContextWindowInfo({
+            cfg,
+            provider: "custom",
+            modelId: "middle",
+            defaultTokens: 200000,
+          }),
+        ).toEqual({ tokens: 32000, source: "modelsConfig" });
+        expect(
+          resolveAuthoredModelContextTokens({ cfg, provider: "custom", model: "middle" }),
+        ).toBe(32000);
+      } finally {
+        setCurrentManifestModelIdNormalizationPolicies(undefined);
+      }
+    },
+  );
   function openRouterModelConfig(params: { contextWindow: number; contextTokens?: number }) {
     return {
       models: {
@@ -130,7 +170,31 @@ describe("context-window-guard", () => {
     });
   });
 
-  it("matches provider-scoped config ids against bare runtime model ids", () => {
+  it("does not borrow another model's context cap from a matching provider prefix", () => {
+    const cfg = {
+      models: {
+        providers: {
+          custom: {
+            baseUrl: "https://models.example.test",
+            models: [
+              { ...makeModel("custom/model"), contextWindow: 2_000 },
+              { ...makeModel("model"), contextWindow: 128_000 },
+            ],
+          },
+        },
+      },
+    } satisfies OpenClawConfig;
+    const info = resolveContextWindowInfo({
+      cfg,
+      provider: "custom",
+      modelId: "model",
+      defaultTokens: 200_000,
+    });
+    expect(info).toEqual({ tokens: 128_000, source: "modelsConfig" });
+    expect(evaluateContextWindowGuard({ info }).shouldBlock).toBe(false);
+  });
+
+  it("matches exact provider-local model ids that include a namespace", () => {
     const cfg = {
       models: {
         providers: {
@@ -157,7 +221,7 @@ describe("context-window-guard", () => {
     const info = resolveContextWindowInfo({
       cfg,
       provider: "openrouter",
-      modelId: "tiny",
+      modelId: "openrouter/tiny",
       modelContextWindow: 128_000,
       defaultTokens: 200_000,
     });
@@ -341,3 +405,4 @@ describe("context-window-guard", () => {
     ).toBe(`Model context window too small (3000 tokens; source=model). Minimum is 4000.`);
   });
 });
+import { setCurrentManifestModelIdNormalizationPolicies } from "@openclaw/model-catalog-core/provider-model-id-normalization";

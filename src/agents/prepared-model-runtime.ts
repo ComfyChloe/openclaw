@@ -341,12 +341,13 @@ export async function acquireReadOnlyPreparedModelRuntime(
   rawInput: PreparedModelRuntimeInput,
   abortSignal?: AbortSignal,
   catalogMode: PreparedModelRuntimeCatalogMode = "live",
+  deriveRuntimePluginSelections?: PreparedModelRuntimeLeaseOptions["deriveRuntimePluginSelections"],
 ): Promise<PreparedModelRuntimeLease> {
   return await acquirePreparedModelRuntimeLeaseFromOwners(
     { ...rawInput, readOnly: true },
     "ephemeral",
     preparedModelRuntimeLeaseContext,
-    { abortSignal, catalogMode },
+    { abortSignal, catalogMode, deriveRuntimePluginSelections },
   );
 }
 

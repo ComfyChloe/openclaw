@@ -32,7 +32,17 @@ const completionMocks = vi.hoisted(() => ({
 }));
 
 vi.mock("../agents/simple-completion-runtime.js", () => ({
-  acquireSimpleCompletionModelForAgent: completionMocks.acquireSimpleCompletionModelForAgent,
+  withPreparedSimpleCompletionSelection: vi.fn(),
+  acquireSimpleCompletionModelForAgent: async (
+    ...[params, validateSelection]: Parameters<
+      typeof import("../agents/simple-completion-runtime.js").acquireSimpleCompletionModelForAgent
+    >
+  ) => {
+    const selection = completionMocks.resolveSimpleCompletionSelectionForAgent(params);
+    validateSelection?.({ selection, config: params.cfg });
+    const prepared = await completionMocks.acquireSimpleCompletionModelForAgent(params);
+    return "error" in prepared ? prepared : { ...prepared, config: params.cfg };
+  },
   completeWithPreparedSimpleCompletionModel:
     completionMocks.completeWithPreparedSimpleCompletionModel,
   resolveSimpleCompletionSelectionForAgent:
@@ -137,6 +147,8 @@ function expectUnsupportedBindingApiResult(result: { text?: string }) {
 beforeEach(() => {
   completionMocks.acquireSimpleCompletionModelForAgent.mockReset();
   completionMocks.acquireSimpleCompletionModelForAgent.mockResolvedValue({
+    config: {},
+    assertCurrent: vi.fn(),
     release: vi.fn(),
     selection: {
       provider: "openai",

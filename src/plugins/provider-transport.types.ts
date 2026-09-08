@@ -1,3 +1,4 @@
+import type { ProviderRequestCapability } from "../agents/provider-attribution.js";
 import type { ProviderLocalServiceReconcileContext } from "../agents/provider-local-service-reconcile.js";
 import type { StreamFn } from "../agents/runtime/index.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
@@ -29,6 +30,8 @@ export type ProviderCreateStreamFnContext = {
  */
 export type ProviderWrapStreamFnContext = ProviderPrepareExtraParamsContext & {
   model?: ProviderRuntimeModel;
+  /** Host-provided request capability for scoped transport behavior. */
+  capability?: ProviderRequestCapability;
   /** Wire-format API before simple completion projects an internal transport alias. */
   sourceApi?: ProviderRuntimeModel["api"];
   streamFn?: StreamFn;

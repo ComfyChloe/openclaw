@@ -364,46 +364,64 @@ describe("session status cost line", () => {
 });
 
 describe("buildStatusText thinking facts", () => {
-  it("keeps the prepared thinking level for a discovered Ollama reasoning model", async () => {
-    const text = await buildStatusText({
-      cfg: {},
-      sessionEntry: {
-        sessionId: "wa-ollama-think",
-        updatedAt: 0,
-        thinkingLevel: "high",
-        modelOverride: "glm-5.2:cloud",
-        providerOverride: "ollama",
-      },
-      sessionKey: "agent:main:main",
-      statusChannel: "whatsapp",
-      provider: "ollama",
-      model: "glm-5.2:cloud",
-      thinkingCatalog: [
-        {
-          provider: "ollama",
-          id: "glm-5.2:cloud",
-          reasoning: true,
+  it.each([
+    ["prepared discovered model", undefined, undefined, "high", "high", "high"],
+    ["model callback over global off", "off", undefined, undefined, "high", "high"],
+    ["model callback over global high", "high", undefined, undefined, "low", "low"],
+    ["agent default before callback", "off", "low", undefined, "high", "low"],
+    ["session level before defaults", "off", "high", "minimal", "low", "minimal"],
+    ["global fallback without callback", "off", undefined, undefined, undefined, "off"],
+  ] as const)(
+    "preserves %s",
+    async (_label, globalDefault, agentDefault, resolved, callback, expected) => {
+      const text = await buildStatusText({
+        cfg: {
+          agents: {
+            ownership: "explicit",
+            defaults: { thinkingDefault: globalDefault },
+            entries: { main: { thinkingDefault: agentDefault } },
+          },
         },
-      ],
-      resolvedHarness: "openclaw",
-      resolvedThinkLevel: "high",
-      resolvedVerboseLevel: "off",
-      resolvedReasoningLevel: "on",
-      resolveDefaultThinkingLevel: async () => "high",
-      isGroup: false,
-      defaultGroupActivation: () => "mention",
-      pluginHealthLineOverride: "Plugins: test",
-      taskLineOverride: "",
-      skipDefaultTaskLookup: true,
-      primaryModelLabelOverride: "ollama/glm-5.2:cloud",
-      modelAuthOverride: "local",
-      activeModelAuthOverride: "local",
-      includeTranscriptUsage: false,
-    });
+        sessionEntry: {
+          sessionId: "wa-ollama-think",
+          updatedAt: 0,
+          thinkingLevel: resolved,
+          modelOverride: "glm-5.2:cloud",
+          providerOverride: "ollama",
+        },
+        sessionKey: "agent:main:main",
+        statusChannel: "whatsapp",
+        provider: "ollama",
+        model: "glm-5.2:cloud",
+        thinkingCatalog: [
+          {
+            provider: "ollama",
+            id: "glm-5.2:cloud",
+            reasoning: true,
+          },
+        ],
+        resolvedHarness: "openclaw",
+        resolvedThinkLevel: resolved,
+        resolvedVerboseLevel: "off",
+        resolvedReasoningLevel: "on",
+        resolveDefaultThinkingLevel: async () => callback,
+        isGroup: false,
+        defaultGroupActivation: () => "mention",
+        pluginHealthLineOverride: "Plugins: test",
+        taskLineOverride: "",
+        skipDefaultTaskLookup: true,
+        primaryModelLabelOverride: "ollama/glm-5.2:cloud",
+        modelAuthOverride: "local",
+        activeModelAuthOverride: "local",
+        includeTranscriptUsage: false,
+      });
 
-    expect(text).toContain("think high");
-    expect(text).not.toMatch(/think\s+off\b/);
-  });
+      expect(text).toContain(`think ${expected}`);
+      if (expected !== "off") {
+        expect(text).not.toMatch(/think\s+off\b/);
+      }
+    },
+  );
 });
 
 describe("buildStatusText prepared context windows", () => {
@@ -492,6 +510,31 @@ describe("buildStatusText prepared context windows", () => {
 
     expect(parts.text).toContain("Context: 45k/1.0m");
     expect(parts.text).not.toContain("Context: 45k/128k");
+  });
+
+  it("uses the session-selected model fast setting when status receives a default model", async () => {
+    const parts = await renderPreparedStatus({
+      cfg: {
+        agents: {
+          defaults: {
+            models: {
+              "deepseek/deepseek-v4-flash": { params: { fastMode: false } },
+              "openrouter/deepseek/deepseek-v4-flash": { params: { fastMode: true } },
+            },
+          },
+        },
+      },
+      sessionEntry: {
+        sessionId: "selected-status-fast-mode",
+        updatedAt: 0,
+        providerOverride: "openrouter",
+        modelOverride: "deepseek/deepseek-v4-flash",
+        modelOverrideSource: "user",
+      },
+    });
+
+    expect(parts.text).toContain("openrouter/deepseek/deepseek-v4-flash");
+    expect(parts.text).toContain("fast on");
   });
 
   it("uses the active prepared window for an established fallback", async () => {

@@ -193,6 +193,10 @@ export async function recoverEmbeddedRunAttempt(input: {
     agentId: params.agentId,
     defaultProvider: DEFAULT_PROVIDER,
     defaultModel: DEFAULT_MODEL,
+    modelManifestContext: {
+      manifestPlugins: runInput.preparedModelRuntime?.metadataSnapshot,
+      resolvedModelCatalog: runInput.preparedModelRuntime?.modelCatalog.entries,
+    },
     currentProvider: preparedRuntime.provider,
     currentModel: preparedRuntime.modelId,
     currentAgentRuntimeOverride: params.agentHarnessRuntimeOverride,

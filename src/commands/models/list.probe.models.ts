@@ -1,13 +1,15 @@
 /** Model candidate normalization and catalog selection for auth probes. */
 import type { ModelCatalogEntry } from "../../agents/model-catalog.types.js";
-import { normalizeProviderId, parseModelRef } from "../../agents/model-selection.js";
+import type { ModelFallbackRouteResolution } from "../../agents/model-fallback.types.js";
+import { parseRawModelRef } from "../../agents/model-selection-normalize.js";
+import { normalizeProviderId } from "../../agents/model-selection.js";
 import { DEFAULT_PROVIDER } from "./shared.js";
 
 /** Groups configured model candidates by their requested provider identity. */
 export function buildProbeCandidateMap(modelCandidates: string[]): Map<string, string[]> {
   const map = new Map<string, string[]>();
   for (const raw of modelCandidates) {
-    const parsed = parseModelRef(raw ?? "", DEFAULT_PROVIDER);
+    const parsed = parseRawModelRef(raw ?? "", DEFAULT_PROVIDER);
     if (!parsed) {
       continue;
     }
@@ -51,11 +53,15 @@ export function selectProbeModel(params: {
   provider: string;
   candidates: Map<string, string[]>;
   catalog: Array<Pick<ModelCatalogEntry, "provider" | "id" | "status">>;
-}): { provider: string; model: string } | null {
+}): {
+  provider: string;
+  model: string;
+  requestedRouteResolution: ModelFallbackRouteResolution;
+} | null {
   const { provider, candidates, catalog } = params;
   const direct = candidates.get(provider)?.[0];
   if (direct) {
-    return { provider, model: direct };
+    return { provider, model: direct, requestedRouteResolution: "raw" };
   }
   const fromCatalog = catalog
     .filter(
@@ -65,5 +71,7 @@ export function selectProbeModel(params: {
         entry.status !== "disabled",
     )
     .toSorted((a, b) => probePriority(provider, a.id) - probePriority(provider, b.id))[0];
-  return fromCatalog ? { provider, model: fromCatalog.id } : null;
+  return fromCatalog
+    ? { provider, model: fromCatalog.id, requestedRouteResolution: "resolved" }
+    : null;
 }

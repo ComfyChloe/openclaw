@@ -1,10 +1,7 @@
 // Resolves persisted per-session model choices across child and parent sessions.
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import type { ModelFallbackRouteResolution } from "../agents/model-fallback.types.js";
-import {
-  normalizeStoredOverrideModel,
-  resolvePersistedOverrideModelRef,
-} from "../agents/model-selection-persisted.js";
+import { resolvePersistedOverrideModelRef } from "../agents/model-selection-persisted.js";
 import { resolveSessionParentSessionKey } from "../channels/plugins/session-conversation.js";
 import {
   hasSessionActiveAutoModelFallback,
@@ -17,42 +14,31 @@ export type StoredModelOverride = {
   provider?: string;
   model: string;
   source: "session" | "parent";
+  /** Stored-input provenance; the public normalized view retains this original marker. */
   routeResolution: ModelFallbackRouteResolution;
 };
 
-function resolveStoredOverrideFromEntry(params: {
-  entry?: SessionEntry;
-  defaultProvider: string;
-  source: StoredModelOverride["source"];
-}): StoredModelOverride | null {
-  const normalized = normalizeStoredOverrideModel({
-    providerOverride: params.entry?.providerOverride,
-    modelOverride: params.entry?.modelOverride,
-  });
-  const ref = resolvePersistedOverrideModelRef({
-    defaultProvider: params.defaultProvider,
-    overrideProvider: normalized.providerOverride,
-    overrideModel: normalized.modelOverride,
-  });
-  return ref
+type StoredModelOverrideReadParams = {
+  loadSessionEntry?: (sessionKey: string) => SessionEntry | undefined;
+  sessionEntry?: SessionEntry;
+  sessionStore?: Record<string, SessionEntry>;
+  sessionKey?: string;
+  parentSessionKey?: string;
+};
+
+function readStoredOverrideFromEntry(
+  entry: SessionEntry | undefined,
+  source: StoredModelOverride["source"],
+): StoredModelOverride | null {
+  const model = normalizeOptionalString(entry?.modelOverride);
+  return model
     ? {
-        ...ref,
-        source: params.source,
-        routeResolution: resolveSessionModelOverrideRouteResolution(params.entry),
+        provider: normalizeOptionalString(entry?.providerOverride),
+        model,
+        source,
+        routeResolution: resolveSessionModelOverrideRouteResolution(entry),
       }
     : null;
-}
-
-/** Resolves only the current session's persisted model override. */
-export function resolveDirectStoredModelOverride(params: {
-  sessionEntry?: SessionEntry;
-  defaultProvider: string;
-}): StoredModelOverride | null {
-  return resolveStoredOverrideFromEntry({
-    entry: params.sessionEntry,
-    defaultProvider: params.defaultProvider,
-    source: "session",
-  });
 }
 
 function resolveParentSessionKeyCandidate(params: {
@@ -70,26 +56,15 @@ function resolveParentSessionKeyCandidate(params: {
   return null;
 }
 
-/** Resolves the persisted model override visible to the current session. */
-export function resolveStoredModelOverride(params: {
-  loadSessionEntry?: (sessionKey: string) => SessionEntry | undefined;
-  sessionEntry?: SessionEntry;
-  sessionStore?: Record<string, SessionEntry>;
-  sessionKey?: string;
-  parentSessionKey?: string;
-  defaultProvider: string;
-}): StoredModelOverride | null {
-  const direct = resolveDirectStoredModelOverride({
-    sessionEntry: params.sessionEntry,
-    defaultProvider: params.defaultProvider,
-  });
+/** Read stored input without normalizing it before the operation's selection owner. */
+export function readStoredModelOverride(
+  params: StoredModelOverrideReadParams,
+): StoredModelOverride | null {
+  const direct = readStoredOverrideFromEntry(params.sessionEntry, "session");
   if (direct) {
     return direct;
   }
-  const parentKey = resolveParentSessionKeyCandidate({
-    sessionKey: params.sessionKey,
-    parentSessionKey: params.parentSessionKey,
-  });
+  const parentKey = resolveParentSessionKeyCandidate(params);
   if (!parentKey) {
     return null;
   }
@@ -97,9 +72,24 @@ export function resolveStoredModelOverride(params: {
   if (hasSessionActiveAutoModelFallback(parentEntry)) {
     return null;
   }
-  return resolveStoredOverrideFromEntry({
-    entry: parentEntry,
+  return readStoredOverrideFromEntry(parentEntry, "parent");
+}
+
+/** Preserve the shipped SDK's normalized view while retaining stored-input provenance. */
+export function resolveStoredModelOverride(
+  params: StoredModelOverrideReadParams & {
+    defaultProvider: string;
+  },
+): StoredModelOverride | null {
+  const stored = readStoredModelOverride(params);
+  if (!stored) {
+    return null;
+  }
+  const ref = resolvePersistedOverrideModelRef({
     defaultProvider: params.defaultProvider,
-    source: "parent",
+    overrideProvider: stored.provider,
+    overrideModel: stored.model,
+    overrideRouteResolution: stored.routeResolution,
   });
+  return ref ? { ...ref, source: stored.source, routeResolution: stored.routeResolution } : null;
 }

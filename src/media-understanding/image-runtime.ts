@@ -21,3 +21,11 @@ export const describeImageWithModelPayloadTransform = bindImageRuntime(
 export const describeImagesWithModelPayloadTransform = bindImageRuntime(
   (runtime) => runtime.describeImagesWithModelPayloadTransformCore,
 );
+
+/** Internal selected candidates use the admitted image owner without replaying input aliases. */
+export const describeImageWithResolvedModel = bindImageRuntime(
+  (runtime) => runtime.describeImageWithResolvedModelCore,
+);
+export const describeImagesWithResolvedModel = bindImageRuntime(
+  (runtime) => runtime.describeImagesWithResolvedModelCore,
+);

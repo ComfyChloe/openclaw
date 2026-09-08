@@ -1,10 +1,16 @@
+import { createServer } from "node:http";
 import type { StreamFn } from "openclaw/plugin-sdk/agent-core";
+import { attachModelProviderRequestTransport } from "openclaw/plugin-sdk/agent-harness-runtime";
 import {
   createAssistantMessageEventStream,
+  streamSimple,
+  type Model,
+  type Context,
   type AssistantMessage,
   type AssistantMessageEvent,
 } from "openclaw/plugin-sdk/llm";
 import { registerSingleProviderPlugin } from "openclaw/plugin-sdk/plugin-test-runtime";
+import { isRecord } from "openclaw/plugin-sdk/string-coerce-runtime";
 import { describe, expect, it } from "vitest";
 import plugin from "./index.js";
 
@@ -523,3 +529,180 @@ describe("OpenCode stream adapter", () => {
     expect(payload.tools[0]?.name).toBe("web_search");
   });
 });
+
+describe.each(["openai-responses", "openai-completions"] as const)(
+  "OpenCode image capability on the %s wire",
+  (api) => {
+    it.each([
+      { capability: "image" as const, reasoning: { effort: "none" }, removed: true },
+      { capability: "image" as const, reasoning: "none", removed: true },
+      { capability: "image" as const, reasoning: { effort: "low" }, removed: false },
+      { capability: undefined, reasoning: { effort: "none" }, removed: false },
+      { capability: undefined, reasoning: { effort: "low" }, removed: false },
+    ])(
+      "preserves caller payloads for capability=$capability reasoning=$reasoning",
+      async ({ capability, reasoning, removed }) => {
+        let captured: Record<string, unknown> | undefined;
+        const server = createServer((request, response) => {
+          let body = "";
+          request.on("data", (chunk) => {
+            body += chunk;
+          });
+          request.on("end", () => {
+            captured = JSON.parse(body);
+            response.writeHead(200, { "content-type": "text/event-stream" });
+            if (api === "openai-completions") {
+              for (const chunk of [
+                {
+                  id: "chat-proof",
+                  choices: [
+                    {
+                      index: 0,
+                      delta: { role: "assistant", content: "wire ok" },
+                      finish_reason: null,
+                    },
+                  ],
+                },
+                {
+                  id: "chat-proof",
+                  choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+                  usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+                },
+              ]) {
+                response.write(`data: ${JSON.stringify(chunk)}\n\n`);
+              }
+              response.end("data: [DONE]\n\n");
+              return;
+            }
+            const item = {
+              id: "msg-proof",
+              type: "message",
+              role: "assistant",
+              status: "completed",
+              content: [{ type: "output_text", text: "wire ok", annotations: [] }],
+            };
+            for (const event of [
+              {
+                type: "response.created",
+                response: { id: "resp-proof", status: "in_progress", output: [] },
+              },
+              {
+                type: "response.output_item.added",
+                output_index: 0,
+                item: { ...item, status: "in_progress", content: [] },
+              },
+              {
+                type: "response.output_text.delta",
+                output_index: 0,
+                content_index: 0,
+                item_id: item.id,
+                delta: "wire ok",
+              },
+              { type: "response.output_item.done", output_index: 0, item },
+              {
+                type: "response.completed",
+                response: {
+                  id: "resp-proof",
+                  status: "completed",
+                  model: "gpt-5-nano",
+                  output: [item],
+                  usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+                },
+              },
+            ]) {
+              response.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
+            }
+            response.end();
+          });
+        });
+        await new Promise<void>((resolve) => {
+          server.listen(0, "127.0.0.1", resolve);
+        });
+        try {
+          const address = server.address();
+          if (!address || typeof address === "string") {
+            throw new Error("Expected loopback TCP server");
+          }
+          const model: Model<typeof api> = attachModelProviderRequestTransport(
+            {
+              provider: "opencode",
+              id: "gpt-5-nano",
+              name: "Wire proof",
+              api,
+              baseUrl: `http://127.0.0.1:${address.port}/v1`,
+              reasoning: true,
+              input: ["text", "image"],
+              cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+              contextWindow: 8192,
+              maxTokens: 128,
+            },
+            { allowPrivateNetwork: true },
+          );
+          const provider = await registerSingleProviderPlugin(plugin);
+          const wrapped = provider.wrapStreamFn?.({
+            provider: "opencode",
+            modelId: model.id,
+            model,
+            streamFn: streamSimple,
+            capability,
+          });
+          if (!wrapped) {
+            throw new Error("Expected OpenCode stream wrapper");
+          }
+          const context: Context = {
+            messages: [
+              {
+                role: "user",
+                timestamp: 1,
+                content: [
+                  { type: "text", text: "Describe the input." },
+                  ...(capability === "image"
+                    ? [
+                        {
+                          type: "image" as const,
+                          data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aL1sAAAAASUVORK5CYII=",
+                          mimeType: "image/png",
+                        },
+                      ]
+                    : []),
+                ],
+              },
+            ],
+          };
+          let callerTransforms = 0;
+          const result = await (
+            await wrapped(model, context, {
+              apiKey: "synthetic-wire-key",
+              maxTokens: 64,
+              signal: AbortSignal.timeout(10000),
+              onPayload: async (payload) => {
+                if (!isRecord(payload)) {
+                  throw new Error("Expected provider payload");
+                }
+                callerTransforms += 1;
+                await Promise.resolve();
+                return { ...payload, reasoning, metadata: { caller: "preserved" } };
+              },
+            })
+          ).result();
+          expect(result.stopReason).toBe("stop");
+          expect(callerTransforms).toBe(1);
+          expect(captured?.metadata).toEqual({ caller: "preserved" });
+          expect(captured?.reasoning).toEqual(removed ? undefined : reasoning);
+          const imageKind = api === "openai-responses" ? "input_image" : "image_url";
+          const wireInput = JSON.stringify(captured?.input ?? captured?.messages);
+          if (capability === "image") {
+            expect(wireInput).toContain(imageKind);
+          } else {
+            expect(wireInput).not.toContain(imageKind);
+          }
+        } finally {
+          server.closeAllConnections();
+          await new Promise<void>((resolve, reject) => {
+            server.close((error) => (error ? reject(error) : resolve()));
+          });
+        }
+      },
+    );
+  },
+);

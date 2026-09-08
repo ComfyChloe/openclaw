@@ -3533,6 +3533,7 @@ public struct AgentParams: Codable, Sendable {
     public let agentid: String?
     public let provider: String?
     public let model: String?
+    public let requestedrouteresolution: AnyCodable?
     public let to: String?
     public let replyto: String?
     public let sessionid: String?
@@ -3583,6 +3584,7 @@ public struct AgentParams: Codable, Sendable {
         agentid: String? = nil,
         provider: String? = nil,
         model: String? = nil,
+        requestedrouteresolution: AnyCodable? = nil,
         to: String? = nil,
         replyto: String? = nil,
         sessionid: String? = nil,
@@ -3632,6 +3634,7 @@ public struct AgentParams: Codable, Sendable {
         self.agentid = agentid
         self.provider = provider
         self.model = model
+        self.requestedrouteresolution = requestedrouteresolution
         self.to = to
         self.replyto = replyto
         self.sessionid = sessionid
@@ -3683,6 +3686,7 @@ public struct AgentParams: Codable, Sendable {
         case agentid = "agentId"
         case provider
         case model
+        case requestedrouteresolution = "requestedRouteResolution"
         case to
         case replyto = "replyTo"
         case sessionid = "sessionId"

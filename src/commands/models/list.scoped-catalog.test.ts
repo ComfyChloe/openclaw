@@ -67,6 +67,61 @@ beforeEach(() => {
 });
 
 describe("loadScopedListModelCatalogSnapshot", () => {
+  it.each([false, true])(
+    "preserves case-distinct static catalog rows (reversed=%s)",
+    async (reverse) => {
+      const rows = [
+        { ...staticRow, id: "Model", ref: "moonshot/Model", mergeKey: "moonshot::Model" },
+        {
+          ...staticRow,
+          id: "model",
+          ref: "moonshot/model",
+          mergeKey: "moonshot::model",
+          input: ["text", "image"] as const,
+        },
+      ];
+      mocks.loadManifestCatalogRowsForList.mockReturnValue(rows);
+      mocks.loadStaticManifestCatalogRowsForList.mockReturnValue(
+        reverse ? rows.toReversed() : rows,
+      );
+      const snapshot = await loadScopedListModelCatalogSnapshot({
+        cfg: {},
+        agentDir: "/tmp/openclaw-agent",
+        providerIds: ["moonshot"],
+        runtimeProviderIds: [],
+        configuredKeys: [],
+      });
+      for (const entries of [snapshot.entries, snapshot.staticEntries, snapshot.routeVariants]) {
+        expect(entries?.map((row) => row.id).toSorted()).toEqual(["Model", "model"]);
+        expect(entries?.find((row) => row.id === "Model")?.input).toEqual(["text"]);
+        expect(entries?.find((row) => row.id === "model")?.input).toEqual(["text", "image"]);
+      }
+    },
+  );
+
+  it("admits only the exact case-distinct configured manifest model", async () => {
+    mocks.loadManifestCatalogRowsForList.mockReturnValue([
+      {
+        ...runtimeRow,
+        id: "Model",
+        ref: "openai/Model",
+        mergeKey: "openai::Model",
+        input: ["text"] as const,
+      },
+      { ...runtimeRow, id: "model", ref: "openai/model", mergeKey: "openai::model" },
+    ]);
+    mocks.loadStaticManifestCatalogRowsForList.mockReturnValue([]);
+    const snapshot = await loadScopedListModelCatalogSnapshot({
+      cfg: {},
+      agentDir: "/tmp/openclaw-agent",
+      providerIds: ["openai"],
+      runtimeProviderIds: [],
+      configuredKeys: ["openai/model"],
+    });
+    expect(snapshot.entries).toMatchObject([{ id: "model", input: ["text", "image"] }]);
+    expect(snapshot.entries).toHaveLength(1);
+  });
+
   it("returns an empty snapshot without loading catalog sources for an empty scope", async () => {
     await expect(
       loadScopedListModelCatalogSnapshot({

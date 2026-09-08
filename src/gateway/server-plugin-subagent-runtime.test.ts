@@ -244,6 +244,19 @@ describe("plugin background completions", () => {
       allowed: false,
     },
     {
+      name: "another model with the same provider-local prefix",
+      subagent: { allowModelOverride: true, allowedModels: ["custom/custom/model"] },
+      model: "custom/model",
+      allowed: false,
+    },
+    {
+      name: "exact namespaced model",
+      subagent: { allowModelOverride: true, allowedModels: ["custom/custom/model"] },
+      model: "custom/custom/model",
+      allowed: true,
+      expectedText: "research:custom/custom/model",
+    },
+    {
       name: "invalid allowlist",
       subagent: { allowModelOverride: true, allowedModels: ["not-a-model-ref"] },
       model: "test-provider/override",

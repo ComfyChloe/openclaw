@@ -38,6 +38,7 @@ import { createAssistantErrorTranscript } from "../assistant-error-transcript.js
 import { runBestEffortCallback } from "../embedded-agent-subscribe.callback.js";
 import { resolveLegacyInheritedAuthDir } from "../legacy-inherited-auth-dir.js";
 import { resolveModelCandidateChain } from "../model-fallback-candidates.js";
+import { resolveDefaultModelForAgent } from "../model-selection-config.js";
 import {
   getPreparedModelRuntimePluginGeneration,
   withPreparedModelRuntimePluginGenerationScope,
@@ -91,10 +92,12 @@ export function runEmbeddedAgent(
   paramsInput: RunEmbeddedAgentParams,
 ): Promise<EmbeddedAgentRunResult> {
   const internalParamsInput = paramsInput as RunEmbeddedAgentInternalParams;
-  const requestedProvider = normalizeOptionalString(internalParamsInput.provider);
-  const requestedModel = normalizeOptionalString(internalParamsInput.model);
-  const needsConfiguredDefault =
-    !internalParamsInput.config && !requestedProvider && !requestedModel;
+  const providerInput = normalizeOptionalString(internalParamsInput.provider);
+  const modelInput = normalizeOptionalString(internalParamsInput.model);
+  if (paramsInput.requestedRouteResolution === "resolved" && !(providerInput && modelInput)) {
+    return Promise.reject(new Error("Resolved model requests require both provider and model."));
+  }
+  const needsConfiguredDefault = !internalParamsInput.config && !providerInput && !modelInput;
   const config =
     internalParamsInput.config ??
     (needsConfiguredDefault ? (getRuntimeConfigSnapshot() ?? undefined) : undefined);
@@ -255,12 +258,6 @@ async function runEmbeddedAgentInternal(
       const requestedAgentDir =
         params.agentDir ?? resolveAgentDir(config, requestedWorkspaceResolution.agentId);
       const retainIdleRunOwner = params.config === undefined;
-      const requestedRuntimeSelection = resolveInitialEmbeddedRunModel({
-        config,
-        agentId: requestedWorkspaceResolution.agentId,
-        provider: params.provider,
-        model: params.model,
-      });
       const explicitHarnessRuntime = params.agentHarnessId ?? params.agentHarnessRuntimeOverride;
       const requestedHarnessRuntime =
         explicitHarnessRuntime ?? params.agentHarnessRuntimePreparationHint;
@@ -278,6 +275,17 @@ async function runEmbeddedAgentInternal(
           workspaceDir: requestedWorkspaceResolution.workspaceDir,
           env: process.env,
         });
+      const requestedRuntimeSelection = resolveInitialEmbeddedRunModel({
+        config,
+        agentId: requestedWorkspaceResolution.agentId,
+        provider: params.provider,
+        model: params.model,
+        requestedRouteResolution: params.requestedRouteResolution,
+        normalization: {
+          manifestPlugins: pluginMetadataSnapshot,
+          allowPluginNormalization: false,
+        },
+      });
       const runtimePluginSelections = resolveModelCandidateChain({
         cfg: config,
         agentId: requestedWorkspaceResolution.agentId,
@@ -285,6 +293,7 @@ async function runEmbeddedAgentInternal(
         provider: requestedRuntimeSelection.provider,
         model: requestedRuntimeSelection.modelId,
         requestedRouteResolution: "resolved",
+        allowPluginNormalization: false,
         fallbacksOverride: runtimePluginFallbacksOverride,
       }).map((candidate, index) =>
         requestedHarnessRuntime &&
@@ -418,6 +427,12 @@ async function runEmbeddedAgentInternal(
             agentId: workspaceResolution.agentId,
             provider: params.provider,
             model: params.model,
+            requestedRouteResolution: params.requestedRouteResolution,
+            normalization: {
+              manifestPlugins: preparedModelRuntime.metadataSnapshot,
+              resolvedModelCatalog: preparedModelRuntime.modelCatalog.entries,
+              allowPluginNormalization: true,
+            },
           });
           const normalizedSessionKey = params.sessionKey?.trim();
           const modelFallbackAvailability =
@@ -561,7 +576,18 @@ async function runEmbeddedAgentInternal(
           }
         };
         const runWithPreparedRuntime = () =>
-          withPluginRuntimeGenerationScope(preparedModelRuntime, runPrepared);
+          withPluginRuntimeGenerationScope(preparedModelRuntime, () => {
+            params.onConfiguredDefault?.(
+              resolveDefaultModelForAgent({
+                cfg: preparedModelRuntime.config,
+                agentId: preparedModelRuntime.agentId,
+                allowPluginNormalization: true,
+                manifestPlugins: preparedModelRuntime.metadataSnapshot,
+                resolvedModelCatalog: preparedModelRuntime.modelCatalog.entries,
+              }),
+            );
+            return runPrepared();
+          });
         return params.pluginGeneration
           ? await withPreparedModelRuntimePluginGenerationScope(
               preparedModelRuntimeLease.pluginGeneration,

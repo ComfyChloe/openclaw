@@ -27,6 +27,7 @@ import {
 import { DEFAULT_CONTEXT_TOKENS } from "../../defaults.js";
 import { FailoverError } from "../../failover-error.js";
 import { resolveModelContextWindowProfile } from "../../model-context-window.js";
+import { normalizeModelRef } from "../../model-ref-shared.js";
 import { log } from "../logger.js";
 import { readAgentModelContextTokens } from "../model-context-tokens.js";
 
@@ -101,6 +102,7 @@ export async function resolveHookModelSelection(params: {
   modelSelectionLocked?: boolean;
   hookRunner?: HookRunnerLike | null;
   hookContext: HookContext;
+  normalization?: Parameters<typeof normalizeModelRef>[2];
 }) {
   let provider = params.provider;
   let modelId = params.modelId;
@@ -132,10 +134,13 @@ export async function resolveHookModelSelection(params: {
     log.info(`[hooks] model overridden to ${modelId}`);
   }
 
-  return {
-    provider,
-    modelId,
-  };
+  // Hook-authored input resolves before harness and auth policy; an untouched
+  // selected pair must not pass through input aliases again.
+  const selected =
+    modelResolveOverride?.modelOverride || provider !== params.provider
+      ? normalizeModelRef(provider, modelId, params.normalization)
+      : { provider, model: modelId };
+  return { provider: selected.provider, modelId: selected.model };
 }
 
 /**

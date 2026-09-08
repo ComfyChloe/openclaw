@@ -175,6 +175,8 @@ Capabilities belong to the declared API and base URL, not only the provider/mode
 
 Use `modelIdNormalization` for cheap provider-owned model-id cleanup that must happen before provider runtime loads. This keeps aliases such as short model names, provider-local legacy ids, and proxy prefix rules in the owning plugin manifest instead of in core model-selection tables.
 
+Rules may name a declared provider or a validated `modelCatalog.aliases` key targeting a declared provider. CLI-backend-only and foreign targets do not grant normalization ownership. Policies match the source provider spelling; declaring an alias policy does not add a runtime provider.
+
 ```json
 {
   "providers": ["anthropic", "openrouter"],

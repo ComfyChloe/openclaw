@@ -8,6 +8,7 @@ import {
   type ModelManifestNormalizationContext,
   type ModelRef,
   normalizeModelRef,
+  normalizeProviderId,
 } from "./model-ref-shared.js";
 
 type ModelRefNormalizeOptions = ModelManifestNormalizationContext & {
@@ -25,27 +26,33 @@ export function findNormalizedProviderValue<T>(
   return findNormalizedProviderValueCore(entries, provider);
 }
 
-/** Parse `provider/model` or bare model text using a default provider. */
-export function parseModelRef(
-  raw: string,
-  defaultProvider: string,
-  options?: ModelRefNormalizeOptions,
-): ModelRef | null {
+/** Decode model-reference syntax without applying provider model-id policies. */
+export function parseRawModelRef(raw: string, defaultProvider: string): ModelRef | null {
   const trimmed = raw.trim();
   if (!trimmed) {
     return null;
   }
   if (normalizeLowercaseStringOrEmpty(trimmed) === OPENROUTER_AUTO_COMPAT_ALIAS) {
-    return normalizeModelRef("openrouter", "auto", options);
+    return { provider: "openrouter", model: "auto" };
   }
   const slash = trimmed.indexOf("/");
   if (slash === -1) {
-    return normalizeModelRef(defaultProvider, trimmed, options);
+    return { provider: normalizeProviderId(defaultProvider), model: trimmed };
   }
   const providerRaw = trimmed.slice(0, slash).trim();
   const model = trimmed.slice(slash + 1).trim();
   if (!providerRaw || !model) {
     return null;
   }
-  return normalizeModelRef(providerRaw, model, options);
+  return { provider: normalizeProviderId(providerRaw), model };
+}
+
+/** Parse `provider/model` or bare model text using a default provider. */
+export function parseModelRef(
+  raw: string,
+  defaultProvider: string,
+  options?: ModelRefNormalizeOptions,
+): ModelRef | null {
+  const ref = parseRawModelRef(raw, defaultProvider);
+  return ref ? normalizeModelRef(ref.provider, ref.model, options) : null;
 }

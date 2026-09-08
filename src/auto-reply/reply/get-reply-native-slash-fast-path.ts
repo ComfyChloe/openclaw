@@ -2,17 +2,14 @@
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import type { QueueMode } from "../../../packages/gateway-protocol/src/schema/logs-chat.js";
 import type { ModelCatalogSnapshot } from "../../agents/model-catalog.types.js";
-import {
-  resolveModelRefFromString,
-  resolveThinkingDefaultWithRuntimeCatalogCore,
-  type ModelAliasIndex,
-} from "../../agents/model-selection.js";
-import { loadPreparedModelCatalog } from "../../agents/prepared-model-catalog.js";
+import { resolveModelRefFromString, type ModelAliasIndex } from "../../agents/model-selection.js";
+import { resolveThinkingDefaultCore } from "../../agents/model-thinking-default-core.js";
+import { getAvailablePreparedModelCatalogSnapshot } from "../../agents/prepared-model-catalog.js";
 import { resolveChannelModelOverride } from "../../channels/model-overrides.js";
 import type { OpenClawConfig } from "../../config/config.js";
 import { isModelSelectionLocked } from "../../sessions/model-overrides.js";
 import { recordSessionCreated } from "../../sessions/session-state-events.js";
-import { resolveStoredModelOverride } from "../../sessions/stored-model-overrides.js";
+import { readStoredModelOverride } from "../../sessions/stored-model-overrides.js";
 import { createLazyImportLoader } from "../../shared/lazy-promise.js";
 import type { SkillCommandSpec } from "../../skills/types.js";
 import {
@@ -28,7 +25,7 @@ import {
 import type { GetReplyOptions } from "../get-reply-options.types.js";
 import { markCommandReplyForDelivery, type ReplyPayload } from "../reply-payload.js";
 import type { FinalizedRuntimeMsgContext as MsgContext } from "../templating.js";
-import { normalizeThinkLevel, type ThinkLevel } from "../thinking.js";
+import { normalizeThinkLevel } from "../thinking.js";
 import {
   takeCommandSessionMetadataChangesFromTargets,
   type CommandSessionMetadataChange,
@@ -39,10 +36,12 @@ import { resolveReplyDirectives } from "./get-reply-directives.js";
 import { initFastReplySessionState } from "./get-reply-fast-path.js";
 import { handleInlineActions } from "./get-reply-inline-actions.js";
 import { stripStructuralPrefixes } from "./mentions.js";
+import { resolveRuntimeNormalization } from "./model-runtime-normalization.js";
 import { resolveContextTokens } from "./model-selection-context.js";
 import { prepareReplyConversation } from "./prompt-session-context.js";
 import { persistReplySessionEntry } from "./session-entry-persistence.js";
 import { createSkillCommandLoaders } from "./skill-command-loaders.js";
+import { resolveStoredRuntimeModelSelection } from "./stored-model-override.js";
 import type { createTypingController } from "./typing.js";
 
 type AgentDefaults = NonNullable<NonNullable<OpenClawConfig["agents"]>["defaults"]> | undefined;
@@ -96,29 +95,6 @@ function shouldRunInternalTextSlashCommandFastPath(
     (ctx.OriginatingChannel === undefined ||
       isInternalMessageChannel(normalizeOptionalString(ctx.OriginatingChannel)))
   );
-}
-
-async function resolveNativeSlashDefaultThinkingLevel(params: {
-  cfg: OpenClawConfig;
-  agentId: string;
-  provider: string;
-  model: string;
-  agentDir: string;
-  workspaceDir: string;
-}): Promise<ThinkLevel> {
-  return resolveThinkingDefaultWithRuntimeCatalogCore({
-    cfg: params.cfg,
-    provider: params.provider,
-    model: params.model,
-    loadRuntimeCatalog: () =>
-      loadPreparedModelCatalog({
-        config: params.cfg,
-        agentId: params.agentId,
-        agentDir: params.agentDir,
-        workspaceDir: params.workspaceDir,
-        readOnly: true,
-      }),
-  });
 }
 
 export async function maybeResolveNativeSlashCommandFastReply(params: {
@@ -198,12 +174,32 @@ export async function maybeResolveNativeSlashCommandFastReply(params: {
     commandAuthorized: params.commandAuthorized,
   });
   if (command.commandBodyNormalized === "/status") {
+    if (!command.isAuthorizedSender) {
+      return { handled: true, reply: undefined };
+    }
+    const thinkingCatalog =
+      (
+        params.preparedModelCatalog ??
+        getAvailablePreparedModelCatalogSnapshot({
+          config: params.cfg,
+          agentId: params.agentId,
+          agentDir: params.agentDir,
+          workspaceDir: params.workspaceDir,
+        })
+      )?.entries ?? [];
+    const { manifestPlugins } = resolveRuntimeNormalization(params.cfg);
+    // A passive read consumes captured facts; absent metadata must not trigger discovery.
+    const normalization = {
+      manifestPlugins: manifestPlugins ?? [],
+      resolvedModelCatalog: thinkingCatalog,
+      allowPluginNormalization: false,
+    };
     const targetSessionEntry =
       sessionState.sessionStore[sessionState.sessionKey] ?? sessionState.sessionEntry;
     const canApplyStoredModel =
       params.provider === params.defaultProvider && params.model === params.defaultModel;
     const storedModelOverride = canApplyStoredModel
-      ? resolveStoredModelOverride({
+      ? readStoredModelOverride({
           sessionEntry: targetSessionEntry,
           sessionStore: sessionState.sessionStore,
           sessionKey: sessionState.sessionKey,
@@ -211,7 +207,6 @@ export async function maybeResolveNativeSlashCommandFastReply(params: {
             targetSessionEntry?.parentSessionKey ??
             params.ctx.ModelParentSessionKey ??
             params.ctx.ParentSessionKey,
-          defaultProvider: params.defaultProvider,
         })
       : null;
     const canApplyChannelModel =
@@ -252,49 +247,43 @@ export async function maybeResolveNativeSlashCommandFastReply(params: {
       : null;
     const resolvedChannelModel = channelModelOverride
       ? resolveModelRefFromString({
+          cfg: params.cfg,
+          agentId: params.agentId,
           raw: channelModelOverride.model,
           defaultProvider: params.defaultProvider,
           aliasIndex: params.aliasIndex,
+          ...normalization,
+        })
+      : null;
+    const resolvedStoredModel = storedModelOverride
+      ? resolveStoredRuntimeModelSelection({
+          cfg: params.cfg,
+          sessionEntry: targetSessionEntry,
+          storedOverride: storedModelOverride,
+          defaultProvider: params.defaultProvider,
+          catalog: thinkingCatalog,
+          aliasIndex: params.aliasIndex,
+          normalization,
         })
       : null;
     const resolvedInheritedModel =
-      storedModelOverride?.source === "parent"
-        ? (resolveModelRefFromString({
-            raw: `${storedModelOverride.provider ?? params.defaultProvider}/${storedModelOverride.model}`,
-            defaultProvider: params.defaultProvider,
-            aliasIndex: params.aliasIndex,
-          })?.ref ?? {
-            provider: storedModelOverride.provider ?? params.defaultProvider,
-            model: storedModelOverride.model,
-          })
-        : null;
+      storedModelOverride?.source === "parent" ? resolvedStoredModel : null;
     // Native status returns before normal channel routing; select once before
     // preparing model-bound thinking, runtime, auth, context, or fast-mode facts.
     const statusProvider =
       resolvedInheritedModel?.provider ?? resolvedChannelModel?.ref.provider ?? params.provider;
     const statusModel =
       resolvedInheritedModel?.model ?? resolvedChannelModel?.ref.model ?? params.model;
-    let resolvedDefaultThinkingLevel: ThinkLevel | undefined;
-    const resolveDefaultThinkingLevel = async () => {
-      resolvedDefaultThinkingLevel ??= await resolveNativeSlashDefaultThinkingLevel({
+    const resolveDefaultThinkingLevel = async () =>
+      resolveThinkingDefaultCore({
         cfg: params.cfg,
         agentId: params.agentId,
-        provider: statusProvider,
-        model: statusModel,
-        agentDir: params.agentDir,
-        workspaceDir: params.workspaceDir,
+        provider: resolvedStoredModel?.provider ?? statusProvider,
+        model: resolvedStoredModel?.model ?? statusModel,
+        catalog: thinkingCatalog,
+        providerPolicySource: "active",
       });
-      return resolvedDefaultThinkingLevel;
-    };
     const resolvedThinkLevel = normalizeThinkLevel(targetSessionEntry?.thinkingLevel);
-    // This fast path has no model-state owner; prepare side-effect-free catalog facts directly.
-    const thinkingCatalog = await loadPreparedModelCatalog({
-      config: params.cfg,
-      agentId: params.agentId,
-      agentDir: params.agentDir,
-      workspaceDir: params.workspaceDir,
-      readOnly: true,
-    });
     const { buildStatusReply } = await statusCommandRuntimeLoader.load();
     return {
       handled: true,

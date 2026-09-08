@@ -8,6 +8,7 @@ import { createRequireRecord } from "openclaw/plugin-sdk/test-fixtures";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createDeferred } from "../../test/helpers/promise.js";
 import { setReplyPayloadMetadata } from "../auto-reply/reply-payload.js";
+import { normalizeThinkLevel } from "../auto-reply/thinking.shared.js";
 import type { SessionEntry } from "../config/sessions.js";
 import * as sessionAccessor from "../config/sessions/session-accessor.js";
 import {
@@ -43,7 +44,6 @@ import {
   createTestModelVisibilityPolicy,
   isTestModelKeyAllowed,
   normalizeTestProviderId,
-  resolveTestConfiguredModelRef,
   resolveTestDefaultModelForAgent,
   resolveTestModelAliasFromPair,
   resolveTestModelRefFromString,
@@ -76,6 +76,8 @@ const state = vi.hoisted(() => ({
     },
   },
   runtimeConfigMock: undefined as unknown,
+  acquireModelRuntimeMock: vi.fn(),
+  releaseModelRuntimeMock: vi.fn(),
   acpResolveSessionMock: vi.fn((..._args: unknown[]): unknown => null),
   acpRunTurnMock: vi.fn((..._args: unknown[]): unknown => undefined),
   buildAcpResultMock: vi.fn(),
@@ -374,7 +376,7 @@ vi.mock("@openclaw/acp-core/runtime/session-identifiers", () => ({
 
 vi.mock("../auto-reply/thinking.js", () => ({
   formatThinkingLevels: () => "low, medium, high",
-  normalizeThinkLevel: (v?: string) => v || undefined,
+  normalizeThinkLevel,
   normalizeVerboseLevel: (v?: string) => v || undefined,
   isThinkingLevelSupported: (args: unknown) => state.isThinkingLevelSupportedMock(args),
   resolveSupportedThinkingLevel: (args: { level?: string }) =>
@@ -406,6 +408,12 @@ vi.mock("../config/io.js", () => ({
   readConfigFileSnapshotForWrite: async () => ({
     snapshot: { valid: false },
   }),
+}));
+
+vi.mock("./prepared-model-runtime.js", () => ({
+  acquireAgentRunPreparedModelRuntime: (...args: unknown[]) =>
+    state.acquireModelRuntimeMock(...args),
+  preparedModelRuntimeConfigsMatch: (left: unknown, right: unknown) => left === right,
 }));
 
 vi.mock("./agent-runtime-config.js", () => {
@@ -698,7 +706,7 @@ vi.mock("./model-selection.js", () => ({
   },
   resolveModelRefFromString: resolveTestModelRefFromString,
   resolveModelAliasFromPair: resolveTestModelAliasFromPair,
-  resolveConfiguredModelRef: resolveTestConfiguredModelRef,
+  resolveConfiguredModelRef: resolveTestDefaultModelForAgent,
   resolveDefaultModelForAgent: resolveTestDefaultModelForAgent,
   resolveThinkingDefault: (args: unknown) => state.resolveThinkingDefaultMock(args),
 }));
@@ -1034,6 +1042,18 @@ describe("agentCommand – LiveSessionModelSwitchError retry", () => {
     state.resolveAcpDispatchPolicyErrorMock.mockReturnValue(null);
     state.resolveAcpExplicitTurnPolicyErrorMock.mockReturnValue(null);
     state.runtimeConfigMock = undefined;
+    state.acquireModelRuntimeMock.mockImplementation(async (input, options) => {
+      options.abortSignal?.throwIfAborted();
+      return {
+        snapshot: {
+          ...input,
+          modelCatalog: { entries: [] },
+          metadataSnapshot: manifestMetadataSnapshot,
+        },
+        pluginGeneration: { pluginMetadataSnapshot: manifestMetadataSnapshot },
+        release: state.releaseModelRuntimeMock,
+      };
+    });
     delete (state.defaultRuntimeConfig.agents as { list?: unknown }).list;
     state.isThinkingLevelSupportedMock.mockReturnValue(true);
     state.resolveSupportedThinkingLevelMock.mockImplementation(
@@ -1234,7 +1254,16 @@ describe("agentCommand – LiveSessionModelSwitchError retry", () => {
     const prepared = await prepareAgentCommandExecution(
       { message: "/demo", to: "+1234567890" },
       {} as never,
-      { config: {}, pluginGeneration },
+      {
+        snapshot: {
+          config: state.defaultRuntimeConfig,
+          agentId: "default",
+          agentDir: "/tmp/agent",
+          workspaceDir: "/tmp/workspace",
+          modelCatalog: { entries: [], routeVariants: [] },
+        },
+        pluginGeneration,
+      },
     );
 
     expect(prepared.manifestMetadataSnapshot).toBe(manifestMetadataSnapshot);
@@ -1243,6 +1272,31 @@ describe("agentCommand – LiveSessionModelSwitchError retry", () => {
       expect.objectContaining({ pluginMetadataSnapshot: manifestMetadataSnapshot }),
     );
     expect(state.resolvePluginMetadataSnapshotMock).not.toHaveBeenCalled();
+    expect(state.acquireModelRuntimeMock).not.toHaveBeenCalled();
+    await prepared.runLease.release();
+    expect(state.releaseModelRuntimeMock).not.toHaveBeenCalled();
+  });
+
+  it("releases standalone runtime admission when later command validation rejects", async () => {
+    await expect(
+      prepareAgentCommandExecution(
+        { message: "hello", to: "+1234567890", thinking: "invalid" },
+        {} as never,
+      ),
+    ).rejects.toThrow("Invalid thinking level");
+    expect(state.releaseModelRuntimeMock).toHaveBeenCalledOnce();
+  });
+
+  it("rejects owner replacement after admission and releases the acquired generation", async () => {
+    state.acquireModelRuntimeMock.mockImplementationOnce(async (input) => ({
+      snapshot: { ...input, config: {}, modelCatalog: { entries: [] } },
+      pluginGeneration: { pluginMetadataSnapshot: manifestMetadataSnapshot },
+      release: state.releaseModelRuntimeMock,
+    }));
+    await expect(
+      prepareAgentCommandExecution({ message: "hello", to: "+1234567890" }, {} as never),
+    ).rejects.toThrow("configuration changed during runtime admission");
+    expect(state.releaseModelRuntimeMock).toHaveBeenCalledOnce();
   });
 
   it("retries with the switched provider/model when LiveSessionModelSwitchError is thrown", async () => {
@@ -1293,6 +1347,41 @@ describe("agentCommand – LiveSessionModelSwitchError retry", () => {
     expect(deliveryOrder).toBeLessThan(
       state.emitAgentEventMock.mock.invocationCallOrder[lastEndIndex] ?? 0,
     );
+  });
+
+  it("retries an already resolved live switch without replaying model input aliases", async () => {
+    state.runtimeConfigMock = {
+      agents: {
+        defaults: {
+          models: {
+            ...state.defaultRuntimeConfig.agents.defaults.models,
+            "custom/middle": {},
+          },
+        },
+      },
+    };
+    state.resolvePluginMetadataSnapshotMock.mockReturnValue(
+      createPluginMetadataSnapshotFixture({
+        plugins: [
+          {
+            id: "input-owner",
+            modelIdNormalization: {
+              providers: {
+                custom: { aliases: { middle: "final" } },
+              },
+            },
+          },
+        ],
+      }),
+    );
+    setupModelSwitchRetry({ provider: "custom", model: "middle" });
+    state.runAgentAttemptMock.mockResolvedValue(makeSuccessResult("custom", "middle"));
+    await runBasicAgentCommand();
+    const secondCall = mockCallArg(state.runWithModelFallbackMock, 1) as FallbackRunnerParams;
+    expect({ provider: secondCall.provider, model: secondCall.model }).toEqual({
+      provider: "custom",
+      model: "middle",
+    });
   });
 
   it("keeps collection off by default without blocking local execution", async () => {
@@ -5377,6 +5466,7 @@ describe("agentCommand – LiveSessionModelSwitchError retry", () => {
     });
 
     expect(onExecutionStarted).toHaveBeenCalledTimes(1);
+    expect(state.acquireModelRuntimeMock).not.toHaveBeenCalled();
   });
 
   it("rejects an ACP prompt before execution when its accepted input cannot enter the transcript", async () => {

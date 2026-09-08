@@ -1,8 +1,10 @@
 import path from "node:path";
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../../test/helpers/temp-dir.js";
 import type { SessionEntry } from "../../config/sessions/types.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import { createPluginMetadataSnapshotFixture } from "../../plugins/plugin-metadata.test-support.js";
+import { applyPrimaryModel } from "../../plugins/provider-model-primary.js";
 import {
   TURN_MODEL_DEFAULT_REF,
   TURN_MODEL_DIFFERENTIAL_FIXTURES,
@@ -11,6 +13,7 @@ import {
   turnModelVerdict,
   type TurnModelDifferentialFixture,
 } from "../../test-utils/turn-model-selection-differential.js";
+import { resolveDefaultModelForAgent } from "../model-selection-config.js";
 import type { AgentCommandOpts, AgentRunContext } from "./types.js";
 
 vi.mock("../agent-scope.js", () => ({
@@ -73,24 +76,27 @@ vi.mock("../harness/selection.js", () => ({
   resolveAvailableAgentHarnessPolicy: () => ({ runtime: "openclaw" }),
 }));
 vi.mock("../model-catalog.js", () => ({ loadManifestModelCatalog: () => [] }));
-vi.mock("../model-selection.js", () => ({
-  modelKey: (provider: string, model: string) => `${provider}/${model}`,
-  resolveDefaultModelForAgent: ({ cfg }: { cfg: OpenClawConfig }) => {
-    const configured = cfg.agents?.defaults?.model;
-    const raw =
-      typeof configured === "string"
-        ? configured
-        : (configured?.primary ?? turnModelRefLabel(TURN_MODEL_DEFAULT_REF));
-    const slash = raw.indexOf("/");
-    return slash > 0
-      ? { provider: raw.slice(0, slash), model: raw.slice(slash + 1) }
-      : { provider: TURN_MODEL_DEFAULT_REF.provider, model: raw };
-  },
-  resolveModelAliasFromPair: () => null,
-  resolveThinkingDefault: () => "off",
+const normalizeInput = vi.hoisted(() =>
+  vi.fn<
+    ({
+      provider,
+      context,
+    }: {
+      provider: string;
+      context: { modelId: string };
+    }) => string | undefined
+  >(() => undefined),
+);
+vi.mock("../provider-model-normalization.runtime.js", () => ({
+  normalizeProviderModelIdWithRuntime: normalizeInput,
 }));
+beforeEach(() => {
+  normalizeInput.mockReset();
+});
 vi.mock("../model-thinking-default.js", () => ({
   resolveConfiguredThinkingDefault: () => undefined,
+  resolveThinkingDefault: () => "off",
+  resolveThinkingDefaultWithRuntimeCatalogCore: () => "off",
 }));
 vi.mock("../model-visibility-policy.js", () => ({
   createModelVisibilityPolicy: () => ({
@@ -127,28 +133,6 @@ vi.mock("../../sessions/model-overrides.js", () => ({
 }));
 vi.mock("./attempt-execution.shared.js", () => ({
   persistAgentSession: async ({ entry }: { entry?: SessionEntry }) => entry,
-}));
-vi.mock("./model-ref.js", () => ({
-  normalizeAgentCommandDefaultModelRef: (
-    _cfg: OpenClawConfig,
-    provider: string,
-    model: string,
-  ) => ({ provider, model }),
-  normalizeAgentCommandModelRef: (_cfg: OpenClawConfig, provider: string, model: string) => ({
-    provider,
-    model,
-  }),
-  parseAgentCommandModelRef: (
-    _cfg: OpenClawConfig,
-    _agentId: string,
-    raw: string,
-    defaultProvider: string,
-  ) => {
-    const slash = raw.indexOf("/");
-    return slash > 0
-      ? { provider: raw.slice(0, slash), model: raw.slice(slash + 1) }
-      : { provider: defaultProvider, model: raw };
-  },
 }));
 vi.mock("./prepare.js", () => ({
   normalizeExplicitOverrideInput: (value: string) => value.trim() || undefined,
@@ -208,6 +192,12 @@ async function observeCommandSelection(fixture: TurnModelDifferentialFixture) {
   };
   const selection = await resolveEmbeddedModelSelection({
     cfg: createConfig(fixture),
+    configuredModel: resolveDefaultModelForAgent({
+      cfg: createConfig(fixture),
+      agentId: "main",
+      allowPluginNormalization: false,
+      manifestPlugins: [],
+    }),
     opts,
     sessionEntry: fixture.child,
     sessionStore,
@@ -217,7 +207,7 @@ async function observeCommandSelection(fixture: TurnModelDifferentialFixture) {
     sessionAgentId: "main",
     workspaceDir: suiteTempRoot,
     pluginsEnabled: false,
-    modelManifestContext: {},
+    modelManifestContext: { manifestPlugins: [] },
     configuredThinkingCatalog: [],
     isSubagentLane: false,
     suppressVisibleSessionEffects: true,
@@ -230,6 +220,127 @@ async function observeCommandSelection(fixture: TurnModelDifferentialFixture) {
 }
 
 describe("turn model selection command-path differential", () => {
+  it.each([
+    "saved default",
+    "resolved session",
+    "pre-marker session",
+    "raw session",
+    "provider-less raw session",
+    "discovered default",
+    "hook-only default",
+    "manual pair",
+    "manual ref",
+  ] as const)("dispatches the selected catalog identity from %s", async (source) => {
+    const rawSession = source === "raw session" || source === "provider-less raw session";
+    const runtimeInput =
+      source === "discovered default" || source === "hook-only default" || rawSession;
+    if (runtimeInput) {
+      normalizeInput.mockImplementation(({ provider, context }) =>
+        provider !== "custom"
+          ? undefined
+          : context.modelId === "latest"
+            ? "middle"
+            : context.modelId === "middle"
+              ? "final"
+              : undefined,
+      );
+    }
+    const manifestPlugins = createPluginMetadataSnapshotFixture({
+      plugins: [
+        {
+          id: "input-owner",
+          modelIdNormalization: {
+            providers: {
+              custom: { aliases: runtimeInput ? {} : { latest: "middle", middle: "final" } },
+            },
+          },
+        },
+      ],
+    });
+    const cfg = applyPrimaryModel(
+      {
+        models: {
+          providers: {
+            custom: {
+              api: "openai-completions",
+              models: [{ id: "latest" }, { id: "middle" }, { id: "final" }],
+            },
+          },
+        },
+      } as unknown as OpenClawConfig,
+      source === "hook-only default"
+        ? "custom/latest"
+        : source === "saved default" || source === "discovered default"
+          ? "custom/middle"
+          : "custom/final",
+    );
+    if (source === "pre-marker session" || runtimeInput) {
+      delete cfg.models;
+    }
+    const modelManifestContext = {
+      manifestPlugins,
+      ...(runtimeInput
+        ? {
+            resolvedModelCatalog: [
+              ...(rawSession ? [] : [{ provider: "custom", id: "middle" }]),
+              { provider: "custom", id: "final" },
+            ],
+          }
+        : {}),
+    };
+    const selection = await resolveEmbeddedModelSelection({
+      cfg: structuredClone(cfg),
+      configuredModel: resolveDefaultModelForAgent({
+        cfg,
+        agentId: "main",
+        allowPluginNormalization: runtimeInput,
+        ...modelManifestContext,
+      }),
+      opts: {
+        message: "hello",
+        ...(source === "manual pair"
+          ? { provider: "custom", model: "middle", allowModelOverride: true }
+          : source === "manual ref"
+            ? { model: "custom/middle", allowModelOverride: true }
+            : {}),
+      },
+      ...(source === "resolved session" || source === "pre-marker session" || rawSession
+        ? {
+            sessionEntry: {
+              sessionId: "identity",
+              updatedAt: 1,
+              ...(source === "provider-less raw session" ? {} : { providerOverride: "custom" }),
+              modelOverride:
+                source === "provider-less raw session"
+                  ? "custom/latest"
+                  : rawSession
+                    ? "latest"
+                    : "middle",
+              ...(rawSession ? {} : { modelOverrideSource: "user" as const }),
+              ...(source === "resolved session"
+                ? { modelOverrideRouteResolution: "resolved" as const }
+                : {}),
+            },
+          }
+        : {}),
+      sessionId: "identity",
+      storePath: path.join(suiteTempRoot, "identity.sqlite"),
+      sessionAgentId: "main",
+      workspaceDir: suiteTempRoot,
+      pluginsEnabled: runtimeInput,
+      modelManifestContext,
+      requestedThinkLevel: "off",
+      configuredThinkingCatalog: [],
+      isSubagentLane: false,
+      suppressVisibleSessionEffects: true,
+      runContext: {},
+    });
+    expect({ provider: selection.provider, model: selection.model }).toEqual({
+      provider: "custom",
+      model: "middle",
+    });
+    expect(selection.requestedRouteResolution).toBe("resolved");
+  });
   it.each(TURN_MODEL_DIFFERENTIAL_FIXTURES)("pins observed $name behavior", async (fixture) => {
     await expect(observeCommandSelection(fixture)).resolves.toEqual(fixture.expected.command);
   });

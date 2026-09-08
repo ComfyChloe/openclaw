@@ -46,6 +46,7 @@ import {
 
 const state = await setupAgentRunnerExecutionTestState();
 const execution = await import("./agent-runner-execution.js");
+const executeAgentTurn = await getExecuteAgentTurnForTest();
 const { emitAgentEvent } = await import("../../infra/agent-events.js");
 const compactionTarget = {
   agentId: "main",
@@ -135,6 +136,32 @@ describe("executeAgentTurn: run lifecycle and ownership", () => {
     },
   );
 
+  it.each([true, false])(
+    "retains only a default observed before admission (observed=%s)",
+    async (observed) => {
+      state.runEmbeddedAgentMock.mockImplementationOnce(async (params: EmbeddedAgentParams) => {
+        const input = params as EmbeddedAgentParams & {
+          onConfiguredDefault: (ref: { provider: string; model: string }) => void;
+          preparedRunAdmission: { admit: (kind: "embedded") => Promise<unknown> };
+        };
+        if (observed) {
+          input.onConfiguredDefault({ provider: "custom", model: "middle" });
+        }
+        await input.preparedRunAdmission.admit("embedded");
+        input.onConfiguredDefault({ provider: "custom", model: "later-fallback" });
+        return { payloads: [{ text: "ok" }], meta: {} };
+      });
+      const result = await execution.executeAgentTurn(createMinimalRunAgentTurnParams());
+      expect(result.outcome.kind).toBe("settled");
+      if (result.outcome.kind !== "settled") {
+        throw new Error("turn did not settle");
+      }
+      expect(result.outcome.configuredDefault).toEqual(
+        observed ? { provider: "custom", model: "middle" } : undefined,
+      );
+    },
+  );
+
   it("attributes one admitted channel participant before its admission decision", async () => {
     const order: string[] = [];
     const identityWork: unknown[] = [];
@@ -168,10 +195,7 @@ describe("executeAgentTurn: run lifecycle and ownership", () => {
         return { payloads: [{ text: "ok" }], meta: {} };
       });
 
-      const executeAgentTurn = await getExecuteAgentTurnForTest();
-      await executeAgentTurn({
-        ...createMinimalRunAgentTurnParams({ followupRun }),
-      });
+      await executeAgentTurn(createMinimalRunAgentTurnParams({ followupRun }));
 
       expect(order).toEqual(["identity", "decision"]);
       expect(identityWork).toMatchObject([
@@ -208,7 +232,6 @@ describe("executeAgentTurn: run lifecycle and ownership", () => {
       meta: {},
     });
 
-    const executeAgentTurn = await getExecuteAgentTurnForTest();
     await executeAgentTurn({
       ...createMinimalRunAgentTurnParams(),
       replyOperation,
@@ -251,7 +274,6 @@ describe("executeAgentTurn: run lifecycle and ownership", () => {
       return { result, provider: "openai", model: "fallback", attempts: [] };
     });
 
-    const executeAgentTurn = await getExecuteAgentTurnForTest();
     await executeAgentTurn(createMinimalRunAgentTurnParams({ followupRun }));
 
     expect(
@@ -293,7 +315,6 @@ describe("executeAgentTurn: run lifecycle and ownership", () => {
     });
 
     try {
-      const executeAgentTurn = await getExecuteAgentTurnForTest();
       await executeAgentTurn({
         ...createMinimalRunAgentTurnParams(),
         replyOperation,
@@ -342,10 +363,7 @@ describe("executeAgentTurn: run lifecycle and ownership", () => {
       );
       state.runEmbeddedAgentMock.mockResolvedValue({ payloads: [{ text: "ok" }], meta: {} });
 
-      const executeAgentTurn = await getExecuteAgentTurnForTest();
-      await executeAgentTurn({
-        ...createMinimalRunAgentTurnParams({ followupRun }),
-      });
+      await executeAgentTurn(createMinimalRunAgentTurnParams({ followupRun }));
 
       expect(state.runEmbeddedAgentMock.mock.calls.map((call) => call[0]?.thinkLevel)).toEqual([
         "ultra",
@@ -371,10 +389,7 @@ describe("executeAgentTurn: run lifecycle and ownership", () => {
     });
     state.runEmbeddedAgentMock.mockResolvedValue({ payloads: [{ text: "ok" }], meta: {} });
 
-    const executeAgentTurn = await getExecuteAgentTurnForTest();
-    await executeAgentTurn({
-      ...createMinimalRunAgentTurnParams({ followupRun }),
-    });
+    await executeAgentTurn(createMinimalRunAgentTurnParams({ followupRun }));
 
     expect(state.runEmbeddedAgentMock.mock.calls[0]?.[0]?.thinkLevel).toBe("high");
   });
@@ -409,7 +424,6 @@ describe("executeAgentTurn: run lifecycle and ownership", () => {
         meta: {},
       });
 
-    const executeAgentTurn = await getExecuteAgentTurnForTest();
     await executeAgentTurn({
       ...createMinimalRunAgentTurnParams({ followupRun }),
       replyOperation,
@@ -460,7 +474,6 @@ describe("executeAgentTurn: run lifecycle and ownership", () => {
       };
     });
 
-    const executeAgentTurn = await getExecuteAgentTurnForTest();
     const pending = executeAgentTurn({
       ...createMinimalRunAgentTurnParams(),
       replyOperation,
@@ -682,7 +695,6 @@ describe("executeAgentTurn: run lifecycle and ownership", () => {
     followupRun.originatingAccountId = "work";
     followupRun.originatingChatType = "direct";
 
-    const executeAgentTurn = await getExecuteAgentTurnForTest();
     await executeAgentTurn(
       createMinimalRunAgentTurnParams({
         followupRun,
@@ -720,7 +732,6 @@ describe("executeAgentTurn: run lifecycle and ownership", () => {
     });
 
     try {
-      const executeAgentTurn = await getExecuteAgentTurnForTest();
       const result = await executeAgentTurn({
         ...createMinimalRunAgentTurnParams({
           opts: {
@@ -764,7 +775,6 @@ describe("executeAgentTurn: run lifecycle and ownership", () => {
     followupRun.media = [{ path: "/tmp/cli.png", contentType: "image/png" }];
     const typingSignals = createMockTypingSignaler();
 
-    const executeAgentTurn = await getExecuteAgentTurnForTest();
     const result = await executeAgentTurn(
       createMinimalRunAgentTurnParams({
         followupRun,
@@ -803,7 +813,6 @@ describe("executeAgentTurn: run lifecycle and ownership", () => {
     });
     params.isHeartbeat = true;
 
-    const executeAgentTurn = await getExecuteAgentTurnForTest();
     await executeAgentTurn(params);
 
     expectMockCallArgFields(state.runCliAgentMock, 0, "CLI run params", {
@@ -825,7 +834,6 @@ describe("executeAgentTurn: run lifecycle and ownership", () => {
       meta: {},
     });
 
-    const executeAgentTurn = await getExecuteAgentTurnForTest();
     const params = createMinimalRunAgentTurnParams({
       opts: { isHeartbeat: true },
     });
@@ -851,7 +859,6 @@ describe("executeAgentTurn: run lifecycle and ownership", () => {
       meta: {},
     });
 
-    const executeAgentTurn = await getExecuteAgentTurnForTest();
     await executeAgentTurn(createMinimalRunAgentTurnParams());
 
     const embeddedParams = requireMockCall(
@@ -877,7 +884,6 @@ describe("executeAgentTurn: run lifecycle and ownership", () => {
       meta: {},
     });
 
-    const executeAgentTurn = await getExecuteAgentTurnForTest();
     const runPromise = executeAgentTurn(createMinimalRunAgentTurnParams());
 
     expect(registerAgentRunContext).toHaveBeenCalledWith(
@@ -909,7 +915,6 @@ describe("executeAgentTurn: run lifecycle and ownership", () => {
       });
       state.resolveCurrentTurnImagesMock.mockRejectedValueOnce(new Error("invalid image metadata"));
 
-      const executeAgentTurn = await getExecuteAgentTurnForTest();
       await expect(
         executeAgentTurn(
           createMinimalRunAgentTurnParams({
@@ -955,7 +960,6 @@ describe("executeAgentTurn: run lifecycle and ownership", () => {
       meta: {},
     });
 
-    const executeAgentTurn = await getExecuteAgentTurnForTest();
     await executeAgentTurn(
       createMinimalRunAgentTurnParams({
         opts: {

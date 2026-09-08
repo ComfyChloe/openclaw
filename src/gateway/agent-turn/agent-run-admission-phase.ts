@@ -13,6 +13,7 @@ import {
   commitMainSessionRecovery,
   type MainSessionRecoveryPendingTarget,
 } from "../../agents/main-session-recovery/main-session-recovery-store.js";
+import type { ModelFallbackRouteResolution } from "../../agents/model-fallback.types.js";
 import { resolvePersistedOverrideModelRef } from "../../agents/model-selection.js";
 import {
   acquireAgentRunPreparedModelRuntime,
@@ -75,6 +76,7 @@ export type PreparedAgentRunDispatch = {
   operationalRunInstance: OperationalRunInstanceRef;
   effectiveProviderOverride?: string;
   effectiveModelOverride?: string;
+  effectiveRequestedRouteResolution?: ModelFallbackRouteResolution;
   effectiveThinking?: string;
   effectiveAllowModelOverride: boolean;
   trustedInternalHandoff?: TrustedSubagentCompletionHandoff;
@@ -191,6 +193,10 @@ export async function prepareAgentRunDispatch(params: {
   const effectiveProviderOverride =
     params.restoredCronContinuation?.provider ?? params.providerOverride;
   const effectiveModelOverride = params.restoredCronContinuation?.model ?? params.modelOverride;
+  // A restored cron selection has its own provenance; the request marker describes only its tuple.
+  const effectiveRequestedRouteResolution = params.restoredCronContinuation
+    ? undefined
+    : params.request.requestedRouteResolution;
   const effectiveThinking = params.restoredCronContinuation
     ? params.restoredCronContinuation.thinking
     : params.request.thinking;
@@ -207,6 +213,7 @@ export async function prepareAgentRunDispatch(params: {
         defaultProvider: effectiveProviderOverride ?? sessionModel.provider,
         overrideProvider: effectiveProviderOverride,
         overrideModel: effectiveModelOverride,
+        overrideRouteResolution: effectiveRequestedRouteResolution,
       }) ?? sessionModel)
     : {
         provider: effectiveProviderOverride ?? sessionModel.provider,
@@ -676,6 +683,7 @@ export async function prepareAgentRunDispatch(params: {
     operationalRunInstance,
     effectiveProviderOverride,
     effectiveModelOverride,
+    effectiveRequestedRouteResolution,
     effectiveThinking,
     effectiveAllowModelOverride,
     trustedInternalHandoff,

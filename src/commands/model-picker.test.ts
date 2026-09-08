@@ -5,18 +5,35 @@ import { createRequireRecord } from "openclaw/plugin-sdk/test-fixtures";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { testing as cliBackendsTesting } from "../agents/cli-backends.test-support.js";
 import type { ModelCatalogEntry, ModelCatalogSnapshot } from "../agents/model-catalog.types.js";
+import { resolveConfiguredModelRef } from "../agents/model-selection-shared.js";
 import type { OpenClawConfig } from "../config/config.js";
 import { stampConfigWriteMetadata } from "../config/io.meta.js";
+import { parseJsonWithJson5Fallback } from "../utils/parse-json-compat.js";
 import type { WizardMultiSelectParams, WizardPrompter } from "../wizard/prompts.js";
 import {
   applyModelAllowlist,
   applyModelFallbacksFromSelection,
+  applyPrimaryModel,
   promptDefaultModel,
   promptModelAllowlist,
 } from "./model-picker.js";
 import { makePrompter } from "./setup/__tests__/test-utils.js";
 
 const loadModelCatalog = vi.hoisted(() => vi.fn());
+const normalizeProviderModelIdWithRuntime = vi.hoisted(() =>
+  vi.fn<
+    ({
+      provider,
+      context,
+    }: {
+      provider: string;
+      context: { modelId: string };
+    }) => string | undefined
+  >(() => undefined),
+);
+vi.mock("../agents/provider-model-normalization.runtime.js", () => ({
+  normalizeProviderModelIdWithRuntime,
+}));
 const modelCatalogRouteVariants = vi.hoisted(() => ({
   value: undefined as readonly ModelCatalogEntry[] | undefined,
 }));
@@ -155,7 +172,10 @@ const providerAuthEvaluations = vi.hoisted(
 const createProviderAuthChecker = vi.hoisted(() =>
   vi.fn((params: { cfg?: OpenClawConfig; workspaceDir?: string; env?: NodeJS.ProcessEnv }) => {
     const checker = vi.fn(
-      async (provider: string, ref?: { api?: string | null; baseUrl?: unknown }) => {
+      async (
+        provider: string,
+        ref?: { modelId?: string; api?: string | null; baseUrl?: unknown },
+      ) => {
         const prepared = providerAuthEvaluations.get(provider);
         if (prepared) {
           return prepared.availability === true;
@@ -351,6 +371,8 @@ beforeEach(() => {
   // Route hints exercise source policy even when a prior local build left stale dist artifacts.
   vi.stubEnv("OPENCLAW_BUNDLED_PLUGINS_DIR", path.resolve("extensions"));
   vi.clearAllMocks();
+  normalizeProviderModelIdWithRuntime.mockReset();
+  normalizeProviderModelIdWithRuntime.mockReturnValue(undefined);
   modelCatalogRouteVariants.value = undefined;
   providerAuthRoute.value = undefined;
   providerAuthEvaluations.clear();
@@ -420,6 +442,66 @@ afterEach(() => {
 });
 
 describe("promptDefaultModel", () => {
+  it("checks auth for the same retired-model replacement that the picker saves", async () => {
+    const config: OpenClawConfig = {};
+    const canonical = "gemini-3.1-pro-preview";
+    const auth = createProviderAuthChecker({ cfg: config });
+    auth.mockImplementation(
+      async (provider, ref) => provider === "google" && ref?.modelId === canonical,
+    );
+    auth.evaluateModelAuth.mockResolvedValue({ availability: true, routeResolution: null });
+    createProviderAuthChecker.mockReturnValueOnce(auth);
+    loadModelCatalog.mockResolvedValue([catalogModel("google", "gemini-3-pro-preview", "Gemini")]);
+    const select: WizardPrompter["select"] = async ({ options }) => {
+      const first = options[0];
+      if (!first) {
+        throw new Error("the canonical model must remain selectable");
+      }
+      return first.value;
+    };
+    await expect(
+      promptDefaultPicker({ config, prompter: makePrompter({ select }) }),
+    ).resolves.toEqual({ model: `google/${canonical}` });
+  });
+
+  it("saves the selected catalog identity without replaying an input alias", async () => {
+    normalizeProviderModelIdWithRuntime.mockImplementation(({ provider, context }) =>
+      provider === "custom" && context.modelId === "middle" ? "final" : undefined,
+    );
+    loadModelCatalog.mockResolvedValue([
+      catalogModel("custom", "middle", "Middle"),
+      catalogModel("custom", "final", "Final"),
+    ]);
+    const config: OpenClawConfig = {};
+    const select: WizardPrompter["select"] = async (params) => {
+      const first = params.options[0];
+      if (!first) {
+        throw new Error("expected a model option");
+      }
+      return first.value;
+    };
+    const picked = await promptDefaultPicker({ config, prompter: makePrompter({ select }) });
+    expect(picked.model).toBe("custom/middle");
+    if (!picked.model) {
+      throw new Error("expected a selected model");
+    }
+    const saved = applyPrimaryModel(config, picked.model);
+    expect(saved.agents?.defaults?.model).toMatchObject({
+      primary: "custom/middle",
+    });
+    expect(
+      resolveConfiguredModelRef({
+        cfg: parseJsonWithJson5Fallback(JSON.stringify(saved)) as OpenClawConfig,
+        defaultProvider: "custom",
+        defaultModel: "fallback",
+        manifestPlugins: [],
+      }),
+    ).toEqual({ provider: "custom", model: "middle" });
+    expect(runProviderModelSelectedHook).toHaveBeenCalledWith(
+      expect.objectContaining({ model: "custom/middle" }),
+    );
+  });
+
   it("adds runtime-route hints for canonical OpenAI models", async () => {
     loadModelCatalog.mockResolvedValue([
       {
@@ -820,7 +902,7 @@ describe("promptDefaultModel", () => {
     expect(requireOption(options, "__keep__").label).toBe(
       "Keep current (nvidia/nvidia/nemotron-3-super-120b-a12b)",
     );
-    expect(requireOption(options, "nvidia/nemotron-3-super-120b-a12b").label).toBe(
+    expect(requireOption(options, "nvidia/nvidia/nemotron-3-super-120b-a12b").label).toBe(
       "nvidia/nvidia/nemotron-3-super-120b-a12b",
     );
   });
@@ -848,7 +930,7 @@ describe("promptDefaultModel", () => {
     });
 
     const options = pickerOptions(select as MockCallSource);
-    expect(requireOption(options, "nvidia/nemotron-3-super-120b-a12b").label).toBe(
+    expect(requireOption(options, "nvidia/nvidia/nemotron-3-super-120b-a12b").label).toBe(
       "nvidia/nvidia/nemotron-3-super-120b-a12b",
     );
     expect(requireOption(options, "nvidia/minimaxai/minimax-m2.7").label).toBe(
@@ -1114,7 +1196,7 @@ describe("promptDefaultModel", () => {
       browseCatalogOnDemand: true,
     });
 
-    expect(result.model).toBe("nvidia/nemotron-3-super-120b-a12b");
+    expect(result.model).toBe("nvidia/nvidia/nemotron-3-super-120b-a12b");
     expect(loadPreferredProviderPickerCatalog).toHaveBeenCalledWith({
       cfg: config,
       preferredProvider: "nvidia",
@@ -1122,7 +1204,7 @@ describe("promptDefaultModel", () => {
     });
     expect(loadModelCatalog).not.toHaveBeenCalled();
     expect(optionValues(pickerOptions(select as MockCallSource))).toEqual([
-      "nvidia/nemotron-3-super-120b-a12b",
+      "nvidia/nvidia/nemotron-3-super-120b-a12b",
       "nvidia/moonshotai/kimi-k2.5",
     ]);
   });
@@ -1155,12 +1237,14 @@ describe("promptDefaultModel", () => {
     expect(pickerParams(select as MockCallSource).initialValue).toBe("nvidia/z-ai/glm-5.1");
     expect(optionValues(pickerOptions(select as MockCallSource))).toEqual([
       "nvidia/z-ai/glm-5.1",
-      "nvidia/nemotron-3-super-120b-a12b",
-      "nvidia/nemotron-3-ultra-550b-a55b",
+      "nvidia/nvidia/nemotron-3-super-120b-a12b",
+      "nvidia/nvidia/nemotron-3-ultra-550b-a55b",
     ]);
     expect(
-      requireOption(pickerOptions(select as MockCallSource), "nvidia/nemotron-3-ultra-550b-a55b")
-        .hint,
+      requireOption(
+        pickerOptions(select as MockCallSource),
+        "nvidia/nvidia/nemotron-3-ultra-550b-a55b",
+      ).hint,
     ).toBe("current (not in catalog)");
   });
 
@@ -1181,7 +1265,7 @@ describe("promptDefaultModel", () => {
     const select = vi
       .fn()
       .mockResolvedValueOnce("__browse__")
-      .mockResolvedValueOnce("nvidia/nemotron-3-super-120b-a12b");
+      .mockResolvedValueOnce("nvidia/nvidia/nemotron-3-super-120b-a12b");
     const prompter = makePrompter({ select });
 
     await promptDefaultPicker({
@@ -1200,7 +1284,7 @@ describe("promptDefaultModel", () => {
     });
 
     const options = pickerOptions(select as MockCallSource, 1);
-    expect(requireOption(options, "nvidia/nemotron-3-super-120b-a12b").label).toBe(
+    expect(requireOption(options, "nvidia/nvidia/nemotron-3-super-120b-a12b").label).toBe(
       "nvidia/nvidia/nemotron-3-super-120b-a12b",
     );
     expect(requireOption(options, "nvidia/minimaxai/minimax-m2.7").label).toBe(
@@ -1230,7 +1314,7 @@ describe("promptDefaultModel", () => {
     const select = vi
       .fn()
       .mockResolvedValueOnce("__browse__")
-      .mockResolvedValueOnce("nvidia/nemotron-3-super-120b-a12b");
+      .mockResolvedValueOnce("nvidia/nvidia/nemotron-3-super-120b-a12b");
     const prompter = makePrompter({ select });
 
     await promptDefaultPicker({
@@ -1251,7 +1335,7 @@ describe("promptDefaultModel", () => {
     expect(optionValues(pickerOptions(select as MockCallSource, 1))).toEqual([
       "__keep__",
       "__manual__",
-      "nvidia/nemotron-3-super-120b-a12b",
+      "nvidia/nvidia/nemotron-3-super-120b-a12b",
       "nvidia/minimaxai/minimax-m2.7",
       "nvidia/z-ai/glm-5.1",
     ]);
@@ -1474,6 +1558,26 @@ describe("promptDefaultModel", () => {
 });
 
 describe("promptModelAllowlist", () => {
+  it("saves both catalog identities when one is also an input alias", async () => {
+    normalizeProviderModelIdWithRuntime.mockImplementation(({ provider, context }) =>
+      provider === "custom" && context.modelId === "middle" ? "final" : undefined,
+    );
+    loadModelCatalog.mockResolvedValue([
+      catalogModel("custom", "middle", "Middle"),
+      catalogModel("custom", "final", "Final"),
+    ]);
+    const config: OpenClawConfig = {};
+    const multiselect: WizardPrompter["multiselect"] = async (params) =>
+      params.options
+        .filter((option) => typeof option.value === "string" && option.value.startsWith("custom/"))
+        .map((option) => option.value);
+    const picked = await promptModelAllowlist({ config, prompter: makePrompter({ multiselect }) });
+    expect(picked.models).toEqual(["custom/middle", "custom/final"]);
+    expect(
+      applyModelAllowlist(config, picked.models ?? []).agents?.defaults?.modelPolicy?.allow,
+    ).toEqual(["custom/middle", "custom/final"]);
+  });
+
   it("filters to allowed keys when provided", async () => {
     loadModelCatalog.mockResolvedValue([
       catalogModel("anthropic", "claude-opus-4-6", "Claude Opus 4.5"),
@@ -1837,7 +1941,7 @@ describe("promptModelAllowlist", () => {
     const values = optionValues(pickerOptions(multiselect as MockCallSource));
     expect(values).toEqual([
       "nvidia/minimaxai/minimax-m2.7",
-      "nvidia/nemotron-3-super-120b-a12b",
+      "nvidia/nvidia/nemotron-3-super-120b-a12b",
       "nvidia/moonshotai/kimi-k2.5",
       "nvidia/z-ai/glm5",
     ]);
@@ -1896,7 +2000,7 @@ describe("promptModelAllowlist", () => {
 
     const values = optionValues(pickerOptions(multiselect as MockCallSource));
     expect(values).toEqual([
-      "nvidia/nemotron-3-super-120b-a12b",
+      "nvidia/nvidia/nemotron-3-super-120b-a12b",
       "nvidia/z-ai/glm-5.1",
       "nvidia/minimaxai/minimax-m2.7",
       "nvidia/moonshotai/kimi-k2.5",
@@ -1947,7 +2051,7 @@ describe("promptModelAllowlist", () => {
 
     const values = optionValues(pickerOptions(multiselect as MockCallSource));
     expect(values).toEqual([
-      "nvidia/nemotron-3-super-120b-a12b",
+      "nvidia/nvidia/nemotron-3-super-120b-a12b",
       "nvidia/z-ai/glm-5.1",
       "nvidia/private/custom-nvidia",
     ]);
@@ -2030,7 +2134,7 @@ describe("promptModelAllowlist", () => {
     });
 
     const values = optionValues(pickerOptions(multiselect as MockCallSource));
-    expect(values).toEqual(["nvidia/custom-nvidia-model", "nvidia/z-ai/glm5"]);
+    expect(values).toEqual(["nvidia/nvidia/custom-nvidia-model", "nvidia/z-ai/glm5"]);
     expect(result.scopeKeys).toEqual(values);
     expect(loadStaticManifestCatalogRowsForList).not.toHaveBeenCalled();
     expect(loadModelCatalog).not.toHaveBeenCalled();

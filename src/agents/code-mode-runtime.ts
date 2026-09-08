@@ -1,10 +1,9 @@
 import { isRecord } from "@openclaw/normalization-core/record-coerce";
 import { readNonBlankString } from "@openclaw/normalization-core/string-coerce";
 import { uniqueValues } from "@openclaw/normalization-core/string-normalization";
-import { normalizeAgentModelRefForConfig } from "../config/model-input.js";
+import { resolveAgentModelConfigValue } from "../config/model-input.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { formatErrorMessage } from "../infra/errors.js";
-import { modelKey } from "../shared/model-key.js";
 import { clampNumber } from "../utils.js";
 import { resolveAgentConfig } from "./agent-scope-config.js";
 import type { CodeModeOutputSource } from "./code-mode-json.js";
@@ -112,19 +111,28 @@ function readCodeModeRawConfig(
   const globalRaw = normalizeCodeModeRawConfig(tools?.codeMode) ?? {};
   const agent = config && agentId ? resolveAgentConfig(config, agentId) : undefined;
   const agentRaw = normalizeCodeModeRawConfig(agent?.tools?.codeMode);
-  const key = model
-    ? normalizeAgentModelRefForConfig(modelKey(model.provider, model.modelId))
+  const agentModelMode = model
+    ? resolveAgentModelConfigValue(
+        agent?.models,
+        model.provider,
+        model.modelId,
+        (entry) => entry.codeMode,
+      )
+    : undefined;
+  const defaultModelMode = model
+    ? resolveAgentModelConfigValue(
+        config?.agents?.defaults?.models,
+        model.provider,
+        model.modelId,
+        (entry) => entry.codeMode,
+      )
     : undefined;
   // An options-only agent object inherits activation; it must not hide a model
   // override. Explicit false at either scope remains an authored choice.
   return {
     ...globalRaw,
     ...agentRaw,
-    enabled:
-      (key ? agent?.models?.[key]?.codeMode : undefined) ??
-      agentRaw?.enabled ??
-      (key ? config?.agents?.defaults?.models?.[key]?.codeMode : undefined) ??
-      globalRaw.enabled,
+    enabled: agentModelMode ?? agentRaw?.enabled ?? defaultModelMode ?? globalRaw.enabled,
   };
 }
 

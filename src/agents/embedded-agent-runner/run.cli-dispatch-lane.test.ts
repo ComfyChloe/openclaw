@@ -103,4 +103,86 @@ describe("runEmbeddedAgent CLI dispatch lane admission", () => {
       expectedLifecycleRevision: sessionEntry.lifecycleRevision,
     });
   });
+
+  it.each([
+    { name: "missing model", provider: "claude-cli", model: undefined },
+    { name: "missing provider", provider: undefined, model: "opus" },
+    { name: "missing pair", provider: undefined, model: undefined },
+    { name: "blank model", provider: "claude-cli", model: "  " },
+    { name: "blank provider", provider: "  ", model: "opus" },
+    {
+      name: "missing model before opted-in CLI dispatch",
+      provider: "claude-cli",
+      model: undefined,
+      cliBackendDispatch: "subscription-auth",
+    },
+  ] as const)(
+    "rejects resolved input with $name before execution",
+    async ({ name: _name, ...selection }) => {
+      runEmbeddedAgentViaCliBackendIfEligible.mockResolvedValue(dispatchResult);
+      let laneEntries = 0;
+      const enqueue: CommandQueueEnqueueFn = async (task) => {
+        laneEntries += 1;
+        return await task();
+      };
+      const params = {
+        ...laneRunParams(),
+        cliBackendDispatch: undefined,
+        ...selection,
+      };
+      await upsertSessionEntryCore(params.sessionTarget, {
+        sessionId: params.sessionId,
+        updatedAt: 1,
+        lifecycleRevision: "cli-dispatch-invalid-input",
+      });
+
+      await expect(
+        runEmbeddedAgent({ ...params, requestedRouteResolution: "resolved", enqueue }),
+      ).rejects.toThrow("Resolved model requests require both provider and model.");
+      expect(laneEntries).toBe(0);
+      expect(runEmbeddedAgentViaCliBackendIfEligible).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    {
+      name: "a complete resolved pair",
+      provider: "claude-cli",
+      model: "claude-cli/opus",
+      requestedRouteResolution: "resolved",
+    },
+    {
+      name: "raw model-only input",
+      provider: undefined,
+      model: "fast",
+      requestedRouteResolution: "raw",
+    },
+    {
+      name: "raw provider-only input",
+      provider: "claude-cli",
+      model: undefined,
+      requestedRouteResolution: "raw",
+    },
+    {
+      name: "provider-only input with the marker omitted",
+      provider: "claude-cli",
+      model: undefined,
+    },
+    { name: "omitted model defaults", provider: undefined, model: undefined },
+  ] as const)(
+    "admits $name through the public embedded entry",
+    async ({ name: _name, ...selection }) => {
+      runEmbeddedAgentViaCliBackendIfEligible.mockResolvedValue(dispatchResult);
+      const enqueue: CommandQueueEnqueueFn = async (task) => await task();
+      const params = { ...laneRunParams(), ...selection };
+      await upsertSessionEntryCore(params.sessionTarget, {
+        sessionId: params.sessionId,
+        updatedAt: 1,
+        lifecycleRevision: "cli-dispatch-valid-input",
+      });
+
+      await expect(runEmbeddedAgent({ ...params, enqueue })).resolves.toEqual(dispatchResult);
+      expect(runEmbeddedAgentViaCliBackendIfEligible).toHaveBeenCalledOnce();
+    },
+  );
 });

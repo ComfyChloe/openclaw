@@ -11,7 +11,7 @@ describe("Skill Workshop history scan review", () => {
     await runSkillHistoryScanReview({
       agentId: "main",
       config: {},
-      modelRef: { provider: "openai", model: "gpt-test" },
+      modelRef: { provider: "openai", model: "gpt-test", requestedRouteResolution: "resolved" },
       onComplete: async () => {},
       onProgress: async () => {},
       progress: {
@@ -36,6 +36,7 @@ describe("Skill Workshop history scan review", () => {
       expect.objectContaining({
         provider: "openai",
         model: "gpt-test",
+        requestedRouteResolution: "resolved",
         modelSelectionLocked: true,
         modelFallbacksOverride: [],
       }),

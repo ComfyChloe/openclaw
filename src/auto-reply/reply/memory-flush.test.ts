@@ -69,6 +69,43 @@ function buildHostConfig(params: {
 }
 
 describe("Responses server compaction host/transport parity", () => {
+  it.each([false, true])(
+    "keeps case-distinct server-compaction thresholds separate (reversed=%s)",
+    (reverse) => {
+      const rows = [
+        { ...buildModelConfig({ contextTokens: 100_000 }), id: "Model" },
+        { ...buildModelConfig({ contextTokens: 160_000 }), id: "model" },
+      ];
+      const cfg: OpenClawConfig = {
+        models: {
+          providers: {
+            openai: {
+              api: "openai-responses",
+              baseUrl: "https://api.openai.com/v1",
+              models: reverse ? rows.toReversed() : rows,
+            },
+          },
+        },
+      };
+      expect(
+        resolveResponsesServerCompactionThreshold({
+          contextWindowTokens: TEST_CONTEXT_WINDOW,
+          cfg,
+          provider: "openai",
+          modelId: "Model",
+        }),
+      ).toBe(70_000);
+      expect(
+        resolveResponsesServerCompactionThreshold({
+          contextWindowTokens: TEST_CONTEXT_WINDOW,
+          cfg,
+          provider: "openai",
+          modelId: "model",
+        }),
+      ).toBe(112_000);
+    },
+  );
+
   it.each([
     {
       name: "prepared-only OpenAI window",

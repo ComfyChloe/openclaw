@@ -3,13 +3,14 @@ import { normalizeConfiguredProviderCatalogModelId } from "@openclaw/model-catal
 import { asOptionalRecord as readModelParams } from "@openclaw/normalization-core/record-coerce";
 import { normalizeLowercaseStringOrEmpty } from "@openclaw/normalization-core/string-coerce";
 import { mergeModelCost } from "../../config/model-cost.js";
+import { resolveAgentModelConfigValue } from "../../config/model-input.js";
+import { findProviderModelConfig } from "../../config/model-provider-config.js";
 import { projectConfigOntoRuntimeSourceSnapshot } from "../../config/runtime-source-projection.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import type { Api, Model } from "../../llm/types.js";
 import type { PluginMetadataSnapshotOwnerMaps } from "../../plugins/plugin-metadata-snapshot.types.js";
 import type { ProviderRuntimeModel } from "../../plugins/provider-runtime-model.types.js";
 import { resolveCatalogOwnedModelCompat } from "../model-compat-catalog.js";
-import { modelKey, normalizeStaticProviderModelId } from "../model-ref-shared.js";
 import { findNormalizedProviderValue, normalizeProviderId } from "../model-selection.js";
 import {
   shouldSuppressBuiltInModelCore,
@@ -104,49 +105,25 @@ export function resolveConfiguredProviderDefaultApi(params: {
   return normalized.api ?? "openai-completions";
 }
 
-function matchesProviderScopedModelId(params: {
-  candidateId?: string;
-  provider: string;
-  modelId: string;
-}): boolean {
-  const { candidateId, provider, modelId } = params;
-  if (candidateId === modelId) {
-    return true;
-  }
-  const slashIndex = candidateId?.indexOf("/") ?? -1;
-  if (!candidateId || slashIndex <= 0) {
-    return false;
-  }
-  const candidateProvider = candidateId.slice(0, slashIndex);
-  const candidateModelId = candidateId.slice(slashIndex + 1);
-  return (
-    candidateModelId === modelId &&
-    normalizeProviderId(candidateProvider) === normalizeProviderId(provider)
-  );
-}
-
 export function findInlineModelMatch(params: {
   providers: Record<string, InlineProviderConfig>;
   preparedModels?: readonly InlineModelEntry[];
   provider: string;
   modelId: string;
 }) {
-  const matchesModelId = (entry: { provider: string; id?: string }) =>
-    matchesProviderScopedModelId({
-      candidateId: entry.id,
-      provider: entry.provider,
-      modelId: params.modelId,
-    });
   const inlineModels = params.preparedModels ?? buildInlineProviderModels(params.providers);
-  const exact = inlineModels.find(
-    (entry) => entry.provider === params.provider && matchesModelId(entry),
-  );
-  if (exact) {
-    return exact;
-  }
   const normalizedProvider = normalizeProviderId(params.provider);
-  return inlineModels.find(
-    (entry) => normalizeProviderId(entry.provider) === normalizedProvider && matchesModelId(entry),
+  return (
+    findProviderModelConfig(
+      inlineModels.filter((entry) => entry.provider === params.provider),
+      params.provider,
+      params.modelId,
+    ) ??
+    findProviderModelConfig(
+      inlineModels.filter((entry) => normalizeProviderId(entry.provider) === normalizedProvider),
+      normalizedProvider,
+      params.modelId,
+    )
   );
 }
 
@@ -171,19 +148,10 @@ function isModelsAddMetadataModel(params: {
   );
 }
 
-export function findConfiguredProviderModel(
-  providerConfig: InlineProviderConfig | undefined,
-  provider: string,
-  modelId: string,
-) {
-  return providerConfig?.models?.find((candidate) =>
-    matchesProviderScopedModelId({ candidateId: candidate.id, provider, modelId }),
-  );
-}
-
 /** Merge authored rates after discovery; runtime defaults must not become price pins. */
 export function mergeConfiguredModelCost(params: {
   provider: string;
+  modelId: string;
   cfg?: OpenClawConfig;
   configuredModel?: NonNullable<InlineProviderConfig["models"]>[number];
   catalogCost?: Model["cost"];
@@ -192,22 +160,19 @@ export function mergeConfiguredModelCost(params: {
   if (params.cfg && params.configuredModel) {
     const source = projectConfigOntoRuntimeSourceSnapshot(params.cfg);
     if (source !== params.cfg) {
-      const modelId = normalizeConfiguredProviderCatalogModelId(
-        params.provider,
-        params.configuredModel.id,
-      ).trim();
+      // Runtime rows may already be canonical; only authored source aliases normalize here.
       const sourceModels = resolveConfiguredProviderConfig(source, params.provider)?.models?.filter(
         (model) =>
-          matchesProviderScopedModelId({
-            candidateId: normalizeConfiguredProviderCatalogModelId(
-              params.provider,
-              model.id,
-            ).trim(),
-            provider: params.provider,
-            modelId,
-          }),
+          model.id.trim() === params.modelId ||
+          normalizeConfiguredProviderCatalogModelId(params.provider, model.id).trim() ===
+            params.modelId,
       );
       if (sourceModels?.length) {
+        // First-row fields win below; aliases only fill omissions in exact rows.
+        sourceModels.sort(
+          (left, right) =>
+            Number(right.id.trim() === params.modelId) - Number(left.id.trim() === params.modelId),
+        );
         authoredCost = sourceModels.reduce<Model["cost"] | undefined>(
           (cost, model) => mergeModelCost(model.cost, cost),
           undefined,
@@ -252,7 +217,7 @@ export function mergeStaticCatalogInlineModel(
 
 export function hasConfiguredFallbackSurface(params: {
   providerConfig: InlineProviderConfig | undefined;
-  configuredModel: ReturnType<typeof findConfiguredProviderModel>;
+  configuredModel: NonNullable<InlineProviderConfig["models"]>[number] | undefined;
   modelId: string;
 }): boolean {
   if (params.modelId.startsWith("mock-")) {
@@ -276,41 +241,12 @@ function findConfiguredAgentModelParams(params: {
   provider: string;
   modelId: string;
 }): Record<string, unknown> | undefined {
-  const configuredModels = params.cfg?.agents?.defaults?.models;
-  if (!configuredModels) {
-    return undefined;
-  }
-  const directKeys = [
-    modelKey(params.provider, params.modelId),
-    `${params.provider}/${params.modelId}`,
-  ];
-  for (const key of directKeys) {
-    const direct = readModelParams(configuredModels[key]?.params);
-    if (direct) {
-      return direct;
-    }
-  }
-
-  const normalizedProvider = normalizeProviderId(params.provider);
-  const normalizedModelId = normalizeStaticProviderModelId(normalizedProvider, params.modelId)
-    .trim()
-    .toLowerCase();
-  for (const [rawKey, entry] of Object.entries(configuredModels)) {
-    const slashIndex = rawKey.indexOf("/");
-    if (slashIndex <= 0) {
-      continue;
-    }
-    const candidateProvider = rawKey.slice(0, slashIndex);
-    const candidateModelId = rawKey.slice(slashIndex + 1);
-    if (
-      normalizeProviderId(candidateProvider) === normalizedProvider &&
-      normalizeStaticProviderModelId(normalizedProvider, candidateModelId).trim().toLowerCase() ===
-        normalizedModelId
-    ) {
-      return readModelParams(entry.params);
-    }
-  }
-  return undefined;
+  return resolveAgentModelConfigValue(
+    params.cfg?.agents?.defaults?.models,
+    params.provider,
+    params.modelId,
+    (entry) => readModelParams(entry.params),
+  );
 }
 
 export function mergeConfiguredRuntimeModelParams(params: {
@@ -424,10 +360,15 @@ export function applyConfiguredProviderOverrides(params: {
       headers: requestConfig.headers,
     };
   }
+  const requestedConfiguredModel = findProviderModelConfig(
+    providerConfig.models,
+    params.provider,
+    modelId,
+  );
   const configuredModel =
-    findConfiguredProviderModel(providerConfig, params.provider, modelId) ??
+    requestedConfiguredModel ??
     (discoveredModel.id !== modelId
-      ? findConfiguredProviderModel(providerConfig, params.provider, discoveredModel.id)
+      ? findProviderModelConfig(providerConfig.models, params.provider, discoveredModel.id)
       : undefined);
   const configuredStaticCatalogModel =
     configuredModel && (params.staticCatalogModel ?? params.getStaticCatalogModel?.());
@@ -616,6 +557,8 @@ export function applyConfiguredProviderOverrides(params: {
           input: normalizedInput,
           cost: mergeConfiguredModelCost({
             provider: params.provider,
+            // Pricing follows the exact query that supplied the configured metadata.
+            modelId: requestedConfiguredModel ? modelId : discoveredModel.id,
             cfg: params.cfg,
             configuredModel: metadataOverrideModel,
             catalogCost: discoveredModel.cost,

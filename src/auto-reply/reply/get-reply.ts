@@ -43,7 +43,7 @@ import {
   ModelSelectionLockedError,
 } from "../../sessions/model-overrides.js";
 import { ensureSessionDiffBaseline } from "../../sessions/session-diff-baseline.js";
-import { resolveStoredModelOverride } from "../../sessions/stored-model-overrides.js";
+import { readStoredModelOverride } from "../../sessions/stored-model-overrides.js";
 import { createLazyImportLoader } from "../../shared/lazy-promise.js";
 import {
   sessionDeliveryChannel,
@@ -78,6 +78,7 @@ import {
   hasInboundMediaForUnderstanding,
 } from "./inbound-media.js";
 import { emitPreAgentMessageHooks } from "./message-preprocess-hooks.js";
+import { resolveRuntimeNormalization } from "./model-runtime-normalization.js";
 import { createModelSelectionState } from "./model-selection.js";
 import { resolveOriginMessageProvider } from "./origin-routing.js";
 import {
@@ -97,7 +98,10 @@ import { SessionResetCleanupError } from "./session-reset-cleanup.js";
 import { initSessionState, resolveReplySessionPreprocessingState } from "./session.js";
 import { mergeSkillFilters } from "./skill-filter.js";
 import { stageRemoteInboundMediaIfNeeded } from "./stage-remote-inbound-media.js";
-import { isStaleHeartbeatAutoFallbackOverride } from "./stored-model-override.js";
+import {
+  isStaleHeartbeatAutoFallbackOverride,
+  resolveStoredRuntimeModelSelection,
+} from "./stored-model-override.js";
 import { createTypingController } from "./typing.js";
 
 type ResetCommandAction = "new" | "reset";
@@ -411,12 +415,14 @@ export async function getReplyFromConfig(
     normalizeThinkLevel(agentEntry?.thinkingDefault) ??
     normalizeThinkLevel(agentCfg?.thinkingDefault);
   const sessionCfg = cfg.session;
+  const modelNormalization = resolveRuntimeNormalization(cfg, preparedModelCatalog?.entries);
   const { defaultProvider, defaultModel, aliasIndex } = resolverTiming.measureSync(
     "reply.resolve_default_model",
     () =>
       resolveDefaultModel({
         cfg,
         agentId,
+        ...modelNormalization,
       }),
   );
   let provider = defaultProvider;
@@ -436,6 +442,7 @@ export async function getReplyFromConfig(
           raw: heartbeatRaw,
           defaultProvider,
           aliasIndex,
+          ...modelNormalization,
         })
       : null;
     if (heartbeatRef) {
@@ -855,6 +862,7 @@ export async function getReplyFromConfig(
           raw: channelModelOverride.model,
           defaultProvider,
           aliasIndex,
+          ...modelNormalization,
         })
       : null;
   const primaryProvider = resolvedChannelModelOverride?.ref.provider ?? defaultProvider;
@@ -863,7 +871,7 @@ export async function getReplyFromConfig(
     normalizeOptionalString(sessionEntry.modelOverride) ||
     normalizeOptionalString(sessionEntry.providerOverride),
   );
-  const storedModelOverride = resolveStoredModelOverride({
+  const storedModelOverride = readStoredModelOverride({
     sessionEntry,
     sessionStore,
     sessionKey,
@@ -871,7 +879,6 @@ export async function getReplyFromConfig(
       sessionEntry.parentSessionKey ??
       sessionCtx.ModelParentSessionKey ??
       sessionCtx.ParentSessionKey,
-    defaultProvider,
   });
   const staleHeartbeatAutoFallbackOverride =
     !sessionModelSelectionLocked &&
@@ -895,8 +902,15 @@ export async function getReplyFromConfig(
     !staleHeartbeatAutoFallbackOverride &&
     !staleLegacyAutoFallbackWithoutOrigin
   ) {
-    provider = storedModelOverride.provider ?? defaultProvider;
-    model = storedModelOverride.model;
+    ({ provider, model } = resolveStoredRuntimeModelSelection({
+      cfg,
+      sessionEntry,
+      storedOverride: storedModelOverride,
+      defaultProvider,
+      catalog: preparedModelCatalog?.entries ?? [],
+      aliasIndex,
+      normalization: modelNormalization,
+    }));
   }
   const canApplyAutoFallbackPrimaryProbe =
     !sessionModelSelectionLocked &&

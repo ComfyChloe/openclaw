@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
+import { resolveAmbientOwnerAgentId } from "../agents/agent-scope-config.js";
+import { migratePersistedImplicitMainRoster } from "../config/legacy.roster.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import { AgentsSchema } from "../config/zod-schema.agents.js";
 import { applySystemAgentModelSelection } from "./setup-model-selection.js";
 
 describe("applySystemAgentModelSelection", () => {
@@ -80,4 +83,34 @@ describe("applySystemAgentModelSelection", () => {
     expect(result.agents?.defaults?.model).toBe("openai/gpt-5.5@openai:verified");
     expect(result.agents?.defaults?.models).toBeUndefined();
   });
+
+  it.each([
+    { name: "pre-roster", config: {}, owner: "main" },
+    {
+      name: "explicit system owner",
+      config: {
+        agents: {
+          ownership: "explicit",
+          defaults: { systemAgent: { agentId: "selected" } },
+          entries: { existing: {} },
+        },
+      },
+      owner: "selected",
+    },
+  ] satisfies Array<{ name: string; config: OpenClawConfig; owner: string }>)(
+    "creates a canonical $name entry",
+    async ({ config, owner }) => {
+      const result = await applySystemAgentModelSelection({
+        config,
+        model: "fixture/Model",
+        agentRuntimeId: "openclaw",
+      });
+      expect(AgentsSchema.safeParse(result.agents).success).toBe(true);
+      expect(migratePersistedImplicitMainRoster(result).changed).toBe(false);
+      expect(resolveAmbientOwnerAgentId(result)).toBe(owner);
+      expect(result.agents?.entries?.[owner]?.models?.["fixture/Model"]?.agentRuntime).toEqual({
+        id: "openclaw",
+      });
+    },
+  );
 });

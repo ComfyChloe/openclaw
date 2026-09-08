@@ -1,8 +1,12 @@
 // Verifies sessions_spawn model, thinking, and timeout planning.
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../config/config.js";
 import { DEFAULT_MODEL, DEFAULT_PROVIDER } from "./defaults.js";
-import { resolveConfiguredSubagentSpawnModelSelection } from "./model-selection.js";
+import {
+  resolveAllowedModelRef,
+  resolveDefaultModelForAgent,
+  resolveConfiguredSubagentSpawnModelSelection,
+} from "./model-selection.js";
 import {
   resolveConfiguredSubagentRunTimeoutSeconds,
   resolveSubagentModelAndThinkingPlan,
@@ -10,7 +14,7 @@ import {
 } from "./subagents/spawn/subagent-spawn-plan.js";
 import { resolveSubagentThinkingOverride } from "./subagents/spawn/subagent-spawn-thinking.js";
 
-type SubagentModelPlan = ReturnType<typeof resolveSubagentModelAndThinkingPlan>;
+type SubagentModelPlan = Awaited<ReturnType<typeof resolveSubagentModelAndThinkingPlan>>;
 type OkSubagentModelPlan = Extract<SubagentModelPlan, { status: "ok" }>;
 
 function createConfig(overrides?: Record<string, unknown>): OpenClawConfig {
@@ -18,6 +22,32 @@ function createConfig(overrides?: Record<string, unknown>): OpenClawConfig {
     session: { mainKey: "main", scope: "per-sender" },
     ...overrides,
   } as OpenClawConfig;
+}
+
+function resolvePlan(
+  params: Omit<Parameters<typeof resolveSubagentModelAndThinkingPlan>[0], "resolveModel">,
+) {
+  return resolveSubagentModelAndThinkingPlan({
+    ...params,
+    resolveModel: async (raw) => {
+      const defaults = resolveDefaultModelForAgent({
+        cfg: params.cfg,
+        agentId: params.targetAgentId,
+      });
+      const selection = resolveAllowedModelRef({
+        cfg: params.cfg,
+        agentId: params.targetAgentId,
+        catalog: [],
+        manifestPlugins: [],
+        defaultProvider: defaults.provider,
+        defaultModel: defaults.model,
+        raw,
+      });
+      return "error" in selection
+        ? { ok: false as const, error: selection.error }
+        : { ok: true as const, value: selection.ref };
+    },
+  });
 }
 
 function expectOkPlan(plan: SubagentModelPlan): OkSubagentModelPlan {
@@ -30,19 +60,48 @@ function expectOkPlan(plan: SubagentModelPlan): OkSubagentModelPlan {
 }
 
 describe("subagent spawn model + thinking plan", () => {
-  it("includes explicit model overrides in the initial patch", () => {
+  it("includes explicit model overrides in the initial patch", async () => {
     const plan = expectOkPlan(
-      resolveSubagentModelAndThinkingPlan({
+      await resolvePlan({
         cfg: createConfig(),
         targetAgentId: "research",
         modelOverride: "claude-haiku-4-5",
       }),
     );
-    expect(plan.resolvedModel).toBe("claude-haiku-4-5");
+    expect(plan.resolvedModel).toBe(`${DEFAULT_PROVIDER}/claude-haiku-4-5`);
     expect(plan.modelApplied).toBe(true);
     expect(plan.initialSessionPatch.model).toBe("claude-haiku-4-5");
     expect(plan.initialSessionPatch.modelOverrideSource).toBe("user");
   });
+
+  it.each(["middle", "namespace/Middle"])(
+    "persists the admitted %s identity instead of raw input",
+    async (model) => {
+      const resolveModel = vi.fn(async () => ({
+        ok: true as const,
+        value: { provider: "custom", model },
+      }));
+      const plan = expectOkPlan(
+        await resolveSubagentModelAndThinkingPlan({
+          cfg: createConfig(),
+          targetAgentId: "research",
+          modelOverride: "latest@custom:account",
+          resolveModel,
+        }),
+      );
+      expect(resolveModel).toHaveBeenCalledExactlyOnceWith("latest");
+      expect(plan.resolvedModel).toBe(`custom/${model}`);
+      expect(plan.modelSelection).toEqual({ provider: "custom", model });
+      expect(plan.initialSessionPatch).toMatchObject({
+        modelProvider: "custom",
+        model,
+        providerOverride: "custom",
+        modelOverride: model,
+        modelOverrideRouteResolution: "resolved",
+        authProfileOverride: "custom:account",
+      });
+    },
+  );
 
   it("preserves model ids containing slashes", () => {
     expect(splitModelRef("openrouter/meta-llama/llama-3.3-70b:free")).toEqual({
@@ -51,9 +110,9 @@ describe("subagent spawn model + thinking plan", () => {
     });
   });
 
-  it("normalizes thinking overrides into the initial patch", () => {
+  it("normalizes thinking overrides into the initial patch", async () => {
     const plan = expectOkPlan(
-      resolveSubagentModelAndThinkingPlan({
+      await resolvePlan({
         cfg: createConfig(),
         targetAgentId: "research",
         thinkingOverrideRaw: "high",
@@ -63,9 +122,9 @@ describe("subagent spawn model + thinking plan", () => {
     expect(plan.initialSessionPatch.thinkingLevel).toBe("high");
   });
 
-  it("threads explicit fast mode into the initial child session patch", () => {
+  it("threads explicit fast mode into the initial child session patch", async () => {
     const plan = expectOkPlan(
-      resolveSubagentModelAndThinkingPlan({
+      await resolvePlan({
         cfg: createConfig(),
         targetAgentId: "research",
         fastMode: "auto",
@@ -74,21 +133,27 @@ describe("subagent spawn model + thinking plan", () => {
     expect(plan.initialSessionPatch.fastMode).toBe("auto");
   });
 
-  it("rejects invalid thinking levels before any runtime work", () => {
-    const plan = resolveSubagentModelAndThinkingPlan({
+  it("rejects invalid thinking levels before model selection", async () => {
+    const resolveModel = vi.fn(async () => ({
+      ok: true as const,
+      value: { provider: "custom", model: "middle" },
+    }));
+    const plan = await resolveSubagentModelAndThinkingPlan({
       cfg: createConfig(),
       targetAgentId: "research",
       thinkingOverrideRaw: "banana",
+      resolveModel,
     });
+    expect(resolveModel).not.toHaveBeenCalled();
     expect(plan.status).toBe("error");
     if (plan.status === "error") {
       expect(plan.error).toMatch(/Invalid thinking level/i);
     }
   });
 
-  it("applies default subagent model from defaults config", () => {
+  it("applies default subagent model from defaults config", async () => {
     const plan = expectOkPlan(
-      resolveSubagentModelAndThinkingPlan({
+      await resolvePlan({
         cfg: createConfig({
           agents: { defaults: { subagents: { model: "minimax/MiniMax-M2.7" } } },
         }),
@@ -96,30 +161,30 @@ describe("subagent spawn model + thinking plan", () => {
       }),
     );
     expect(plan.resolvedModel).toBe("minimax/MiniMax-M2.7");
-    expect(plan.initialSessionPatch.model).toBe("minimax/MiniMax-M2.7");
+    expect(plan.initialSessionPatch.model).toBe("MiniMax-M2.7");
     expect(plan.initialSessionPatch.modelOverrideSource).toBe("auto");
     expect(plan.initialSessionPatch.modelOverrideFallbackOriginProvider).toBe("minimax");
     expect(plan.initialSessionPatch.modelOverrideFallbackOriginModel).toBe("MiniMax-M2.7");
   });
 
-  it("falls back to runtime default model when no model config is set", () => {
+  it("falls back to runtime default model when no model config is set", async () => {
     const plan = expectOkPlan(
-      resolveSubagentModelAndThinkingPlan({
+      await resolvePlan({
         cfg: createConfig(),
         targetAgentId: "research",
       }),
     );
     const defaultModelRef = `${DEFAULT_PROVIDER}/${DEFAULT_MODEL}`;
     expect(plan.resolvedModel).toBe(defaultModelRef);
-    expect(plan.initialSessionPatch.model).toBe(defaultModelRef);
+    expect(plan.initialSessionPatch.model).toBe(DEFAULT_MODEL);
     expect(plan.initialSessionPatch.modelOverrideSource).toBe("auto");
     expect(plan.initialSessionPatch.modelOverrideFallbackOriginProvider).toBeUndefined();
     expect(plan.initialSessionPatch.modelOverrideFallbackOriginModel).toBeUndefined();
   });
 
-  it("uses the target default provider for bare configured subagent models", () => {
+  it("uses the target default provider for bare configured subagent models", async () => {
     const plan = expectOkPlan(
-      resolveSubagentModelAndThinkingPlan({
+      await resolvePlan({
         cfg: createConfig({
           agents: {
             defaults: {
@@ -131,7 +196,7 @@ describe("subagent spawn model + thinking plan", () => {
         targetAgentId: "research",
       }),
     );
-    expect(plan.resolvedModel).toBe("gpt-5.4");
+    expect(plan.resolvedModel).toBe("openai/gpt-5.4");
     expect(plan.initialSessionPatch.modelOverrideFallbackOriginProvider).toBe("openai");
     expect(plan.initialSessionPatch.modelOverrideFallbackOriginModel).toBe("gpt-5.4");
   });
@@ -178,19 +243,19 @@ describe("subagent spawn model + thinking plan", () => {
       expectedProvider: "opencode",
       expectedOriginModel: "claude",
     },
-  ])("prefers $name", (row) => {
+  ])("prefers $name", async (row) => {
     const cfg = createConfig({
       agents: { defaults: row.defaults, list: [row.targetAgentConfig] },
     });
     const plan = expectOkPlan(
-      resolveSubagentModelAndThinkingPlan({
+      await resolvePlan({
         cfg,
         targetAgentId: "research",
         targetAgentConfig: row.targetAgentConfig,
       }),
     );
     expect(plan.resolvedModel).toBe(row.expectedModel);
-    expect(plan.initialSessionPatch.model).toBe(row.expectedModel);
+    expect(plan.initialSessionPatch.model).toBe(row.expectedOriginModel);
     expect(plan.initialSessionPatch.modelOverrideSource).toBe("auto");
     expect(plan.initialSessionPatch.modelOverrideFallbackOriginProvider).toBe(row.expectedProvider);
     expect(plan.initialSessionPatch.modelOverrideFallbackOriginModel).toBe(row.expectedOriginModel);

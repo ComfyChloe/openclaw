@@ -101,13 +101,13 @@ beforeEach(() => {
   hoisted.prepareProviderRuntimeAuthMock.mockReset();
   hoisted.ensureAuthProfileStoreMock.mockReset();
   hoisted.getCurrentPluginMetadataSnapshotMock.mockReset();
-  hoisted.acquireRuntimeLeaseMock.mockResolvedValue({
+  hoisted.acquireRuntimeLeaseMock.mockImplementation(async (input) => ({
     snapshot: {
       agentDir: "/tmp/openclaw-agent",
       workspaceDir: "/tmp/runtime-workspace",
-      config: {},
+      config: input.config,
       authModes: {},
-      metadataSnapshot: createPluginMetadataSnapshotFixture(),
+      metadataSnapshot: hoisted.getCurrentPluginMetadataSnapshotMock(),
       allowGatewaySubagentBinding: false,
       modelCatalog: { entries: [] },
       configuredRuntimeModels: [],
@@ -119,7 +119,7 @@ beforeEach(() => {
       }),
     },
     release: vi.fn(),
-  });
+  }));
 
   hoisted.applyLocalNoAuthHeaderOverrideMock.mockImplementation((model: unknown) => model);
 
@@ -710,7 +710,7 @@ describe("prepareSimpleCompletionModel", () => {
       "ollama",
       "llama3.2:latest",
       "/tmp/openclaw-agent",
-      undefined,
+      {},
       expect.objectContaining({
         skipAgentDiscovery: true,
         workspaceDir: "/tmp/runtime-workspace",
@@ -751,7 +751,7 @@ describe("prepareSimpleCompletionModel", () => {
       "anthropic",
       "claude-opus-4-6",
       "/tmp/openclaw-agent",
-      undefined,
+      {},
       expect.objectContaining({
         workspaceDir: "/tmp/runtime-workspace",
         preparedModelRuntime: expect.anything(),
@@ -786,7 +786,7 @@ describe("prepareSimpleCompletionModel", () => {
       "mistral",
       "mistral-medium-3-5",
       "/tmp/openclaw-agent",
-      undefined,
+      {},
       expect.objectContaining({
         allowBundledStaticCatalogFallback: true,
         skipAgentDiscovery: true,

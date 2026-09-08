@@ -6,13 +6,14 @@ import type { AgentRunResultView } from "../agents/agent-run-result.js";
 import { listAgentEntries, resolveAmbientOwnerAgentId } from "../agents/agent-scope.js";
 import { loadAuthProfileStoreForRuntime } from "../agents/auth-profiles/store-runtime.js";
 import { resolveCliBackendConfig } from "../agents/cli-backends.js";
+import type { CodexCliApiKeyCredential } from "../agents/cli-credentials.js";
 import type { FailoverReason } from "../agents/failover/signal.js";
+import type { ModelFallbackRouteResolution } from "../agents/model-fallback.types.js";
+import type { ModelManifestNormalizationContext } from "../agents/model-ref-shared.js";
 import { resolveCliRuntimeExecutionProvider } from "../agents/model-runtime-aliases.js";
 import { resolveModelRuntimePolicy } from "../agents/model-runtime-policy.js";
 import {
   buildModelAliasIndex,
-  legacyModelKey,
-  modelKey,
   normalizeProviderId,
   resolveModelRefFromString,
 } from "../agents/model-selection.js";
@@ -20,17 +21,46 @@ import { resolveProviderIdForAuth } from "../agents/provider-auth-aliases.js";
 import { buildAgentRuntimeAuthPlan } from "../agents/runtime-plan/auth.js";
 import { GEMINI_CLI_DEFAULT_MODEL_REF } from "../commands/onboard-inference.js";
 import { createMergePatch } from "../config/merge-patch.js";
-import { mergeAgentModelEntryForConfig } from "../config/model-input.js";
+import {
+  mergeAgentModelEntryForConfig,
+  resolveAgentModelConfigKeys,
+} from "../config/model-input.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import type { PluginInstallRecord } from "../config/types.plugins.js";
 import type { ProviderAuthResult, ProviderPlugin } from "../plugins/types.js";
 import { normalizeAgentId } from "../routing/session-key.js";
+import type { RuntimeEnv } from "../runtime.js";
+import type { WizardPrompter } from "../wizard/prompts.js";
+import type { SystemAgentConfigSnapshot } from "./inference-route.js";
 import {
   type ActivateSetupInferenceDeps,
   type ActivateSetupInferenceParams,
   type SetupInferenceFailureStatus,
+  type SetupInferenceKind,
   parseProviderAutoSetupChoiceId,
 } from "./setup-inference-core.js";
+
+export type SetupInferencePlanBuildParams = {
+  kind: SetupInferenceKind | "api-key" | "provider-auth";
+  modelRef?: string;
+  authChoice?: string;
+  apiKey?: string;
+  cfg: OpenClawConfig;
+  sourceCfg: OpenClawConfig;
+  configSnapshot?: SystemAgentConfigSnapshot;
+  workspaceDir: string;
+  pluginWorkspaceDir: string;
+  agentDir: string;
+  runtime: RuntimeEnv;
+  prompter?: WizardPrompter;
+  signal?: AbortSignal;
+  isCancelled?: () => boolean;
+  beforePersistentEffect?: () => void | Promise<void>;
+  isRemoteProviderAuth?: boolean;
+  routeAgentId?: string;
+  codexCliApiKey?: CodexCliApiKeyCredential;
+  deps: ActivateSetupInferenceDeps;
+};
 
 export type SetupInferenceTestPlan = {
   runner: "cli" | "embedded";
@@ -39,6 +69,7 @@ export type SetupInferenceTestPlan = {
   provider: string;
   model: string;
   modelRef: string;
+  requestedRouteResolution?: ModelFallbackRouteResolution;
   /** Authored/staged config used for route, auth, and persistence decisions. */
   config: OpenClawConfig;
   /** Installer-owned preparation facts, separate from provider-authored config patches. */
@@ -216,14 +247,7 @@ export function projectSetupTargetModelMetadata(
   agentId?: string,
 ): unknown {
   const target = parseRef(modelRef);
-  const canonicalKey = modelKey(target.provider, target.model);
-  const keys = new Set(
-    [
-      canonicalKey,
-      legacyModelKey(target.provider, target.model),
-      `${target.provider}/${canonicalKey}`,
-    ].filter((key): key is string => Boolean(key)),
-  );
+  const keys = resolveAgentModelConfigKeys(target.provider, target.model);
   const project = (models: Record<string, unknown> | undefined) =>
     Object.fromEntries(
       [...keys].map((key) => [
@@ -429,21 +453,16 @@ function projectManualInferenceConfig(params: {
   return config;
 }
 
-export function canonicalizeSetupModelRef(params: {
-  cfg: OpenClawConfig;
-  raw: string;
-  defaultProvider: string;
-}): string {
-  const aliasIndex = buildModelAliasIndex({
-    cfg: params.cfg,
-    defaultProvider: params.defaultProvider,
-  });
-  const resolved = resolveModelRefFromString({
-    cfg: params.cfg,
-    raw: params.raw,
-    defaultProvider: params.defaultProvider,
-    aliasIndex,
-  });
+export function canonicalizeSetupModelRef(
+  params: {
+    cfg: OpenClawConfig;
+    raw: string;
+    defaultProvider: string;
+    agentId?: string;
+  } & ModelManifestNormalizationContext,
+): string {
+  const aliasIndex = buildModelAliasIndex(params);
+  const resolved = resolveModelRefFromString({ ...params, aliasIndex });
   return resolved ? `${resolved.ref.provider}/${resolved.ref.model}` : params.raw;
 }
 
@@ -530,6 +549,7 @@ export function buildPreparedProviderTestPlan(params: {
       : { agentHarnessRuntimeOverride: selectedAgentRuntimeId }),
     selectedAgentRuntimeId,
     modelRef,
+    requestedRouteResolution: "resolved",
     agentDir: params.agentDir,
     config: prepared.config,
     ...(params.pendingPluginInstalls

@@ -18,7 +18,40 @@ const hoisted = vi.hoisted(() => ({
 }));
 
 vi.mock("../../agents/simple-completion-runtime.js", () => ({
-  acquireSimpleCompletionModelForAgent: hoisted.acquireSimpleCompletionModelForAgent,
+  acquireSimpleCompletionModelForAgent: async (
+    params: Parameters<
+      typeof import("../../agents/simple-completion-runtime.js").acquireSimpleCompletionModelForAgent
+    >[0],
+    validateSelection: Parameters<
+      typeof import("../../agents/simple-completion-runtime.js").acquireSimpleCompletionModelForAgent
+    >[1],
+  ) => {
+    const selection = hoisted.resolveSimpleCompletionSelectionForAgent(params);
+    if (!selection) {
+      return { error: `No model configured for agent ${params.agentId}.` };
+    }
+    validateSelection?.({ selection, config: params.cfg });
+    const prepared = await hoisted.acquireSimpleCompletionModelForAgent(params);
+    return "error" in prepared
+      ? prepared
+      : {
+          ...prepared,
+          config: params.cfg,
+          assertCurrent: () => params.abortSignal?.throwIfAborted(),
+        };
+  },
+  withPreparedSimpleCompletionSelection: async (
+    params: { cfg: OpenClawConfig; agentId: string; modelRef?: string; abortSignal?: AbortSignal },
+    run: (selection: unknown, context: object) => Promise<unknown>,
+  ) => {
+    const selection = hoisted.resolveSimpleCompletionSelectionForAgent(params);
+    const runtime = { config: params.cfg, agentDir: selection?.agentDir };
+    return await run(selection, {
+      preparedModelRuntime: runtime,
+      assertCurrent: () => params.abortSignal?.throwIfAborted(),
+      borrowPreparedRuntime: () => runtime,
+    });
+  },
   completeWithPreparedSimpleCompletionModel: hoisted.completeWithPreparedSimpleCompletionModel,
   resolveSimpleCompletionSelectionForAgent: hoisted.resolveSimpleCompletionSelectionForAgent,
 }));
@@ -33,6 +66,8 @@ const cfg = {
 
 const preparedModel = {
   release: vi.fn(),
+  config: cfg,
+  assertCurrent: () => {},
   selection: {
     provider: "openai",
     modelId: "gpt-5.5",

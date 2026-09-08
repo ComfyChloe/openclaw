@@ -1,6 +1,7 @@
 /** Loads and normalizes OpenClaw plugin manifests, including contracts and config schemas. */
 import path from "node:path";
 import { normalizeModelCatalog } from "@openclaw/model-catalog-core/model-catalog-normalize";
+import { normalizeProviderId } from "@openclaw/model-catalog-core/provider-id";
 import { normalizeOptionalString } from "../../packages/normalization-core/src/string-coerce.js";
 import { normalizeTrimmedStringList } from "../../packages/normalization-core/src/string-normalization.js";
 import { matchRootFileOpenFailure } from "../infra/boundary-file-read.js";
@@ -219,6 +220,10 @@ export function loadPluginManifest(
   const providers = normalizeTrimmedStringList(raw.providers);
   const contracts = capabilityNormalizers.normalizeManifestContracts(raw.contracts);
   const cliBackends = normalizeTrimmedStringList(raw.cliBackends);
+  const declaredProviderIds = new Set(providers.map(normalizeProviderId));
+  const modelCatalog = normalizeModelCatalog(raw.modelCatalog, {
+    ownedProviders: new Set([...providers, ...cliBackends]),
+  });
   const rawDoctorContract = isRecord(raw.doctorContract) ? raw.doctorContract : undefined;
   const stateMigrations = parseDoctorStateMigrationDescriptors(rawDoctorContract?.stateMigrations);
   const doctorContract = rawDoctorContract
@@ -252,15 +257,21 @@ export function loadPluginManifest(
         ? undefined
         : (normalizeOptionalString(raw.capabilityCatalogEntry) ?? ""),
     modelSupport: modelProviderNormalizers.normalizeManifestModelSupport(raw.modelSupport),
-    modelCatalog: normalizeModelCatalog(raw.modelCatalog, {
-      ownedProviders: new Set([...providers, ...cliBackends]),
-    }),
+    modelCatalog,
     modelPricing: modelProviderNormalizers.normalizeManifestModelPricing(raw.modelPricing, {
       ownedProviders: new Set(providers),
     }),
     modelIdNormalization: modelProviderNormalizers.normalizeManifestModelIdNormalization(
       raw.modelIdNormalization,
-      { ownedProviders: new Set(providers) },
+      {
+        // Catalog aliases can own input spelling rules without becoming runtime receivers.
+        ownedProviders: new Set([
+          ...declaredProviderIds,
+          ...Object.entries(modelCatalog?.aliases ?? {}).flatMap(([alias, target]) =>
+            declaredProviderIds.has(target.provider) ? [alias] : [],
+          ),
+        ]),
+      },
     ),
     providerEndpoints: modelProviderNormalizers.normalizeManifestProviderEndpoints(
       raw.providerEndpoints,

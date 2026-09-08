@@ -239,9 +239,10 @@ describe("model command provider preparation", () => {
       {
         command,
         provider: "openrouter",
-        sourceKey: "openrouter/openrouter/hunter-alpha",
+        sourceKey: "openrouter/hunter-alpha",
         input: "openrouter/hunter-alpha",
-        modelId: "hunter-alpha",
+        // The model's own namespace survives after the outer provider segment.
+        modelId: "openrouter/hunter-alpha",
       },
       {
         command,

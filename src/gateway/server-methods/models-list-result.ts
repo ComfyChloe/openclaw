@@ -3,7 +3,6 @@ import { normalizeProviderId } from "@openclaw/model-catalog-core/provider-id";
 import type { ModelChoice } from "../../../packages/gateway-protocol/src/schema/agents-models-skills.js";
 import { resolveAgentWorkspaceDir, resolveDefaultAgentId } from "../../agents/agent-scope.js";
 import { resolveConfiguredModelEntries } from "../../agents/configured-model-entries.js";
-import { DEFAULT_PROVIDER } from "../../agents/defaults.js";
 import { resolveFastModeState } from "../../agents/fast-mode.js";
 import type { ModelAuthAvailabilityEvaluation } from "../../agents/model-auth-availability.js";
 import {
@@ -383,7 +382,7 @@ export async function prepareModelsListResult(
       ),
   });
   snapshot = preparedCatalog.snapshot;
-  const { defaultModel } = preparedCatalog;
+  const { defaultProvider, defaultModel, rawDefaultModel } = preparedCatalog;
   const preparedRuntimeAuthModes = preparedProjectionOwner?.authModes;
   const preparedRuntimeAuthMaterializations = preparedProjectionOwner?.authMaterializations;
   const projector =
@@ -429,7 +428,7 @@ export async function prepareModelsListResult(
   const configuredEntriesByKey = resolveConfiguredModelEntries({
     cfg,
     agentId,
-    defaultModel,
+    defaultModel: rawDefaultModel,
     ...RUNTIME_MODEL_VISIBILITY_NORMALIZATION,
     manifestPlugins: metadataSnapshot,
   }).byKey;
@@ -498,7 +497,7 @@ export async function prepareModelsListResult(
   const visibilityPolicy = createModelVisibilityPolicy({
     cfg,
     catalog,
-    defaultProvider: DEFAULT_PROVIDER,
+    defaultProvider,
     defaultModel,
     agentId,
     ...RUNTIME_MODEL_VISIBILITY_NORMALIZATION,
@@ -511,7 +510,7 @@ export async function prepareModelsListResult(
   const readCatalog = await prepareLogicalVisibleModelCatalog({
     cfg,
     catalog,
-    defaultProvider: DEFAULT_PROVIDER,
+    defaultProvider,
     defaultModel,
     agentId,
     workspaceDir,

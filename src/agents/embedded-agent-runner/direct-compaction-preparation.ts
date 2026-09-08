@@ -96,6 +96,8 @@ export async function prepareDirectCompactionAttempt(
     modelId: params.model,
     boundHarnessRuntime: params.agentHarnessId,
     preparedRuntimePlan: params.runtimePlan,
+    manifestPlugins: params.preparedModelRuntime.metadataSnapshot,
+    resolvedModelCatalog: params.preparedModelRuntime.modelCatalog.entries,
   });
   // Keep the configured provider for harness policy, while auth/model loading below can
   // route OpenAI compaction through Codex OAuth when that runtime owns the session credentials.

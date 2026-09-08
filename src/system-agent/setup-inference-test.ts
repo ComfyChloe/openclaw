@@ -270,6 +270,7 @@ async function runSetupInferenceProbe(
         prompt: params.prompt ?? SETUP_INFERENCE_TEST_PROMPT,
         provider: plan.provider,
         model: plan.model,
+        requestedRouteResolution: plan.requestedRouteResolution,
         ...(plan.authProfileId
           ? { authProfileId: plan.authProfileId, authProfileIdSource: "user" as const }
           : {}),

@@ -1,4 +1,5 @@
 import { rawDataToString } from "@openclaw/gateway-client/websocket-data";
+import { asOptionalRecord } from "@openclaw/normalization-core/record-coerce";
 // Real Gateway WebSocket proof for agent delivery fallback, response ordering, and idempotency.
 import { afterAll, beforeAll, beforeEach, describe, expect, test, vi } from "vitest";
 import type { RawData, WebSocket } from "ws";
@@ -69,6 +70,45 @@ function sendAgentRequest(params: {
 }
 
 describe("gateway agent RPC contracts", () => {
+  test.each([undefined, "raw", "resolved"] as const)(
+    "carries model resolution %s through WebSocket admission",
+    async (requestedRouteResolution) => {
+      vi.mocked(agentCommandMock).mockResolvedValueOnce(undefined);
+      const client = await harness.openClient({ scopes: ["operator.admin"] });
+      const id = `model-resolution-${requestedRouteResolution ?? "omitted"}`;
+      try {
+        const terminal = onceMessage<AgentResponse>(
+          client.ws,
+          (frame) =>
+            frame.type === "res" && frame.id === id && frame.payload?.status !== "accepted",
+        );
+        client.ws.send(
+          JSON.stringify({
+            type: "req",
+            id,
+            method: "agent",
+            params: {
+              message: "exercise model request provenance",
+              idempotencyKey: id,
+              provider: "anthropic",
+              model: "claude-sonnet-4-6",
+              ...(requestedRouteResolution ? { requestedRouteResolution } : {}),
+            },
+          }),
+        );
+        expect(await terminal).toMatchObject({ ok: true, payload: { status: "ok" } });
+        const admitted = asOptionalRecord(vi.mocked(agentCommandMock).mock.calls[0]?.[0]);
+        expect(admitted).toMatchObject({
+          provider: "anthropic",
+          model: "claude-sonnet-4-6",
+        });
+        expect(admitted?.requestedRouteResolution).toBe(requestedRouteResolution);
+      } finally {
+        client.ws.close();
+      }
+    },
+  );
+
   test("preserves requested delivery status across ordered final response and replay", async () => {
     const runCompletion = createDeferred();
     vi.mocked(agentCommandMock).mockImplementationOnce(async () => {

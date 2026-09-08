@@ -98,6 +98,14 @@ use HTTP status `403`.
 
 Side-effecting methods require idempotency keys (see schema).
 
+`agent` accepts optional `requestedRouteResolution: "raw" | "resolved"` for model
+selection. Omitted or `"raw"` applies normal model-input aliases. `"resolved"`
+requires both `provider` and `model`, normalizes provider syntax, and preserves the
+literal provider-local model ID. This field does not authorize a model override;
+existing caller permissions and model policy still apply. Queued launches retain
+this request value so a previously selected model is not normalized again after
+restart.
+
 ## Gateway-controlled WebRTC Talk
 
 `talk.client.create` accepts the additive capability `gateway-control-v1`.

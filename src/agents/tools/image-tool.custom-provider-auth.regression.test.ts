@@ -115,11 +115,11 @@ describe("image custom provider auth regression", () => {
     testing.setProviderDepsForTest({
       buildProviderRegistry: () => new Map(),
       getMediaUnderstandingProvider: () => undefined,
-      describeImageWithModel: async (params: ImageDescriptionRequest) => ({
+      describeImageWithResolvedModel: async (params: ImageDescriptionRequest) => ({
         text: `seen:${params.provider}/${params.model}`,
         model: params.model,
       }),
-      describeImagesWithModel: async (params) => ({
+      describeImagesWithResolvedModel: async (params) => ({
         text: `seen:${params.provider}/${params.model}`,
         model: params.model,
       }),

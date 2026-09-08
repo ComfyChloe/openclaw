@@ -71,6 +71,33 @@ const musicCompletionEvent: AgentInternalEvent = {
 };
 
 describe("AgentParamsSchema", () => {
+  it.each([undefined, "raw", "resolved"])(
+    "accepts optional model route resolution %s",
+    (requestedRouteResolution) => {
+      expect(
+        Value.Check(AgentParamsSchema, {
+          message: "run",
+          provider: "custom",
+          model: "middle",
+          idempotencyKey: "route",
+          ...(requestedRouteResolution ? { requestedRouteResolution } : {}),
+        }),
+      ).toBe(true);
+    },
+  );
+
+  it("rejects unknown model route-resolution values", () => {
+    expect(
+      Value.Check(AgentParamsSchema, {
+        message: "run",
+        provider: "custom",
+        model: "middle",
+        idempotencyKey: "route",
+        requestedRouteResolution: "trusted",
+      }),
+    ).toBe(false);
+  });
+
   it("accepts the backend expected-session binding", () => {
     expect(
       Value.Check(AgentParamsSchema, {

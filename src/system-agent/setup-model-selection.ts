@@ -1,11 +1,12 @@
 import { toAgentEntriesRecord } from "../agents/agent-scope-config.js";
-import type { AgentModelEntryConfig } from "../config/types.agent-defaults.js";
+import type { ModelRef } from "../agents/model-ref-shared.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { normalizeAgentId, normalizeAgentIdStrict } from "../routing/session-key.js";
 
 type SystemAgentModelSelectionParams = {
   config: OpenClawConfig;
-  model: string;
+  /** Strings are authored input; tuples already name the selected model. */
+  model: string | ModelRef;
   /** Write the model onto this configured agent instead of the default route. */
   targetAgentId?: string;
   agentRuntimeId?: string;
@@ -44,7 +45,10 @@ function applySystemAgentModelSelectionWithModules(
   nextConfig.agents ??= {};
   nextConfig.agents.defaults ??= {};
   const agentDefaults = nextConfig.agents.defaults;
-  const target = modelConfig.resolveModelTarget({ raw: params.model, cfg: nextConfig });
+  const target =
+    typeof params.model === "string"
+      ? modelConfig.resolveModelTarget({ raw: params.model, cfg: nextConfig })
+      : params.model;
   const key = modelConfig.upsertCanonicalModelConfigEntry({}, target);
 
   const configuredVisibleModels = agentDefaults.models;
@@ -53,6 +57,11 @@ function applySystemAgentModelSelectionWithModules(
     // approved selection; never create one merely to carry runtime metadata.
     const defaultModels = { ...configuredVisibleModels };
     modelConfig.upsertCanonicalModelConfigEntry(defaultModels, target);
+    if (!params.agentRuntimeId) {
+      const entry = { ...defaultModels[key] };
+      delete entry.agentRuntime;
+      defaultModels[key] = entry;
+    }
     agentDefaults.models = defaultModels;
   }
 
@@ -64,45 +73,27 @@ function applySystemAgentModelSelectionWithModules(
   const agentEntryKey =
     roster.find((entry) => normalizeAgentId(entry.id) === agentId)?.id ?? agentId;
   let agent = agentEntries[agentEntryKey];
-  if (writesAgent) {
-    if (!agent) {
-      throw new Error(`Could not resolve configured default agent "${agentId}".`);
-    }
-    const agentModels = { ...agent.models };
-    agent.models = agentModels;
-    modelConfig.upsertCanonicalModelConfigEntry(agentModels, target);
+  if (writesAgent && !agent) {
+    throw new Error(`Could not resolve configured default agent "${agentId}".`);
   }
-
-  if (params.agentRuntimeId) {
-    if (!agent) {
-      agent = { default: true };
-      agentEntries[agentEntryKey] = agent;
-    }
+  if (params.agentRuntimeId && !agent) {
+    agent = {};
+    agentEntries[agentEntryKey] = agent;
+  }
+  if (
+    agent &&
+    (writesAgent || params.agentRuntimeId || (agent.models && Object.keys(agent.models).length > 0))
+  ) {
     const agentModels = { ...agent.models };
     const agentKey = modelConfig.upsertCanonicalModelConfigEntry(agentModels, target);
-    agentModels[agentKey] = {
-      ...agentModels[agentKey],
-      agentRuntime: { id: params.agentRuntimeId },
-    };
-    agent.models = agentModels;
-  } else {
-    const clearRuntimePin = (
-      models: Record<string, AgentModelEntryConfig>,
-    ): Record<string, AgentModelEntryConfig> => {
-      const nextModels = { ...models };
-      const modelKey = modelConfig.upsertCanonicalModelConfigEntry(nextModels, target);
-      const entry = { ...nextModels[modelKey] };
+    const entry = { ...agentModels[agentKey] };
+    if (params.agentRuntimeId) {
+      entry.agentRuntime = { id: params.agentRuntimeId };
+    } else {
       delete entry.agentRuntime;
-      nextModels[modelKey] = entry;
-      return nextModels;
-    };
-    const defaultModels = agentDefaults.models;
-    if (defaultModels && Object.keys(defaultModels).length > 0) {
-      agentDefaults.models = clearRuntimePin(defaultModels);
     }
-    if (agent?.models && Object.keys(agent.models).length > 0) {
-      agent.models = clearRuntimePin(agent.models);
-    }
+    agentModels[agentKey] = entry;
+    agent.models = agentModels;
   }
   const selectedModel = params.authProfileId ? `${key}@${params.authProfileId}` : key;
   agentScope.setAgentEffectiveModelPrimary(nextConfig, agentId, selectedModel, {

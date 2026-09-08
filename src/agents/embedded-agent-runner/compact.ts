@@ -454,6 +454,8 @@ export async function compactEmbeddedAgentSessionDirect(
         modelSelectionLocked: params.modelSelectionLocked,
         defaultProvider: DEFAULT_PROVIDER,
         defaultModel: DEFAULT_MODEL,
+        manifestPlugins: preparedModelRuntime.metadataSnapshot,
+        resolvedModelCatalog: preparedModelRuntime.modelCatalog.entries,
       });
       const primaryProvider = resolvedCompactionTarget.provider ?? DEFAULT_PROVIDER;
       const primaryModel = resolvedCompactionTarget.model ?? DEFAULT_MODEL;

@@ -184,6 +184,7 @@ function createPreparedModelRuntime(config: Record<string, unknown>) {
     config,
     workspaceDir: "/tmp/openclaw-model-resolution",
     pluginRegistry: {},
+    modelCatalog: { entries: [staticCatalogModel], routeVariants: [] },
     configuredRuntimeModels: [],
     inlineProviderModels: [],
     createStores: () => ({ authStorage, modelRegistry: emptyModelRegistry }),
@@ -262,12 +263,25 @@ describe("embedded model resolution consistency", () => {
         },
       },
     ];
+    const planned = resolveInitialEmbeddedRunModel({
+      config,
+      agentId: "worker",
+      normalization: { manifestPlugins, allowPluginNormalization: false },
+    });
+    expect(planned).toEqual({ provider: "custom-provider", modelId: "modern-model" });
+    expect(loadManifestMetadataSnapshotMock).not.toHaveBeenCalled();
+    expect(normalizeProviderModelIdWithRuntimeMock).not.toHaveBeenCalled();
+    const admitted = resolveInitialEmbeddedRunModel({
+      config,
+      agentId: "worker",
+      normalization: { manifestPlugins },
+    });
     expect(
       resolveModelCandidateChain({
         cfg: config,
         agentId: "worker",
-        provider: initial.provider,
-        model: initial.modelId,
+        provider: admitted.provider,
+        model: admitted.modelId,
         requestedRouteResolution: "resolved",
         fallbacksOverride: [],
         manifestPlugins,

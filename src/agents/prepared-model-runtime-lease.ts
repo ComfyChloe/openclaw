@@ -20,6 +20,7 @@ import {
   type PreparedModelRuntimeReplacement,
   type PreparedModelRuntimeSnapshot,
 } from "./prepared-model-runtime.owner.js";
+import { prepareOwnedPluginLoadContext } from "./prepared-model-runtime.plugin-context.js";
 import {
   preparedPluginGenerationReusesBase,
   preparedPluginGenerationSupportsSelections,
@@ -178,6 +179,18 @@ export async function acquirePreparedModelRuntimeLeaseFromOwners(
         },
         { trustConfigIdentity: true },
       );
+      if (
+        input.loadRuntimePlugins &&
+        !options.pluginGeneration &&
+        !options.pluginMetadataSnapshot
+      ) {
+        // Planning may inspect all manifests; execution retains only its selected owners.
+        pluginMetadataSnapshot = prepareOwnedPluginLoadContext(
+          input,
+          input.env ?? process.env,
+          undefined,
+        );
+      }
     }
     key = ownerKey(input);
     if (provenance === "run" && context.getGatewayLifecycleActive() && options.pluginGeneration) {
@@ -230,8 +243,10 @@ export async function acquirePreparedModelRuntimeLeaseFromOwners(
       existing?.needsRefresh &&
       !existing.pending &&
       (existing.provenance === "run" || existing.provenance === "ephemeral");
-    // A static owner cannot satisfy explicit live discovery; publish a new exact generation.
+    // Run-owned config changes and explicit live discovery need a new exact generation.
     const ownerGenerationChanged =
+      (existing?.provenance === "run" &&
+        !preparedModelRuntimeConfigsMatch(existing.input.config, input.config)) ||
       (options.pluginGeneration !== undefined &&
         !preparedPluginGenerationReusesBase(
           existing?.pending ? existing.pendingPluginGeneration : existing?.pluginGeneration,

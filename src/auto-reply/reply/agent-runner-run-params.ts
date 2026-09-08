@@ -1,5 +1,5 @@
 /** Builds embedded-agent run parameters from queued follow-up run state. */
-import { normalizeLowercaseStringOrEmpty } from "@openclaw/normalization-core/string-coerce";
+import { normalizeConfiguredProviderCatalogModelId } from "@openclaw/model-catalog-core/provider-model-id-normalization";
 import {
   modelFallbackOverrideFromAvailability,
   resolveModelFallbackAvailability,
@@ -80,8 +80,9 @@ export async function resolveRunModelHasVision(params: {
   const providerConfig = resolveMergedModelProviderConfig(run.config, provider);
   const configured = resolveMergedModelProviderModels({
     models: providerConfig?.models,
-    normalizeModelId: normalizeLowercaseStringOrEmpty,
-  }).get(normalizeLowercaseStringOrEmpty(model));
+    normalizeModelId: (modelId) =>
+      normalizeConfiguredProviderCatalogModelId(provider, modelId.trim()),
+  }).get(model.trim());
   if (configured?.input !== undefined) {
     return modelSupportsInput(configured, "image");
   }
@@ -169,6 +170,7 @@ export async function buildEmbeddedRunBaseParams(params: {
     provider: params.provider,
     model: params.model,
     modelHasVision: await resolveRunModelHasVision(params),
+    requestedRouteResolution: "resolved" as const,
     modelSelectionLocked: params.run.modelSelectionLocked,
     modelFallbackAvailability,
     modelFallbacksOverride,

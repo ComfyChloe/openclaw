@@ -1,6 +1,7 @@
 /**
  * Builds runtime context for context-engine backed embedded compaction.
  */
+import { parseModelCatalogRef } from "@openclaw/model-catalog-core/model-catalog-refs";
 import type { ThinkLevel, ThinkingCatalogEntry } from "../../auto-reply/thinking.js";
 import type { ChatType } from "../../channels/chat-type.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
@@ -13,7 +14,11 @@ import {
 import { resolveContextWindowInfo } from "../context-window-guard.js";
 import { DEFAULT_CONTEXT_TOKENS, DEFAULT_PROVIDER } from "../defaults.js";
 import { splitTrailingAuthProfile } from "../model-ref-profile.js";
-import type { ModelManifestNormalizationContext } from "../model-ref-shared.js";
+import {
+  normalizeModelRef,
+  normalizeProviderId,
+  type ModelManifestNormalizationContext,
+} from "../model-ref-shared.js";
 import {
   buildModelAliasIndex,
   inferUniqueProviderFromConfiguredModels,
@@ -114,6 +119,7 @@ export function resolveEmbeddedCompactionTarget(params: {
   defaultModel?: string;
   allowPluginNormalization?: boolean;
   manifestPlugins?: ModelManifestNormalizationContext["manifestPlugins"];
+  resolvedModelCatalog?: ModelManifestNormalizationContext["resolvedModelCatalog"];
 }): {
   provider: string | undefined;
   runtimeProvider?: string;
@@ -122,7 +128,8 @@ export function resolveEmbeddedCompactionTarget(params: {
   model: string | undefined;
   authProfileId: string | undefined;
 } {
-  const provider = params.provider?.trim() || params.defaultProvider;
+  const provider =
+    normalizeProviderId(params.provider?.trim() || params.defaultProvider || "") || undefined;
   const model = params.modelId?.trim() || params.defaultModel;
   // A locked session's creating model owns every transcript read, including
   // summaries. Compaction-specific model overrides would cross that boundary.
@@ -144,23 +151,37 @@ export function resolveEmbeddedCompactionTarget(params: {
   if (!override) {
     return assembleTarget(provider, model);
   }
+  const resolveRawTarget = (
+    targetProvider: string | undefined,
+    targetModel: string | undefined,
+  ) => {
+    // Future-context projections stay cold; admitted execution supplies its normalization facts.
+    if (!targetProvider || !targetModel || !params.manifestPlugins) {
+      return assembleTarget(targetProvider, targetModel);
+    }
+    const resolved = normalizeModelRef(targetProvider, targetModel, {
+      manifestPlugins: params.manifestPlugins,
+      resolvedModelCatalog: params.resolvedModelCatalog,
+      allowPluginNormalization: params.allowPluginNormalization,
+    });
+    return assembleTarget(resolved.provider, resolved.model);
+  };
   const slashIdx = override.indexOf("/");
   if (slashIdx > 0) {
-    const overrideProvider = override.slice(0, slashIdx).trim();
+    const overrideProvider = normalizeProviderId(override.slice(0, slashIdx));
     const overrideModel = override.slice(slashIdx + 1).trim() || params.defaultModel;
-    return assembleTarget(overrideProvider, overrideModel);
+    return resolveRawTarget(overrideProvider, overrideModel);
   }
   const config = params.config ?? {};
-  const currentProvider = provider?.trim();
   if (
-    currentProvider &&
+    provider &&
     hasBareConfiguredModelForProvider({
       cfg: config,
-      provider: currentProvider,
+      provider,
       model: override,
     })
   ) {
-    return assembleTarget(currentProvider, override);
+    return resolveRawTarget(provider, override);
   }
   const inferredLiteralProvider = inferUniqueProviderFromConfiguredModels({
     cfg: config,
@@ -168,7 +189,7 @@ export function resolveEmbeddedCompactionTarget(params: {
     allowManifestNormalization: false,
   });
   if (inferredLiteralProvider) {
-    return assembleTarget(inferredLiteralProvider, override);
+    return resolveRawTarget(inferredLiteralProvider, override);
   }
   const defaultProvider = provider || DEFAULT_PROVIDER;
   const aliasKey = normalizeCompactionConfigKey(splitTrailingAuthProfile(override).model);
@@ -181,12 +202,13 @@ export function resolveEmbeddedCompactionTarget(params: {
         defaultProvider,
         allowPluginNormalization: params.allowPluginNormalization,
         manifestPlugins: params.manifestPlugins,
+        resolvedModelCatalog: params.resolvedModelCatalog,
       }).byAlias.get(aliasKey)
     : undefined;
   if (alias) {
     return assembleTarget(alias.ref.provider, alias.ref.model);
   }
-  return assembleTarget(provider, override);
+  return resolveRawTarget(provider, override);
 }
 
 /** Binds harness ownership without repeating model or alias selection. */
@@ -221,31 +243,20 @@ function hasBareConfiguredModelForProvider(params: {
   provider: string;
   model: string;
 }): boolean {
-  const providerKey = normalizeCompactionConfigKey(params.provider);
-  const modelKey = normalizeCompactionConfigKey(params.model);
-  if (!providerKey || !modelKey || params.model.includes("/")) {
-    return false;
-  }
-  for (const rawRef of Object.keys(params.cfg.agents?.defaults?.models ?? {})) {
-    const slashIdx = rawRef.indexOf("/");
-    if (slashIdx <= 0 || rawRef.endsWith("/*")) {
-      continue;
-    }
-    const rawProvider = rawRef.slice(0, slashIdx);
-    const rawModel = rawRef.slice(slashIdx + 1);
-    if (
-      normalizeCompactionConfigKey(rawProvider) === providerKey &&
-      normalizeCompactionConfigKey(rawModel) === modelKey
-    ) {
-      return true;
-    }
-  }
-  const configuredProvider = Object.entries(params.cfg.models?.providers ?? {}).find(([key]) => {
-    return normalizeCompactionConfigKey(key) === providerKey;
-  })?.[1];
-  return (configuredProvider?.models ?? []).some((entry) => {
-    return normalizeCompactionConfigKey(entry?.id ?? "") === modelKey;
-  });
+  const provider = normalizeProviderId(params.provider);
+  const model = params.model.trim();
+  // Literal identity is case-sensitive; a folded row must not hide another provider's exact match.
+  return (
+    Object.keys(params.cfg.agents?.defaults?.models ?? {}).some((rawRef) => {
+      const ref = parseModelCatalogRef(rawRef);
+      return ref?.provider === provider && ref.modelId === model;
+    }) ||
+    Object.entries(params.cfg.models?.providers ?? {}).some(
+      ([id, config]) =>
+        normalizeProviderId(id) === provider &&
+        config.models?.some((entry) => entry.id.trim() === model),
+    )
+  );
 }
 
 /** Resolves the concrete harness already bound to this exact compaction target. */
@@ -310,15 +321,25 @@ export function resolveCompactionContextTokenBudget(params: {
 
 export function buildEmbeddedCompactionRuntimeContext(
   params: EmbeddedCompactionRuntimeContextParams,
+  selectedTarget?: Pick<
+    ReturnType<typeof resolveEmbeddedCompactionTarget>,
+    "provider" | "model" | "authProfileId"
+  >,
 ) {
-  const resolved = resolveEmbeddedCompactionTarget({
-    config: params.config,
-    provider: params.provider,
-    modelId: params.modelId,
-    authProfileId: params.authProfileId,
-    harnessRuntime: params.harnessRuntime,
-    modelSelectionLocked: params.modelSelectionLocked,
-  });
+  // Executing compaction carries its selected target; future contexts still project config.
+  const resolved = selectedTarget
+    ? {
+        ...selectedTarget,
+        ...resolveCompactionTargetRuntime(selectedTarget.provider, params.harnessRuntime),
+      }
+    : resolveEmbeddedCompactionTarget({
+        config: params.config,
+        provider: params.provider,
+        modelId: params.modelId,
+        authProfileId: params.authProfileId,
+        harnessRuntime: params.harnessRuntime,
+        modelSelectionLocked: params.modelSelectionLocked,
+      });
   const agentHarnessId = params.harnessRuntime?.trim() || undefined;
   const runtimeAuthPlan =
     params.runtimeAuthPlan &&

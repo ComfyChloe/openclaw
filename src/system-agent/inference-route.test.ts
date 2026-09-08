@@ -4,12 +4,15 @@ import { clearAgentHarnesses, registerAgentHarness } from "../agents/harness/reg
 import { selectAgentHarness } from "../agents/harness/selection.js";
 import { resolveRunWorkspaceDir } from "../agents/workspace-run.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import { createPluginMetadataSnapshotFixture } from "../plugins/plugin-metadata.test-support.js";
+import { withPluginRuntimeGenerationScope } from "../plugins/runtime/generation-scope.js";
 import { SYSTEM_AGENT_ID } from "./agent-id.js";
 import {
   projectDefaultInferenceRoute,
   resolveSystemAgentConfiguredRouteFromConfig,
   sameDefaultInferenceRoute,
 } from "./inference-route.js";
+import { canonicalizeSetupModelRef } from "./setup-inference-plan-helpers.js";
 
 function devConfig(agentRuntime?: string): OpenClawConfig {
   return {
@@ -47,6 +50,69 @@ afterEach(() => {
 });
 
 describe("resolveSystemAgentConfiguredRouteFromConfig", () => {
+  it.each(["custom/latest", "custom/Middle", "fast"])(
+    "keeps prepared catalog identity for source-agent input %s",
+    async (primary) => {
+      const metadataSnapshot = createPluginMetadataSnapshotFixture({
+        plugins: [
+          {
+            id: "custom",
+            providers: ["custom"],
+            modelIdNormalization: {
+              providers: { custom: { aliases: { latest: "Middle", middle: "Wrong" } } },
+            },
+          },
+        ],
+      });
+      const resolvedModelCatalog = [{ provider: "custom", id: "Middle" }];
+      const cfg: OpenClawConfig = {
+        agents: {
+          defaults: { model: "other/default" },
+          entries: {
+            main: {
+              model: `${primary}@custom:selected`,
+              models: { "custom/Middle": { alias: "fast" } },
+            },
+          },
+        },
+        models: {
+          providers: {
+            custom: {
+              baseUrl: "https://fixture.invalid/v1",
+              models: [],
+              agentRuntime: { id: "openclaw" },
+            },
+          },
+        },
+      };
+      await withPluginRuntimeGenerationScope({ metadataSnapshot }, async () => {
+        const route = await resolveSystemAgentConfiguredRouteFromConfig(cfg, "main", {
+          pluginMetadataPlugins: metadataSnapshot.plugins,
+          resolvedModelCatalog,
+        });
+        expect(route).toMatchObject({
+          provider: "custom",
+          model: "Middle",
+          modelLabel: "custom/Middle",
+          authProfileId: "custom:selected",
+          agentId: "main",
+        });
+        for (const raw of [primary, "custom/Middle@custom:selected"]) {
+          expect(
+            canonicalizeSetupModelRef({
+              cfg,
+              raw,
+              agentId: "main",
+              defaultProvider: "custom",
+              manifestPlugins: metadataSnapshot,
+              resolvedModelCatalog,
+            }),
+          ).toBe("custom/Middle");
+        }
+      });
+    },
+  );
+
   it("treats a setup-materialized first-agent roster as inference-route neutral", async () => {
     const withoutRoster: OpenClawConfig = {
       agents: { defaults: { model: "openai/gpt-5.5" } },

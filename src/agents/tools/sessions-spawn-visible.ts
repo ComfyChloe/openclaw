@@ -21,7 +21,7 @@ import { normalizeDeliveryContext } from "../../utils/delivery-context.shared.js
 import { listAgentIds, resolveAgentConfig, resolveSessionAgentId } from "../agent-scope.js";
 import { reserveChildAdmissionSlot } from "../child-admission.js";
 import { resolveAgentIdentity } from "../identity.js";
-import { resolveSubagentSpawnModelSelection } from "../model-selection.js";
+import { resolveSubagentSpawnModelInput } from "../model-selection-config.js";
 import { resolveSandboxRuntimeStatus } from "../sandbox/runtime-status.js";
 import { resolveSpawnedWorkspaceInheritance, type SpawnedToolContext } from "../spawned-context.js";
 import {
@@ -233,8 +233,8 @@ export async function maybeSpawnVisibleSession(params: {
   if (!targetPolicy.ok) {
     return { status: "forbidden", error: targetPolicy.error };
   }
-  const resolvedModel =
-    modelOverride ?? resolveSubagentSpawnModelSelection({ cfg, agentId: targetAgentId });
+  const modelInput =
+    modelOverride ?? resolveSubagentSpawnModelInput({ cfg, agentId: targetAgentId });
   const runTimeoutSeconds = resolveConfiguredSubagentRunTimeoutSeconds({
     cfg,
     runTimeoutSeconds: params.runTimeoutSeconds,
@@ -330,7 +330,7 @@ export async function maybeSpawnVisibleSession(params: {
         ...(params.label ? { label: params.label } : {}),
         // sessions.create persists the group under the legacy wire field `category`.
         ...(group ? { category: group } : {}),
-        model: resolvedModel,
+        model: modelInput,
         task: params.task,
         parentSessionKey: requesterKey,
         // Declared spawn lineage: without it the child persists as a depth-0 root

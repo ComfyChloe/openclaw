@@ -95,6 +95,7 @@ vi.mock("../agents/auth-profiles/store-runtime.js", () => {
   const createEmptyStore = () => ({ version: 1, profiles: {} });
   return {
     ensureAuthProfileStore: vi.fn(createEmptyStore),
+    getPreparedRuntimeAuthProfileStoreSnapshot: vi.fn(() => undefined),
     ensureAuthProfileStoreForLocalUpdate: vi.fn(createEmptyStore),
     loadAuthProfileStore: vi.fn(createEmptyStore),
     loadAuthProfileStoreForRuntime: vi.fn(createEmptyStore),

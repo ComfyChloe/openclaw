@@ -1073,6 +1073,7 @@ describe("CLI attempt execution", () => {
       body: opts.message,
       transcriptBody: opts.message,
       configuredThinkingCatalog: [],
+      configuredModel: { provider: "claude-cli", model: "sonnet" },
       normalizedSpawned: {},
       agentCfg: undefined,
       thinkOverride: undefined,
@@ -1093,11 +1094,12 @@ describe("CLI attempt execution", () => {
       agentDir,
       pluginsEnabled: false,
       manifestMetadataSnapshot: undefined,
-      modelManifestContext: { manifestPlugins: [] },
+      commandRuntimeContext: undefined,
+      modelManifestContext: { manifestPlugins: [], resolvedModelCatalog: undefined },
       isSubagentLane: false,
       acpManager: getAcpSessionManager(),
       acpResolution: null,
-      runLease: undefined,
+      runLease: { release: async () => {} },
     };
     const admission = prepareAgentCommandExecutionIdentity({
       opts,

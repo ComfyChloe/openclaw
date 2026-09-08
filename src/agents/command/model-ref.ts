@@ -1,13 +1,10 @@
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
-import {
-  allowsPluginModelNormalization,
-  findConfiguredModelProvider,
-} from "../configured-provider-model.js";
-import { normalizeConfiguredProviderCatalogModelId } from "../model-ref-shared.js";
+import type { ModelFallbackRouteResolution } from "../model-fallback.types.js";
 import type { ModelManifestNormalizationContext } from "../model-ref-shared.js";
+import { parseConfiguredModelRef } from "../model-selection-shared.js";
 import {
   buildModelAliasIndex,
-  normalizeModelRef,
+  modelKey,
   normalizeProviderId,
   resolveModelRefFromString,
 } from "../model-selection.js";
@@ -17,29 +14,21 @@ export function normalizeAgentCommandModelRef(
   provider: string,
   model: string,
   modelManifestContext: ModelManifestNormalizationContext,
+  requestedRouteResolution?: ModelFallbackRouteResolution,
 ) {
-  return normalizeModelRef(provider, model, {
-    ...modelManifestContext,
-    allowPluginNormalization: allowsPluginModelNormalization({ cfg, provider, model }),
-  });
-}
-
-export function normalizeAgentCommandDefaultModelRef(
-  cfg: OpenClawConfig,
-  provider: string,
-  model: string,
-  modelManifestContext: ModelManifestNormalizationContext,
-) {
-  const normalizedProvider = normalizeProviderId(provider);
-  if (findConfiguredModelProvider(cfg, normalizedProvider)) {
-    return {
-      provider: normalizedProvider,
-      model: normalizeConfiguredProviderCatalogModelId(normalizedProvider, model, {
-        manifestPlugins: modelManifestContext.manifestPlugins,
-      }),
-    };
+  if (requestedRouteResolution === "resolved") {
+    return { provider: normalizeProviderId(provider), model: model.trim() };
   }
-  return normalizeAgentCommandModelRef(cfg, provider, model, modelManifestContext);
+  const ref = parseConfiguredModelRef({
+    cfg,
+    raw: modelKey(provider, model),
+    defaultProvider: provider,
+    ...modelManifestContext,
+  });
+  if (!ref) {
+    throw new Error("Invalid model override.");
+  }
+  return ref;
 }
 
 export function parseAgentCommandModelRef(
@@ -49,22 +38,19 @@ export function parseAgentCommandModelRef(
   defaultProvider: string,
   modelManifestContext: ModelManifestNormalizationContext,
 ) {
-  const parsed = resolveModelRefFromString({
-    cfg,
-    agentId,
-    raw,
-    defaultProvider,
-    aliasIndex: buildModelAliasIndex({
+  return (
+    resolveModelRefFromString({
       cfg,
       agentId,
+      raw,
       defaultProvider,
+      aliasIndex: buildModelAliasIndex({
+        cfg,
+        agentId,
+        defaultProvider,
+        ...modelManifestContext,
+      }),
       ...modelManifestContext,
-      allowPluginNormalization: false,
-    }),
-    ...modelManifestContext,
-    allowPluginNormalization: false,
-  })?.ref;
-  return parsed
-    ? normalizeAgentCommandModelRef(cfg, parsed.provider, parsed.model, modelManifestContext)
-    : null;
+    })?.ref ?? null
+  );
 }

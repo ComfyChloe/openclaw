@@ -1,8 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { resolveAgentConfig, resolveAgentDir } from "../../agents/agent-scope.js";
-import { resolveModelAsync } from "../../agents/embedded-agent-runner/model.js";
 import { isEmbeddedAgentRunActive } from "../../agents/embedded-agent-runner/runs.js";
-import { resolveDefaultModelForAgent } from "../../agents/model-selection-config.js";
+import { withPreparedSimpleCompletionSelection } from "../../agents/simple-completion-runtime.js";
 import { resolveHeartbeatPromptCore } from "../../auto-reply/heartbeat.js";
 import { resolveSessionStorePathCore } from "../../config/sessions/paths.js";
 import { toErrorObject } from "../../infra/errors.js";
@@ -213,20 +212,32 @@ async function runSkillHistoryScanCore(
     }
     eligible = resumedCandidates;
   }
-  const modelRef = resolveDefaultModelForAgent({ cfg: params.config, agentId: params.agentId });
-  const resolvedModel =
+  const prepared =
     eligible.length > 0
-      ? (
-          await resolveModelAsync(
-            modelRef.provider,
-            modelRef.model,
-            resolveAgentDir(params.config, params.agentId, params.env),
-            params.config,
-            { agentId: params.agentId, workspaceDir: params.workspaceDir },
-          )
-        ).model
+      ? await withPreparedSimpleCompletionSelection(
+          {
+            cfg: params.config,
+            agentId: params.agentId,
+            agentDir: resolveAgentDir(params.config, params.agentId, params.env),
+            workspaceDir: params.workspaceDir,
+          },
+          async (selection, context) => {
+            if (!selection) {
+              throw new Error(`No model configured for agent ${params.agentId}.`);
+            }
+            const runtime = context.preparedModelRuntime;
+            const resolution = await context.modelResolver(
+              selection.provider,
+              selection.modelId,
+              runtime.agentDir,
+              runtime.config,
+              { agentId: params.agentId, authProfileId: selection.profileId },
+            );
+            return { selection, model: resolution.model };
+          },
+        )
       : undefined;
-  const contextTokens = resolveSkillWorkshopModelContextTokens(resolvedModel);
+  const contextTokens = resolveSkillWorkshopModelContextTokens(prepared?.model);
   const maxTranscriptChars =
     resolveSkillWorkshopProjectionBudgets(contextTokens).historyTranscriptChars;
   const maxSessionTranscriptChars = Math.min(
@@ -315,7 +326,14 @@ async function runSkillHistoryScanCore(
       agentId: params.agentId,
       config: params.config,
       env: params.env,
-      modelRef,
+      // A nonempty batch was prepared under this exact model and credential selection.
+      modelRef: {
+        provider: prepared!.selection.provider,
+        model: prepared!.selection.modelId,
+        requestedRouteResolution: "resolved",
+        authProfileId: prepared!.selection.profileId,
+        authProfileIdSource: prepared!.selection.profileId ? "user" : undefined,
+      },
       progress,
       onProgress: async (nextProgress) => {
         const current = store.lookup(stateKey);

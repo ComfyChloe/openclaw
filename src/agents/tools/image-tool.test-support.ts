@@ -4,15 +4,15 @@ import type {
   resolveDefaultMediaModel,
 } from "../../media-understanding/defaults.js";
 import type {
+  describeImageWithResolvedModel,
+  describeImagesWithResolvedModel,
+} from "../../media-understanding/image-runtime.js";
+import type {
   buildMediaUnderstandingRegistry,
   getMediaUnderstandingProvider,
 } from "../../media-understanding/provider-registry.js";
 import type { ImageCompressionPolicy, WebMediaResult } from "../../media/web-media.js";
-import type {
-  describeImageWithModel,
-  describeImagesWithModel,
-  MediaUnderstandingProvider,
-} from "../../plugin-sdk/media-understanding.js";
+import type { MediaUnderstandingProvider } from "../../plugin-sdk/media-understanding.js";
 import type { AuthProfileStore } from "../auth-profiles/types.js";
 import type { PreparedModelRuntimeSnapshot } from "../prepared-model-runtime.js";
 import type {
@@ -56,8 +56,8 @@ type ResolveImageCompressionPolicy = (params: {
 type ImageToolProviderDeps = {
   buildProviderRegistry: typeof buildMediaUnderstandingRegistry;
   getMediaUnderstandingProvider: typeof getMediaUnderstandingProvider;
-  describeImageWithModel: typeof describeImageWithModel;
-  describeImagesWithModel: typeof describeImagesWithModel;
+  describeImageWithResolvedModel: typeof describeImageWithResolvedModel;
+  describeImagesWithResolvedModel: typeof describeImagesWithResolvedModel;
   resolveAutoMediaKeyProviders: typeof resolveAutoMediaKeyProviders;
   resolveDefaultMediaModel: typeof resolveDefaultMediaModel;
   resolveModelAsync: ResolveModelAsync;

@@ -2414,7 +2414,7 @@ describe("selectAgentHarness", () => {
     );
   });
 
-  it("projects a self-qualified model adapter and transport into harness capability checks", () => {
+  it("keeps namespaced model transport isolated in harness capability checks", () => {
     const config = {
       models: {
         providers: {
@@ -2433,18 +2433,19 @@ describe("selectAgentHarness", () => {
       },
     } as unknown as OpenClawConfig;
 
-    expect(
-      buildAgentHarnessSupportContext({
-        provider: "openai",
-        modelId: "gpt-5.5",
-        requestedRuntime: "codex",
-        config,
-      }).modelProvider,
-    ).toMatchObject({
-      api: "openai-completions",
-      requestTransportOverrides: "present",
-      runtimePolicy: { compatibleIds: ["openclaw"] },
-    });
+    for (const [modelId, api, requestTransportOverrides, compatibleIds] of [
+      ["gpt-5.5", "openai-responses", "none", ["openclaw", "codex"]],
+      ["openai/gpt-5.5", "openai-completions", "present", ["openclaw"]],
+    ] as const) {
+      expect(
+        buildAgentHarnessSupportContext({
+          provider: "openai",
+          modelId,
+          requestedRuntime: "codex",
+          config,
+        }).modelProvider,
+      ).toMatchObject({ api, requestTransportOverrides, runtimePolicy: { compatibleIds } });
+    }
   });
 
   it("projects canonical model transport overrides for a shipped alias", () => {

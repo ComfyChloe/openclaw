@@ -1,10 +1,17 @@
 // Validates normalized OpenClaw config and reports user-facing errors.
 import { collectConfiguredModelRefs } from "@openclaw/model-catalog-core/configured-model-refs";
+import {
+  buildModelCatalogMergeKey,
+  parseModelCatalogRef,
+} from "@openclaw/model-catalog-core/model-catalog-refs";
 import { normalizeLowercaseStringOrEmpty } from "@openclaw/normalization-core/string-coerce";
 import { sanitizeForLog } from "../../packages/terminal-core/src/ansi.js";
 import { listAgentEntriesWithSource } from "../agents/agent-scope.js";
 import type { ChannelDmAllowFromMode } from "../channels/plugins/dm-access.js";
-import { planManifestModelCatalogSuppressions } from "../model-catalog/index.js";
+import {
+  planManifestModelCatalogSuppressions,
+  type ManifestModelCatalogSuppressionEntry,
+} from "../model-catalog/index.js";
 import { listChannelIdsForOwnershipMigration } from "../plugins/channel-presence-policy.js";
 import { normalizePluginsConfig, normalizePluginId } from "../plugins/config-state.js";
 import { loadInstalledPluginIndexInstallRecordsSync } from "../plugins/installed-plugin-index-record-reader.js";
@@ -546,33 +553,21 @@ function validateConfigObjectWithPluginsBase(
       return;
     }
     const { registry } = ensureRegistry();
-    const suppressedModels = new Map<
-      string,
-      { provider: string; model: string; reason?: string }
-    >();
+    const suppressedModels = new Map<string, ManifestModelCatalogSuppressionEntry>();
     for (const suppression of planManifestModelCatalogSuppressions({ registry }).suppressions) {
-      const key = `${suppression.provider}/${suppression.model}`;
-      if (!suppression.when && !suppressedModels.has(key)) {
-        suppressedModels.set(key, {
-          provider: suppression.provider,
-          model: suppression.model,
-          ...(suppression.reason ? { reason: suppression.reason } : {}),
-        });
+      if (!suppression.when && !suppressedModels.has(suppression.mergeKey)) {
+        suppressedModels.set(suppression.mergeKey, suppression);
       }
     }
     const seen = new Set<string>();
     for (const ref of configuredRefs) {
-      const slashIndex = ref.value.indexOf("/");
-      if (slashIndex <= 0 || slashIndex >= ref.value.length - 1) {
+      const parsed = parseModelCatalogRef(ref.value);
+      if (!parsed) {
         continue;
       }
-      const provider = normalizeLowercaseStringOrEmpty(ref.value.slice(0, slashIndex));
-      const model = normalizeLowercaseStringOrEmpty(ref.value.slice(slashIndex + 1));
-      if (!provider || !model) {
-        continue;
-      }
-      const suppression = suppressedModels.get(`${provider}/${model}`);
-      const issueKey = `${ref.path}\0${provider}/${model}`;
+      const mergeKey = buildModelCatalogMergeKey(parsed.provider, parsed.modelId);
+      const suppression = suppressedModels.get(mergeKey);
+      const issueKey = `${ref.path}\0${mergeKey}`;
       if (!suppression || seen.has(issueKey)) {
         continue;
       }

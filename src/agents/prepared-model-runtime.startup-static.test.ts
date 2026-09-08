@@ -754,9 +754,10 @@ describe("prepared model runtime Gateway catalog mode", () => {
     expect(mocks.runPreparedModelCatalogWorker).toHaveBeenCalledTimes(3);
   });
 
-  it("publishes exact dynamic configured models without building a live catalog", async () => {
+  it("publishes case-distinct dynamic configured models without building a live catalog", async () => {
     const provider = "fixture-provider";
     const modelId = "fixture-model-2026-08-09";
+    const upperModelId = modelId.toUpperCase();
     const registry = createEmptyPluginRegistry();
     const resolveDynamicModel = vi.fn(
       (context: { provider: string; modelId: string; modelRegistry: unknown }) => ({
@@ -809,6 +810,7 @@ describe("prepared model runtime Gateway catalog mode", () => {
             fallbacks: [
               "openai/gpt-5.5",
               `${provider}/${modelId}`,
+              `${provider}/${upperModelId}`,
               "registry-only/mixed",
               "REGISTRY-ONLY/MIXED",
               "registry-only/Shadow",
@@ -826,7 +828,10 @@ describe("prepared model runtime Gateway catalog mode", () => {
       catalogMode: "static",
     });
 
-    expect(resolveDynamicModel).toHaveBeenCalledOnce();
+    expect(resolveDynamicModel.mock.calls.map(([context]) => context.modelId)).toEqual([
+      modelId,
+      upperModelId,
+    ]);
     expect(mocks.discoverModels.mock.invocationCallOrder[0]).toBeLessThan(
       resolveDynamicModel.mock.invocationCallOrder[0]!,
     );
@@ -850,7 +855,7 @@ describe("prepared model runtime Gateway catalog mode", () => {
       snapshot?.configuredRuntimeModels.map(
         (configured) => `${configured.provider}/${configured.modelId}`,
       ),
-    ).toEqual([`${provider}/${modelId}`, "openai/gpt-5.5"]);
+    ).toEqual([`${provider}/${modelId}`, "openai/gpt-5.5", `${provider}/${upperModelId}`]);
     expect(snapshot?.configuredRuntimeModels[0]?.model).toMatchObject({
       provider,
       id: modelId,
@@ -862,6 +867,7 @@ describe("prepared model runtime Gateway catalog mode", () => {
       expect(entries?.map((entry) => `${entry.provider}/${entry.id}`)).toEqual([
         `${provider}/${modelId}`,
         "openai/gpt-5.5",
+        `${provider}/${upperModelId}`,
         "registry-only/MIXED",
         "registry-only/Shadow",
         "registry-only/shadow",
@@ -869,7 +875,7 @@ describe("prepared model runtime Gateway catalog mode", () => {
     }
     expect(
       snapshot?.modelCatalog.staticEntries?.map((entry) => `${entry.provider}/${entry.id}`),
-    ).toEqual([`${provider}/${modelId}`, "openai/gpt-5.5"]);
+    ).toEqual([`${provider}/${modelId}`, "openai/gpt-5.5", `${provider}/${upperModelId}`]);
     expect(
       snapshot?.modelCatalog.staticEntries?.find((entry) => entry.provider === "openai")
         ?.thinkingLevelMap,

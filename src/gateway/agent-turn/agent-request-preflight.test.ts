@@ -532,3 +532,72 @@ describe("agent request session ownership preflight", () => {
     );
   });
 });
+
+describe("agent request model provenance", () => {
+  function inspect(
+    model: { provider?: string; model?: string; requestedRouteResolution?: "raw" | "resolved" },
+    admin = true,
+  ) {
+    const respond = vi.fn();
+    const result = prepareAgentRequestPreflight({
+      request: { message: "run", idempotencyKey: "model-provenance", ...model },
+      context: { getRuntimeConfig: () => ({}), dedupe: new Map() },
+      client: {
+        connect: {
+          client: { mode: "backend" },
+          scopes: [admin ? "operator.admin" : "operator.write"],
+        },
+      },
+      io: createAgentTurnIo(respond),
+    } as never);
+    return { result, respond };
+  }
+
+  it.each([undefined, "raw"] as const)(
+    "keeps legacy bare input for resolution=%s",
+    (requestedRouteResolution) => {
+      const { result, respond } = inspect({ model: "latest", requestedRouteResolution });
+      expect(result?.modelOverride).toBe("latest");
+      expect(result?.providerOverride).toBeUndefined();
+      expect(respond).not.toHaveBeenCalled();
+    },
+  );
+
+  it("normalizes only provider syntax for a complete selected tuple", () => {
+    const { result, respond } = inspect({
+      provider: " CUSTOM ",
+      model: " Namespace/Middle ",
+      requestedRouteResolution: "resolved",
+    });
+    expect(result).toMatchObject({ providerOverride: "custom", modelOverride: "Namespace/Middle" });
+    expect(respond).not.toHaveBeenCalled();
+  });
+
+  it.each([{ model: "middle" }, { provider: "custom" }, {}])(
+    "rejects incomplete resolved input %j",
+    (input) => {
+      const { result, respond } = inspect({ ...input, requestedRouteResolution: "resolved" });
+      expect(result).toBeUndefined();
+      expect(respond).toHaveBeenCalledWith(
+        false,
+        undefined,
+        expect.objectContaining({ code: "INVALID_REQUEST" }),
+      );
+    },
+  );
+
+  it("does not authorize model overrides from a resolution marker", () => {
+    const { result, respond } = inspect(
+      { provider: "custom", model: "middle", requestedRouteResolution: "resolved" },
+      false,
+    );
+    expect(result).toBeUndefined();
+    expect(respond).toHaveBeenCalledWith(
+      false,
+      undefined,
+      expect.objectContaining({
+        message: "provider/model overrides are not authorized for this caller.",
+      }),
+    );
+  });
+});

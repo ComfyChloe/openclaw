@@ -97,6 +97,10 @@ snapshots; OpenClaw owns all persistence and lifecycle coordination.
 
     `runEmbeddedAgent(...)` is the neutral helper for starting a normal OpenClaw agent turn from plugin code. It uses the same provider/model resolution and agent-harness selection as channel-triggered replies.
 
+    To use a configured agent model alias, pass it in `model` and omit `provider`; the model string may include a provider prefix. When both `provider` and `model` are supplied, `model` identifies a model within that provider. Provider-defined aliases may normalize that ID, but configured agent aliases do not redirect the pair.
+
+    Inputs are raw by default. Set `requestedRouteResolution: "resolved"` when forwarding an executable tuple already selected by its runtime owner; this preserves the selected model ID instead of applying provider aliases again. Preliminary routing or display projections should retain the original raw model input for admission.
+
     `resolveCliBackendDispatchEligibility({ provider, model, agentId, authProfileId, config, agentDir, workspaceDir })` shares the embedded runner's CLI-backend dispatch decision (route, the backend's declared `subscriptionAuthDispatch` capability, stored credential mode — honoring an explicitly pinned `authProfileId`) with callers that opt embedded runs into `cliBackendDispatch: "subscription-auth"`. It returns `{ provider }` when the run would execute through the CLI backend and `undefined` when it stays on the direct passthrough, so callers can budget timeouts for the run that will actually execute.
 
     `resolveThinkingPolicy(...)` returns the provider/model's supported thinking levels and optional default. Provider plugins own the model-specific profile through their thinking hooks, so tool plugins should call this runtime helper instead of importing or duplicating provider lists.

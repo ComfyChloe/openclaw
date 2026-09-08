@@ -3,7 +3,11 @@ import path from "node:path";
 import { expectDefined } from "@openclaw/normalization-core";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createWizardPrompter } from "../../test/helpers/wizard-prompter.js";
-import { listAgentEntries, resolveAgentDir } from "../agents/agent-scope-config.js";
+import {
+  listAgentEntries,
+  resolveAgentDir,
+  resolveAmbientOwnerAgentId,
+} from "../agents/agent-scope-config.js";
 import { readAuthProfileStoreForTest } from "../agents/auth-profiles/oauth-test-utils.js";
 import { upsertAuthProfileWithLock } from "../agents/auth-profiles/profiles.js";
 import type { updateAuthProfileStoreWithLock } from "../agents/auth-profiles/store-runtime.js";
@@ -1570,64 +1574,94 @@ async function runCodexSetupWithFinalConfig(params: {
 }
 
 describe("activateSetupInference", () => {
-  it.each(["success", "empty-reply", "error", "cancelled", "commit-error"] as const)(
-    "reports verification and finalization progress through %s",
-    async (outcome) => {
-      const events: string[] = [];
-      const controller = new AbortController();
-      const configHarness = createPreRosterConfigTransformHarness();
-      const pending = activateSetupInference({
-        kind: "claude-cli",
-        surface: "cli",
-        signal: controller.signal,
-        prompter: createWizardPrompter({
-          progress: (label) => {
-            events.push(label);
-            return {
-              update: (message) => events.push(message),
-              stop: () => events.push("stopped"),
-            };
-          },
-        }),
-        onCommitStarted: () => {
-          events.push("commit");
-          if (outcome === "commit-error") {
-            throw new Error("commit rejected");
-          }
-        },
-        deps: {
-          runCliAgent: vi.fn(async (params: SuccessfulRunParams) => {
-            events.push("probe");
-            if (outcome === "cancelled") {
-              controller.abort();
-            }
-            if (outcome === "error") {
-              throw new Error("provider unavailable");
-            }
-            return outcome === "empty-reply"
-              ? { payloads: [] }
-              : await successfulRunner("claude-cli", "claude-opus-5")(params);
-          }) as never,
-          transformConfigWithPendingPluginInstalls: configHarness.transform as never,
-        },
-      });
-      if (outcome === "commit-error") {
-        await expect(pending).rejects.toThrow("commit rejected");
-      } else {
-        const result = await pending;
-        expect(result.ok).toBe(outcome === "success");
-        if (outcome === "cancelled" || outcome === "success") {
-          expect(result).not.toHaveProperty("disposition");
-        }
+  it.each([
+    "success",
+    "empty-reply",
+    "error",
+    "cancelled",
+    "commit-error",
+    "plan-error",
+    "allocation-error",
+  ] as const)("reports verification and finalization progress through %s", async (outcome) => {
+    const events: string[] = [];
+    const controller = new AbortController();
+    const configHarness = createPreRosterConfigTransformHarness();
+    const createTempDir = vi.fn(async () => {
+      if (outcome === "allocation-error") {
+        throw new Error("synthetic temporary allocation failed");
       }
-      expect(events).toEqual([
-        "Testing your AI connection…",
-        "probe",
-        ...(["success", "commit-error"].includes(outcome) ? ["Finishing AI setup…", "commit"] : []),
-        "stopped",
-      ]);
-    },
-  );
+      return await suiteTempRootTracker.make();
+    });
+    const removeTempDir = vi.fn(deferSuiteTempDirCleanup);
+    const pending = activateSetupInference({
+      kind: "claude-cli",
+      ...(outcome === "plan-error" ? { modelRef: "other/model" } : {}),
+      surface: "cli",
+      signal: controller.signal,
+      prompter: createWizardPrompter({
+        progress: (label) => {
+          events.push(label);
+          return {
+            update: (message) => events.push(message),
+            stop: () => events.push("stopped"),
+          };
+        },
+      }),
+      onCommitStarted: () => {
+        events.push("commit");
+        if (outcome === "commit-error") {
+          throw new Error("commit rejected");
+        }
+      },
+      deps: {
+        createTempDir,
+        removeTempDir,
+        runCliAgent: vi.fn(async (params: SuccessfulRunParams) => {
+          events.push("probe");
+          if (outcome === "cancelled") {
+            controller.abort();
+          }
+          if (outcome === "error") {
+            throw new Error("provider unavailable");
+          }
+          return outcome === "empty-reply"
+            ? { payloads: [] }
+            : await successfulRunner("claude-cli", "claude-opus-5")(params);
+        }) as never,
+        transformConfigWithPendingPluginInstalls: configHarness.transform as never,
+      },
+    });
+    if (outcome === "commit-error") {
+      await expect(pending).rejects.toThrow("commit rejected");
+    } else if (outcome === "allocation-error") {
+      await expect(pending).rejects.toThrow("synthetic temporary allocation failed");
+    } else {
+      const result = await pending;
+      expect(result.ok).toBe(outcome === "success");
+      if (outcome === "plan-error") {
+        expect(result).toMatchObject({
+          status: "unavailable",
+          error: expect.stringContaining("not compatible with the claude-cli inference route"),
+        });
+      }
+      if (outcome === "cancelled" || outcome === "success") {
+        expect(result).not.toHaveProperty("disposition");
+      }
+    }
+    expect(events).toEqual(
+      outcome === "plan-error" || outcome === "allocation-error"
+        ? []
+        : [
+            "Testing your AI connection…",
+            "probe",
+            ...(["success", "commit-error"].includes(outcome)
+              ? ["Finishing AI setup…", "commit"]
+              : []),
+            "stopped",
+          ],
+    );
+    expect(removeTempDir).toHaveBeenCalledTimes(outcome === "allocation-error" ? 0 : 1);
+  });
 
   it.each([new WizardCancelledError(), new WizardNavigationError("back")])(
     "preserves $name from a runtime capability review",
@@ -1821,12 +1855,10 @@ describe("activateSetupInference", () => {
     } satisfies OpenClawConfig;
     const configHarness = createConfigTransformHarness(initialConfig);
     const runCliAgent = vi.fn(successfulRunner("claude-cli", "claude-opus-5"));
-    const resolveRouteMetadata = vi.fn(resolvePluginMetadataSnapshot);
     const result = await activateSetupInference({
       kind: "claude-cli",
       deps: {
         readConfigFileSnapshot: mockConfigSnapshot(initialConfig),
-        resolvePluginMetadataSnapshot: resolveRouteMetadata,
         runCliAgent: runCliAgent as never,
         transformConfigWithPendingPluginInstalls: configHarness.transform as never,
       },
@@ -1858,7 +1890,6 @@ describe("activateSetupInference", () => {
     });
     expect(configHarness.current().agents?.defaults?.systemAgent).toEqual({ agentId: "ops" });
     expect(configHarness.transform).toHaveBeenCalledOnce();
-    expect(resolveRouteMetadata).toHaveBeenCalledOnce();
   });
 
   it("persists inference onto an explicit selected owner without changing the system owner", async () => {
@@ -2817,8 +2848,8 @@ describe("activateSetupInference", () => {
     const persisted = configHarness.current();
     expect(persisted.agents?.defaults?.models).toEqual(initialConfig.agents.defaults.models);
     expect(persisted.agents?.defaults?.model).toBe("anthropic/claude-opus-5");
+    expect(resolveAmbientOwnerAgentId(persisted)).toBe("main");
     expect(persisted.agents?.entries?.main).toMatchObject({
-      default: true,
       models: {
         "anthropic/claude-opus-5": { agentRuntime: { id: "claude-cli" } },
       },
@@ -5005,7 +5036,13 @@ describe("activateSetupInference", () => {
     );
     const runEmbeddedAgent = vi.fn(async (params: SuccessfulRunParams) => {
       expect(refreshPluginRegistryAfterConfigMutation).toHaveBeenCalledOnce();
-      expect(mocks.loadAgentRuntimePluginRegistryHandle).toHaveBeenCalledOnce();
+      expect(mocks.loadAgentRuntimePluginRegistryHandle).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          selections: [
+            expect.objectContaining({ provider: "openai", modelId: "gpt-5.4", runtime: "codex" }),
+          ],
+        }),
+      );
       return successfulRun("openai", "gpt-5.4", params);
     });
     const onRuntimeApplication =
@@ -5034,13 +5071,6 @@ describe("activateSetupInference", () => {
     expectDefined(application.claim(), "setup application claim").settle("applied");
     await expect(application.result).resolves.toBe("applied");
     expect(ensureCodex).toHaveBeenCalledWith(expect.objectContaining({ model: "openai/gpt-5.4" }));
-    expect(mocks.loadAgentRuntimePluginRegistryHandle).toHaveBeenCalledWith(
-      expect.objectContaining({
-        selections: [
-          expect.objectContaining({ provider: "openai", modelId: "gpt-5.4", runtime: "codex" }),
-        ],
-      }),
-    );
     expect(refreshPluginRegistryAfterConfigMutation).toHaveBeenCalledWith(
       expect.objectContaining({
         reason: "source-changed",

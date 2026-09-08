@@ -5,7 +5,6 @@ import {
   normalizeLowercaseStringOrEmpty,
   normalizeOptionalString,
 } from "@openclaw/normalization-core/string-coerce";
-import { resolveAgentModelPrimaryValue } from "../config/model-input.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { DEFAULT_PROVIDER } from "./defaults.js";
 import { findModelInCatalog } from "./model-catalog-lookup.js";
@@ -15,7 +14,6 @@ import {
   type ModelManifestNormalizationContext,
   type ModelRef,
   findNormalizedProviderKey,
-  legacyModelKey,
   modelKey,
   normalizeModelRef,
   normalizeProviderId,
@@ -50,10 +48,7 @@ export type { ModelAliasIndex, ModelManifestNormalizationContext, ModelRef };
 
 export { resolveDefaultModelForAgent, resolveSubagentConfiguredModelSelection };
 
-export {
-  normalizeStoredOverrideModel,
-  resolvePersistedOverrideModelRef,
-} from "./model-selection-persisted.js";
+export { resolvePersistedOverrideModelRef } from "./model-selection-persisted.js";
 
 export {
   buildConfiguredModelCatalog,
@@ -61,7 +56,6 @@ export {
   findNormalizedProviderKey,
   findNormalizedProviderValue,
   inferUniqueProviderFromConfiguredModels,
-  legacyModelKey,
   modelKey,
   normalizeModelRef,
   normalizeModelSelection,
@@ -96,6 +90,7 @@ export function resolvePersistedModelRef(params: {
   runtimeModel?: unknown;
   overrideProvider?: unknown;
   overrideModel?: unknown;
+  overrideRouteResolution?: "raw" | "resolved";
   allowManifestNormalization?: boolean;
   allowPluginNormalization?: boolean;
 }): ModelRef | null {
@@ -120,6 +115,7 @@ export function resolvePersistedModelRef(params: {
     defaultProvider,
     overrideProvider: params.overrideProvider,
     overrideModel: params.overrideModel,
+    overrideRouteResolution: params.overrideRouteResolution,
     allowManifestNormalization: params.allowManifestNormalization,
     allowPluginNormalization: params.allowPluginNormalization,
   });
@@ -136,6 +132,7 @@ export function resolvePersistedSelectedModelRef(params: {
   runtimeModel?: unknown;
   overrideProvider?: unknown;
   overrideModel?: unknown;
+  overrideRouteResolution?: "raw" | "resolved";
   allowManifestNormalization?: boolean;
   allowPluginNormalization?: boolean;
 }): ModelRef | null {
@@ -143,6 +140,7 @@ export function resolvePersistedSelectedModelRef(params: {
     defaultProvider: params.defaultProvider,
     overrideProvider: params.overrideProvider,
     overrideModel: params.overrideModel,
+    overrideRouteResolution: params.overrideRouteResolution,
     allowManifestNormalization: params.allowManifestNormalization,
     allowPluginNormalization: params.allowPluginNormalization,
   });
@@ -173,7 +171,7 @@ export async function canonicalizeCaseOnlyCatalogModelRef(params: {
     return undefined;
   }
   const split = splitTrailingAuthProfile(rawModel);
-  if (shouldKeepProfileQualifiedModelRefRaw(split.profile, params.preserveAuthProfile)) {
+  if (split.profile && params.preserveAuthProfile === false) {
     return rawModel;
   }
   if (!isCaseOnlyProviderModelRef(split.model)) {
@@ -195,7 +193,7 @@ export async function canonicalizeCaseOnlyCatalogModelRef(params: {
     resolved.ref.provider,
     resolved.ref.model,
   );
-  return entry ? formatCatalogModelRef(entry, split.profile) : rawModel;
+  return entry ? appendAuthProfileSuffix(`${entry.provider}/${entry.id}`, split.profile) : rawModel;
 }
 
 function hasExplicitProviderModelRef(raw: string): boolean {
@@ -205,17 +203,6 @@ function hasExplicitProviderModelRef(raw: string): boolean {
 
 function isCaseOnlyProviderModelRef(raw: string): boolean {
   return hasExplicitProviderModelRef(raw) && raw !== raw.toLowerCase();
-}
-
-function shouldKeepProfileQualifiedModelRefRaw(
-  profile: string | undefined,
-  preserveAuthProfile: boolean | undefined,
-): boolean {
-  return Boolean(profile && preserveAuthProfile === false);
-}
-
-function formatCatalogModelRef(entry: ModelCatalogEntry, profile: string | undefined): string {
-  return appendAuthProfileSuffix(`${entry.provider}/${entry.id}`, profile);
 }
 
 function appendAuthProfileSuffix(modelRef: string, profile: string | undefined): string {
@@ -241,35 +228,6 @@ function resolveModelThroughAliases(value: string, aliasIndex: ModelAliasIndex):
     return appendAuthProfileSuffix(`${aliasMatch.ref.provider}/${aliasMatch.ref.model}`, profile);
   }
   return appendAuthProfileSuffix(model, profile);
-}
-
-export function resolveSubagentSpawnModelSelection(params: {
-  cfg: OpenClawConfig;
-  agentId: string;
-  modelOverride?: unknown;
-}): string {
-  const runtimeDefault = resolveDefaultModelForAgent({
-    cfg: params.cfg,
-    agentId: params.agentId,
-  });
-  const configured = resolveConfiguredSubagentSpawnModelSelection({
-    cfg: params.cfg,
-    agentId: params.agentId,
-    modelOverride: params.modelOverride,
-    defaultProvider: runtimeDefault.provider,
-  });
-  if (configured) {
-    return configured;
-  }
-  const raw =
-    resolveAgentModelPrimaryValue(params.cfg.agents?.defaults?.model) ??
-    `${runtimeDefault.provider}/${runtimeDefault.model}`;
-  const aliasIndex = buildModelAliasIndex({
-    cfg: params.cfg,
-    agentId: params.agentId,
-    defaultProvider: runtimeDefault.provider,
-  });
-  return resolveModelThroughAliases(raw, aliasIndex);
 }
 
 export function resolveConfiguredSubagentSpawnModelSelection(params: {

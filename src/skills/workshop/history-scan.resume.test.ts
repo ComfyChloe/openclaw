@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { closeOpenClawStateDatabaseForTest } from "../../state/openclaw-state-db.js";
 import type { SkillHistoryScanCandidate } from "./history-scan-candidates.js";
 import type { SkillHistoryScanPromptSession } from "./history-scan-prompt.js";
@@ -23,18 +24,28 @@ vi.mock("../../agents/agent-scope.js", () => ({
   resolveAgentDir: vi.fn(() => "/tmp/openclaw-history-scan-agent"),
 }));
 
-vi.mock("../../agents/embedded-agent-runner/model.js", () => ({
-  resolveModelAsync: vi.fn(async () => ({
-    model: { contextTokens: 8_192, contextWindow: 8_192 },
-  })),
+vi.mock("../../agents/simple-completion-runtime.js", () => ({
+  withPreparedSimpleCompletionSelection: async (
+    params: { cfg: OpenClawConfig; agentDir: string },
+    run: (
+      selection: { provider: string; modelId: string; agentDir: string },
+      context: {
+        preparedModelRuntime: { config: OpenClawConfig; agentDir: string };
+        modelResolver: () => Promise<{ model: { contextWindow: number } }>;
+      },
+    ) => Promise<unknown>,
+  ) =>
+    await run(
+      { provider: "openai", modelId: "gpt-5.5", agentDir: params.agentDir },
+      {
+        preparedModelRuntime: { config: params.cfg, agentDir: params.agentDir },
+        modelResolver: async () => ({ model: { contextWindow: 8_192 } }),
+      },
+    ),
 }));
 
 vi.mock("../../agents/embedded-agent-runner/runs.js", () => ({
   isEmbeddedAgentRunActive: vi.fn(() => false),
-}));
-
-vi.mock("../../agents/model-selection-config.js", () => ({
-  resolveDefaultModelForAgent: vi.fn(() => ({ model: "gpt-5.5", provider: "openai" })),
 }));
 
 vi.mock("./history-scan-candidates.js", async (importOriginal) => ({

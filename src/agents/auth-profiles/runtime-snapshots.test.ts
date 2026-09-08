@@ -127,7 +127,7 @@ describe("runtime auth profile snapshots", () => {
       const materialization = {
         agentDir,
         provider: "openai",
-        modelId: "gpt-5.4",
+        modelId: "Model",
         modelApi: "openai-chatgpt-responses",
         modelBaseUrl: "https://chatgpt.com/backend-api/codex",
         requestTransportOverrides: "none",
@@ -140,7 +140,7 @@ describe("runtime auth profile snapshots", () => {
       expect(getPreparedRuntimeAuthMaterializations(agentDir)).toEqual([
         {
           provider: "openai",
-          modelId: "gpt-5.4",
+          modelId: "Model",
           modelApi: "openai-chatgpt-responses",
           modelBaseUrl: "https://chatgpt.com/backend-api/codex",
           requestTransportOverrides: "none",
@@ -149,7 +149,7 @@ describe("runtime auth profile snapshots", () => {
           authProfileId: "openai:default",
         },
       ]);
-      const sibling = { ...materialization, modelId: "gpt-5.5" };
+      const sibling = { ...materialization, modelId: "model" };
       const distinctOwner = { ...materialization, runtimeOwnerId: "other-harness" };
       recordRuntimeAuthMaterialization(sibling);
       recordRuntimeAuthMaterialization(distinctOwner);
@@ -168,7 +168,7 @@ describe("runtime auth profile snapshots", () => {
         }),
       ).toBe(false);
       expect(getPreparedRuntimeAuthMaterializations(agentDir)).toEqual([
-        expect.objectContaining({ runtimeOwnerId: "other-harness", modelId: "gpt-5.4" }),
+        expect.objectContaining({ runtimeOwnerId: "other-harness", modelId: "Model" }),
       ]);
       expect(materializationListener).toHaveBeenCalledTimes(4);
       expect(pluginStoreListener).not.toHaveBeenCalled();

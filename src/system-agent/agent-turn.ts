@@ -415,6 +415,7 @@ async function runSystemAgentTurnWithDeps(
         disableMessageTool: true,
         provider: plan.provider,
         model: plan.model,
+        requestedRouteResolution: "resolved",
         agentDir: plan.agentDir,
         agentHarnessRuntimeOverride: plan.agentHarnessRuntimeOverride,
         sandboxSessionKey: policySessionKey,

@@ -646,12 +646,12 @@ const resolveConfiguredImageModelForTest: NonNullable<
 function installImageUnderstandingProviderDeps(
   providers: MediaUnderstandingProvider[],
   options?: {
-    describeImageWithModel?: NonNullable<
+    describeImageWithResolvedModel?: NonNullable<
       Parameters<typeof testing.setProviderDepsForTest>[0]
-    >["describeImageWithModel"];
-    describeImagesWithModel?: NonNullable<
+    >["describeImageWithResolvedModel"];
+    describeImagesWithResolvedModel?: NonNullable<
       Parameters<typeof testing.setProviderDepsForTest>[0]
-    >["describeImagesWithModel"];
+    >["describeImagesWithResolvedModel"];
     loadImageWebMediaRuntime?: NonNullable<
       Parameters<typeof testing.setProviderDepsForTest>[0]
     >["loadImageWebMediaRuntime"];
@@ -684,8 +684,10 @@ function installImageUnderstandingProviderDeps(
       id: string,
       registry: Map<string, MediaUnderstandingProvider>,
     ) => imageProviderHarness.getMediaUnderstandingProvider(id, registry),
-    describeImageWithModel: options?.describeImageWithModel ?? describeGenericImageWithModel,
-    describeImagesWithModel: options?.describeImagesWithModel ?? describeGenericImagesWithModel,
+    describeImageWithResolvedModel:
+      options?.describeImageWithResolvedModel ?? describeGenericImageWithModel,
+    describeImagesWithResolvedModel:
+      options?.describeImagesWithResolvedModel ?? describeGenericImagesWithModel,
     resolveAutoMediaKeyProviders: ({ capability }) =>
       capability === "image" ? ["openai", "anthropic"] : [],
     resolveDefaultMediaModel: ({ providerId, capability }) =>
@@ -713,10 +715,10 @@ function installImageUnderstandingProviderStubs(...providers: MediaUnderstanding
 
 function installFastLocalImageProviderStubs(...providers: MediaUnderstandingProvider[]) {
   installImageUnderstandingProviderDeps(providers, {
-    describeImageWithModel: async () => {
+    describeImageWithResolvedModel: async () => {
       throw new Error("Expected fast local image tests to use a registered image provider");
     },
-    describeImagesWithModel: async () => {
+    describeImagesWithResolvedModel: async () => {
       throw new Error("Expected fast local image tests to use a registered image provider");
     },
     resolveImageCompressionPolicy: async ({ imageCount }) => ({ imageCount }),
@@ -1191,8 +1193,8 @@ describe("image tool implicit imageModel config", () => {
           id: string,
           registry: Map<string, MediaUnderstandingProvider>,
         ) => imageProviderHarness.getMediaUnderstandingProvider(id, registry),
-        describeImageWithModel: describeGenericImageWithModel,
-        describeImagesWithModel: describeGenericImagesWithModel,
+        describeImageWithResolvedModel: describeGenericImageWithModel,
+        describeImagesWithResolvedModel: describeGenericImagesWithModel,
         resolveDefaultMediaModel: resolveDefaultMediaModelSpy,
         resolveAutoMediaKeyProviders: resolveAutoMediaKeyProvidersSpy,
       });
@@ -1363,8 +1365,8 @@ describe("image tool implicit imageModel config", () => {
           id: string,
           registry: Map<string, MediaUnderstandingProvider>,
         ) => imageProviderHarness.getMediaUnderstandingProvider(id, registry),
-        describeImageWithModel: describeGenericImageWithModel,
-        describeImagesWithModel: describeGenericImagesWithModel,
+        describeImageWithResolvedModel: describeGenericImageWithModel,
+        describeImagesWithResolvedModel: describeGenericImagesWithModel,
         resolveAutoMediaKeyProviders: ({ capability }) =>
           capability === "image" ? ["openai", "anthropic", "minimax-cn", "minimax"] : [],
         resolveDefaultMediaModel: ({ providerId, capability }) =>
@@ -1406,8 +1408,8 @@ describe("image tool implicit imageModel config", () => {
           id: string,
           registry: Map<string, MediaUnderstandingProvider>,
         ) => imageProviderHarness.getMediaUnderstandingProvider(id, registry),
-        describeImageWithModel: describeGenericImageWithModel,
-        describeImagesWithModel: describeGenericImagesWithModel,
+        describeImageWithResolvedModel: describeGenericImageWithModel,
+        describeImagesWithResolvedModel: describeGenericImagesWithModel,
         resolveAutoMediaKeyProviders: ({ capability }) =>
           capability === "image" ? ["minimax"] : [],
         resolveDefaultMediaModel: ({ providerId, capability }) =>
@@ -1472,46 +1474,83 @@ describe("image tool implicit imageModel config", () => {
     });
   });
 
-  it("prefers a matching per-image-model timeout over the capability timeout", async () => {
-    await withTempWorkspacePng(async ({ workspaceDir, imagePath }) => {
-      await withTempAgentDir(async (agentDir) => {
-        const describeImage = vi.fn(async (params: ImageDescriptionRequest) => ({
-          text: "ok",
-          model: params.model,
-        }));
-        installFastLocalImageProviderStubs({
-          id: "ollama",
-          capabilities: ["image"],
-          describeImage,
+  it.each<{
+    name: string;
+    provider: string;
+    model: string;
+    entryModel?: string;
+    timeoutMs: number;
+  }>([
+    {
+      name: "an ordinary matching model",
+      provider: "ollama",
+      model: "gemma4:26b-a4b-it-q4_K_M",
+      entryModel: "gemma4:26b-a4b-it-q4_K_M",
+      timeoutMs: 300_000,
+    },
+    {
+      name: "the exact namespaced model",
+      provider: "custom",
+      model: "custom/vision",
+      entryModel: "custom/vision",
+      timeoutMs: 300_000,
+    },
+    {
+      name: "a short-name sibling outside the entry",
+      provider: "custom",
+      model: "vision",
+      entryModel: "custom/vision",
+      timeoutMs: 180_000,
+    },
+    {
+      name: "a provider-wide entry",
+      provider: "custom",
+      model: "custom/vision",
+      timeoutMs: 300_000,
+    },
+  ])(
+    "uses the per-image-model timeout for $name",
+    async ({ provider, model, entryModel, timeoutMs }) => {
+      await withTempWorkspacePng(async ({ workspaceDir, imagePath }) => {
+        await withTempAgentDir(async (agentDir) => {
+          const describeImage = vi.fn(async (params: ImageDescriptionRequest) => ({
+            text: "ok",
+            model: params.model,
+          }));
+          installFastLocalImageProviderStubs({
+            id: provider,
+            capabilities: ["image"],
+            describeImage,
+          });
+          const cfg: OpenClawConfig = {
+            agents: {
+              defaults: {
+                imageModel: { primary: `${provider}/${model}` },
+              },
+            },
+            tools: {
+              media: {
+                image: { timeoutSeconds: 180 },
+                models: [
+                  {
+                    provider,
+                    model: entryModel,
+                    timeoutSeconds: 300,
+                    capabilities: ["image"],
+                  },
+                ],
+              },
+            },
+          };
+          const tool = createRequiredImageTool({ config: cfg, agentDir, workspaceDir });
+
+          await expectImageToolExecOk(tool, imagePath);
+
+          expect(firstImageRequest(describeImage)).toMatchObject({ provider, model, timeoutMs });
         });
-        const cfg: OpenClawConfig = {
-          agents: {
-            defaults: {
-              imageModel: { primary: "ollama/gemma4:26b-a4b-it-q4_K_M" },
-            },
-          },
-          tools: {
-            media: {
-              image: { timeoutSeconds: 180 },
-              models: [
-                {
-                  provider: "ollama",
-                  model: "gemma4:26b-a4b-it-q4_K_M",
-                  timeoutSeconds: 300,
-                  capabilities: ["image"],
-                },
-              ],
-            },
-          },
-        };
-        const tool = createRequiredImageTool({ config: cfg, agentDir, workspaceDir });
-
-        await expectImageToolExecOk(tool, imagePath);
-
-        expect(firstImageRequest(describeImage).timeoutMs).toBe(300_000);
       });
-    });
-  });
+    },
+  );
 
   it("pairs minimax-portal primary with MiniMax-VL-01 (and fallbacks) when auth exists", async () => {
     await withTempAgentDir(async (agentDir) => {
@@ -1633,7 +1672,7 @@ describe("image tool implicit imageModel config", () => {
     });
   });
 
-  it("does not double-prefix custom provider model IDs that already include the provider", async () => {
+  it("qualifies namespaced provider-local IDs when selecting an automatic image model", async () => {
     await withTempAgentDir(async (agentDir) => {
       await writeAuthProfiles(agentDir, {
         version: 1,
@@ -1642,7 +1681,7 @@ describe("image tool implicit imageModel config", () => {
         },
       });
       const cfg: OpenClawConfig = {
-        agents: { defaults: { model: { primary: "kimchi/text-1" } } },
+        agents: { defaults: { model: { primary: "kimchi/kimchi/text-1" } } },
         models: {
           providers: {
             kimchi: {
@@ -1657,7 +1696,7 @@ describe("image tool implicit imageModel config", () => {
       };
 
       expect(resolveImageModelConfigForTool({ cfg, agentDir })).toEqual({
-        primary: "kimchi/vision-1",
+        primary: "kimchi/kimchi/vision-1",
       });
     });
   });
@@ -1740,73 +1779,161 @@ describe("image tool implicit imageModel config", () => {
     });
   });
 
-  it("runs providerless explicit image models on the inferred provider", async () => {
-    await withTempAgentDir(async (agentDir) => {
-      const describeImage = vi.fn(async (params: ImageDescriptionRequest) => ({
-        text: `ok ${params.model}`,
-        model: params.model,
-      }));
-      installFastLocalImageProviderStubs({
-        id: "ollama",
-        capabilities: ["image"],
-        describeImage,
+  it.each<{
+    name: string;
+    provider: string;
+    imageModel: { primary: string; fallbacks?: string[] };
+    modelOverride?: string;
+    expectedModels: string[];
+    expectedError?: string;
+  }>([
+    {
+      name: "ordinary providerless primary",
+      provider: "ollama",
+      imageModel: { primary: "moondream" },
+      expectedModels: ["moondream"],
+    },
+    {
+      name: "namespaced providerless primary",
+      provider: "custom",
+      imageModel: { primary: "vision" },
+      expectedModels: ["custom/vision"],
+    },
+    {
+      name: "qualified namespaced primary",
+      provider: "custom",
+      imageModel: { primary: "custom/custom/vision" },
+      expectedModels: ["custom/vision"],
+    },
+    {
+      name: "namespaced providerless fallback",
+      provider: "custom",
+      imageModel: { primary: "custom/vision", fallbacks: ["vision"] },
+      expectedModels: ["vision", "custom/vision"],
+    },
+    {
+      name: "namespaced providerless per-call override",
+      provider: "custom",
+      imageModel: { primary: "moondream" },
+      modelOverride: "vision",
+      expectedModels: ["custom/vision"],
+    },
+    {
+      name: "qualified namespaced per-call override",
+      provider: "custom",
+      imageModel: { primary: "moondream" },
+      modelOverride: "custom/custom/vision",
+      expectedModels: ["custom/vision"],
+    },
+    {
+      name: "explicit text-only sibling",
+      provider: "custom",
+      imageModel: { primary: "custom/vision" },
+      expectedModels: ["vision"],
+      expectedError: "Model does not support images",
+    },
+    {
+      name: "per-call override retains configured fallback",
+      provider: "custom",
+      imageModel: { primary: "moondream", fallbacks: ["moondream"] },
+      modelOverride: "custom/vision",
+      expectedModels: ["vision", "moondream"],
+    },
+  ])(
+    "runs image model selection: $name",
+    async ({ provider, imageModel, modelOverride, expectedModels, expectedError }) => {
+      await withTempAgentDir(async (agentDir) => {
+        const describeImage = vi.fn(async (params: ImageDescriptionRequest) => {
+          if (params.model === "vision") {
+            throw new Error("Model does not support images");
+          }
+          return { text: `ok ${params.model}`, model: params.model };
+        });
+        installFastLocalImageProviderStubs({
+          id: provider,
+          capabilities: ["image"],
+          describeImage,
+        });
+        const cfg: OpenClawConfig = {
+          agents: { defaults: { imageModel } },
+          models: {
+            providers: {
+              [provider]: {
+                baseUrl: "http://localhost:11434",
+                models: [
+                  makeModelDefinition("moondream", ["text", "image"]),
+                  makeModelDefinition(`${provider}/vision`, ["text", "image"]),
+                  makeModelDefinition("vision", ["text"]),
+                ],
+              },
+            },
+          },
+        };
+
+        const tool = requireImageTool(createImageTool({ config: cfg, agentDir }));
+        const execution = tool.execute("t1", {
+          prompt: "Describe this image in one word.",
+          path: `data:image/png;base64,${ONE_PIXEL_PNG_B64}`,
+          model: modelOverride,
+        });
+        if (expectedError) {
+          await expect(execution).rejects.toThrow(expectedError);
+        } else {
+          expectToolText(await execution, `ok ${expectedModels.at(-1)}`);
+        }
+        expect(
+          describeImage.mock.calls.map(([request]) => ({
+            provider: request.provider,
+            model: request.model,
+          })),
+        ).toEqual(expectedModels.map((model) => ({ provider, model })));
       });
-      const cfg: OpenClawConfig = {
-        agents: {
-          defaults: {
-            imageModel: { primary: "moondream" },
-          },
-        },
-        models: {
-          providers: {
-            ollama: {
-              baseUrl: "http://localhost:11434",
-              models: [makeModelDefinition("moondream", ["text", "image"])],
+    },
+  );
+
+  it.each([
+    {
+      ref: "moondream",
+      ollamaModel: "moondream",
+      lmstudioModel: "moondream",
+      message:
+        'Ambiguous image model "moondream". Configure a provider-prefixed ref such as "ollama/moondream" or "lmstudio/moondream".',
+    },
+    {
+      ref: "vision",
+      ollamaModel: "ollama/vision",
+      lmstudioModel: "vision",
+      message:
+        'Ambiguous image model "vision". Configure a provider-prefixed ref such as "ollama/ollama/vision" or "lmstudio/vision".',
+    },
+  ])(
+    "rejects ambiguous providerless image model $ref",
+    async ({ ref, ollamaModel, lmstudioModel, message }) => {
+      await withTempAgentDir(async (agentDir) => {
+        const cfg: OpenClawConfig = {
+          agents: {
+            defaults: {
+              imageModel: { primary: ref },
             },
           },
-        },
-      };
+          models: {
+            providers: {
+              ollama: {
+                baseUrl: "http://localhost:11434",
+                models: [makeModelDefinition(ollamaModel, ["text", "image"])],
+              },
+              lmstudio: {
+                baseUrl: "http://localhost:1234",
+                models: [makeModelDefinition(lmstudioModel, ["text", "image"])],
+              },
+            },
+          },
+        };
 
-      const tool = requireImageTool(createImageTool({ config: cfg, agentDir }));
-      const result = await tool.execute("t1", {
-        prompt: "Describe this image in one word.",
-        path: `data:image/png;base64,${ONE_PIXEL_PNG_B64}`,
+        expect(() => resolveImageModelConfigForTool({ cfg, agentDir })).toThrow(message);
       });
-
-      const request = firstImageRequest(describeImage);
-      expect(request.provider).toBe("ollama");
-      expect(request.model).toBe("moondream");
-      expectToolText(result, "ok moondream");
-    });
-  });
-
-  it("rejects ambiguous providerless explicit image models", async () => {
-    await withTempAgentDir(async (agentDir) => {
-      const cfg: OpenClawConfig = {
-        agents: {
-          defaults: {
-            imageModel: { primary: "moondream" },
-          },
-        },
-        models: {
-          providers: {
-            ollama: {
-              baseUrl: "http://localhost:11434",
-              models: [makeModelDefinition("moondream", ["text", "image"])],
-            },
-            lmstudio: {
-              baseUrl: "http://localhost:1234",
-              models: [makeModelDefinition("moondream", ["text", "image"])],
-            },
-          },
-        },
-      };
-
-      expect(() => resolveImageModelConfigForTool({ cfg, agentDir })).toThrow(
-        'Ambiguous image model "moondream"',
-      );
-    });
-  });
+    },
+  );
 
   it("keeps unmatched providerless explicit image models on the legacy default-provider path", async () => {
     await withTempAgentDir(async (agentDir) => {
@@ -1851,13 +1978,16 @@ describe("image tool implicit imageModel config", () => {
           },
         },
       };
-      const describeImageWithModel = vi.fn(async () => {
+      const describeImageWithResolvedModel = vi.fn(async () => {
         throw new Error("native image loading must not call a fallback model");
       });
-      const describeImagesWithModel = vi.fn(async () => {
+      const describeImagesWithResolvedModel = vi.fn(async () => {
         throw new Error("native image loading must not call a fallback model");
       });
-      testing.setProviderDepsForTest({ describeImageWithModel, describeImagesWithModel });
+      testing.setProviderDepsForTest({
+        describeImageWithResolvedModel,
+        describeImagesWithResolvedModel,
+      });
 
       const tool = createRequiredImageTool({ config: cfg, agentDir, modelHasVision: true });
       expect(tool.name).toBe("view_image");
@@ -1888,8 +2018,8 @@ describe("image tool implicit imageModel config", () => {
         transport: "native",
         media: { outbound: false },
       });
-      expect(describeImageWithModel).not.toHaveBeenCalled();
-      expect(describeImagesWithModel).not.toHaveBeenCalled();
+      expect(describeImageWithResolvedModel).not.toHaveBeenCalled();
+      expect(describeImagesWithResolvedModel).not.toHaveBeenCalled();
     });
   });
 
@@ -1990,6 +2120,10 @@ describe("image tool implicit imageModel config", () => {
   it("falls back to the generic multi-image runtime when openrouter has no media provider registration", async () => {
     await withTempAgentDir(async (agentDir) => {
       const fetch = stubOpenAiCompletionsOkFetch("ok multi");
+      const describeImages = vi.fn(describeGenericImagesWithModel);
+      installImageUnderstandingProviderDeps([], {
+        describeImagesWithResolvedModel: describeImages,
+      });
       const cfg: OpenClawConfig = {
         agents: {
           defaults: {
@@ -2014,11 +2148,15 @@ describe("image tool implicit imageModel config", () => {
         prompt: "Describe the images.",
         paths: [
           `data:image/png;base64,${ONE_PIXEL_PNG_B64}`,
-          `data:image/png;base64,${ONE_PIXEL_PNG_B64}`,
+          `data:image/png;base64,${createLargeColorBlockPng(2).toString("base64")}`,
         ],
       });
 
       expect(fetch).toHaveBeenCalledTimes(1);
+      expect(describeImages).toHaveBeenCalledOnce();
+      const [request] = expectDefined(describeImages.mock.calls[0], "generic batch request");
+      expect(request.images).toHaveLength(2);
+      expect(request.images[0]?.buffer).not.toEqual(request.images[1]?.buffer);
       expectToolText(result, "ok multi");
     });
   });
@@ -3564,8 +3702,8 @@ describe("image tool run abort", () => {
           fileName,
         }),
       }),
-      describeImageWithModel: spies.describeImage,
-      describeImagesWithModel: spies.describeImages,
+      describeImageWithResolvedModel: spies.describeImage,
+      describeImagesWithResolvedModel: spies.describeImages,
     });
   }
 

@@ -2,6 +2,7 @@ import { resolveAgentDir, resolveAgentEffectiveModelPrimary } from "../../agents
 import { DEFAULT_PROVIDER } from "../../agents/defaults.js";
 import { augmentModelCatalogWithAgentHarness } from "../../agents/harness/model-catalog.js";
 import type { ModelCatalogSnapshot } from "../../agents/model-catalog.types.js";
+import { resolveDefaultModelForAgent } from "../../agents/model-selection-config.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import type { PluginMetadataSnapshot } from "../../plugins/plugin-metadata-snapshot.types.js";
 import type { PluginRegistry } from "../../plugins/registry-types.js";
@@ -21,15 +22,26 @@ export async function prepareModelsListHarnessCatalog(params: {
   allowHarnessDiscovery: boolean;
   onError?: (error: unknown) => void;
 }) {
-  const defaultModel = resolveAgentEffectiveModelPrimary(params.cfg, params.agentId);
+  const rawDefaultModel = resolveAgentEffectiveModelPrimary(params.cfg, params.agentId);
+  const defaultRef = rawDefaultModel
+    ? resolveDefaultModelForAgent({
+        cfg: params.cfg,
+        agentId: params.agentId,
+        manifestPlugins: params.metadataSnapshot,
+        resolvedModelCatalog: params.snapshot.entries,
+        allowPluginNormalization: true,
+      })
+    : undefined;
+  const defaultProvider = defaultRef?.provider ?? DEFAULT_PROVIDER;
+  const defaultModel = defaultRef?.model;
   const snapshot = params.allowHarnessDiscovery
     ? await augmentModelCatalogWithAgentHarness({
         cfg: params.cfg,
         agentId: params.agentId,
         agentDir: params.agentDir ?? resolveAgentDir(params.cfg, params.agentId),
         workspaceDir: params.workspaceDir,
-        defaultProvider: DEFAULT_PROVIDER,
-        defaultModel,
+        defaultProvider,
+        defaultModel: rawDefaultModel,
         snapshot: params.snapshot,
         pluginRegistry: params.pluginRegistry,
         isCurrent: params.isCurrent,
@@ -39,10 +51,13 @@ export async function prepareModelsListHarnessCatalog(params: {
     : params.snapshot;
   return {
     snapshot,
+    defaultProvider,
     defaultModel,
+    rawDefaultModel,
     catalog: includeConfiguredStaticCatalogEntries({
       ...params,
       snapshot,
+      defaultProvider,
       defaultModel,
       enabled: params.view === "configured",
     }),

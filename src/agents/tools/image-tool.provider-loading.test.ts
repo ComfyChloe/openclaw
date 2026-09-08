@@ -13,6 +13,10 @@ vi.mock("../../media-understanding/image-runtime.js", () => ({
   describeImagesWithModel: genericDescribe,
   describeImageWithModelPayloadTransform: genericDescribe,
   describeImagesWithModelPayloadTransform: genericDescribe,
+  describeImageWithResolvedModel: genericDescribe,
+  describeImagesWithResolvedModel: genericDescribe,
+  describeImageWithResolvedModelPayloadTransform: genericDescribe,
+  describeImagesWithResolvedModelPayloadTransform: genericDescribe,
 }));
 
 const resolveProvider =

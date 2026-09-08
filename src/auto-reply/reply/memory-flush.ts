@@ -49,12 +49,12 @@ export function resolveResponsesServerCompactionThreshold(params: {
   }
   const normalizedProvider = normalizeProviderId(provider);
   const normalizeModelId = (value: string) =>
-    normalizeStaticProviderModelId(normalizedProvider, value).trim().toLowerCase();
+    normalizeStaticProviderModelId(normalizedProvider, value).trim();
   const providerConfig = resolveMergedModelProviderConfig(params.cfg, provider);
   const configuredModel = resolveMergedModelProviderModels({
     models: providerConfig?.models,
     normalizeModelId,
-  }).get(normalizeModelId(modelId));
+  }).get(modelId);
   const { defaultParams, modelParams } = resolveModelExtraParamSources({
     config: params.cfg,
     provider,

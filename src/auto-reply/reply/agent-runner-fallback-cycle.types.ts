@@ -98,6 +98,7 @@ type AgentFallbackModelPatch = {
 };
 
 export type AgentFallbackCycleParams = {
+  onConfiguredDefault?: (ref: { provider: string; model: string }) => void;
   preparedRunAdmission: PreparedAgentRunAdmission;
   turn: AgentTurnParams;
   effectiveRun: FollowupRun["run"];

@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createWizardPrompter } from "../../test/helpers/wizard-prompter.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { prepareAuthChoiceLoadedPluginProvider } from "../plugins/provider-auth-choice.js";
-import { buildTestPlan } from "./setup-inference-plan.js";
+import { withSetupInferencePlan } from "./setup-inference-plan.js";
 
 vi.mock("../agents/model-runtime-aliases.js", () => ({
   resolveCliRuntimeExecutionProvider: ({ cfg }: { cfg: OpenClawConfig }) =>
@@ -57,20 +57,25 @@ describe("catalog-only provider preparation", () => {
       persistAuthProfiles,
     });
 
-    const plan = await buildTestPlan({
-      kind: "provider-auth",
-      authChoice: "fixture-api-key",
-      cfg: config,
-      sourceCfg: config,
-      workspaceDir: "/tmp/isolated-provider-probe",
-      pluginWorkspaceDir: "/tmp/selected-workspace",
-      agentDir: "/tmp/isolated-provider-probe/agent",
-      runtime: { log: vi.fn(), error: vi.fn(), exit: vi.fn() as never },
-      prompter: createWizardPrompter(),
-      deps: { resolveManifestProviderAuthChoice: () => undefined },
-    });
+    const result = await withSetupInferencePlan(
+      {
+        kind: "provider-auth",
+        authChoice: "fixture-api-key",
+        cfg: config,
+        sourceCfg: config,
+        pluginWorkspaceDir: "/tmp/selected-workspace",
+        runtime: { log: vi.fn(), error: vi.fn(), exit: vi.fn() as never },
+        prompter: createWizardPrompter(),
+        deps: { resolveManifestProviderAuthChoice: () => undefined },
+      },
+      async () => {
+        throw new Error("Unexpected successful plan");
+      },
+    );
 
-    expect(plan).toEqual({
+    expect(result).toEqual({
+      ok: false,
+      status: "unavailable",
       error:
         installError ??
         "Fixture was not installed and configured. Review the installer details and try again.",
@@ -110,31 +115,37 @@ describe("catalog-only provider preparation", () => {
         ],
         persistAuthProfiles,
       });
-      const plan = await buildTestPlan({
-        kind: "provider-auth",
-        authChoice: "fixture-api-key",
-        cfg: config,
-        sourceCfg: config,
-        workspaceDir: "/tmp/isolated-provider-probe",
-        pluginWorkspaceDir: "/tmp/selected-workspace",
-        agentDir: "/tmp/isolated-provider-probe/agent",
-        runtime: { log: vi.fn(), error: vi.fn(), exit: vi.fn() as never },
-        prompter: createWizardPrompter(),
-        deps: { resolveManifestProviderAuthChoice: () => undefined },
-      });
+      const result = await withSetupInferencePlan(
+        {
+          kind: "provider-auth",
+          authChoice: "fixture-api-key",
+          cfg: config,
+          sourceCfg: config,
+          pluginWorkspaceDir: "/tmp/selected-workspace",
+          runtime: { log: vi.fn(), error: vi.fn(), exit: vi.fn() as never },
+          prompter: createWizardPrompter(),
+          deps: { resolveManifestProviderAuthChoice: () => undefined },
+        },
+        async (plan) => {
+          expect(profileCase).toBe("matching-last");
+          expect(plan).toMatchObject({
+            modelRef: "fixture/test-model",
+            manualAuth: { profiles: [{ credential: matchingCredential }] },
+          });
+          expect(plan.authProfileId).toBe(plan.manualAuth?.profiles[0]?.profileId);
+          return true;
+        },
+      );
       expect(persistAuthProfiles).not.toHaveBeenCalled();
       if (profileCase === "missing-match") {
-        expect(plan).toEqual({ error: expect.stringContaining("did not return credentials") });
-        return;
+        expect(result).toEqual({
+          ok: false,
+          status: "unavailable",
+          error: expect.stringContaining("did not return credentials"),
+        });
+      } else {
+        expect(result).toBe(true);
       }
-      expect(plan).toMatchObject({
-        modelRef: "fixture/test-model",
-        manualAuth: { profiles: [{ credential: matchingCredential }] },
-      });
-      if ("error" in plan) {
-        throw new Error(plan.error);
-      }
-      expect(plan.authProfileId).toBe(plan.manualAuth?.profiles[0]?.profileId);
     },
   );
 
@@ -160,40 +171,46 @@ describe("catalog-only provider preparation", () => {
         authProfiles: [],
         persistAuthProfiles,
       });
-      const plan = await buildTestPlan({
-        kind: "provider-auth",
-        authChoice: "fixture-api-key",
-        cfg: config,
-        sourceCfg: config,
-        workspaceDir: "/tmp/isolated-provider-probe",
-        pluginWorkspaceDir: "/tmp/selected-workspace",
-        agentDir: "/tmp/isolated-provider-probe/agent",
-        runtime: { log: vi.fn(), error: vi.fn(), exit: vi.fn() as never },
-        prompter: createWizardPrompter(),
-        deps: {
-          resolveManifestProviderAuthChoice: () =>
-            runtimeId === "fixture-cli"
-              ? {
-                  pluginId: "fixture",
-                  providerId: "fixture",
-                  choiceId: "fixture-api-key",
-                  choiceLabel: "Fixture",
-                  methodId: "native",
-                }
-              : undefined,
+      const result = await withSetupInferencePlan(
+        {
+          kind: "provider-auth",
+          authChoice: "fixture-api-key",
+          cfg: config,
+          sourceCfg: config,
+          pluginWorkspaceDir: "/tmp/selected-workspace",
+          runtime: { log: vi.fn(), error: vi.fn(), exit: vi.fn() as never },
+          prompter: createWizardPrompter(),
+          deps: {
+            resolveManifestProviderAuthChoice: () =>
+              runtimeId === "fixture-cli"
+                ? {
+                    pluginId: "fixture",
+                    providerId: "fixture",
+                    choiceId: "fixture-api-key",
+                    choiceLabel: "Fixture",
+                    methodId: "native",
+                  }
+                : undefined,
+          },
         },
-      });
-      expect(plan).toMatchObject({
-        modelRef: "fixture/test-model",
-        runner: runtimeId === "fixture-cli" ? "cli" : "embedded",
-        selectedAgentRuntimeId: runtimeId,
-        config: { plugins: { installs: { existing: existingInstall, fixture: installRecord } } },
-      });
-      expect(normalizeModelId).toHaveBeenCalledExactlyOnceWith({
-        provider: "fixture",
-        modelId: "starter-alias",
-      });
-      expect(persistAuthProfiles).not.toHaveBeenCalled();
+        async (plan) => {
+          expect(plan).toMatchObject({
+            modelRef: "fixture/test-model",
+            runner: runtimeId === "fixture-cli" ? "cli" : "embedded",
+            selectedAgentRuntimeId: runtimeId,
+            config: {
+              plugins: { installs: { existing: existingInstall, fixture: installRecord } },
+            },
+          });
+          expect(normalizeModelId).toHaveBeenCalledExactlyOnceWith({
+            provider: "fixture",
+            modelId: "starter-alias",
+          });
+          expect(persistAuthProfiles).not.toHaveBeenCalled();
+          return true;
+        },
+      );
+      expect(result).toBe(true);
     },
   );
 });

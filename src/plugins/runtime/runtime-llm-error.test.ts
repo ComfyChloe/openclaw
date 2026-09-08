@@ -1,12 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { createLlmCompleteError } from "./runtime-llm-error.js";
+import { LlmCompleteError } from "./runtime-llm-error.js";
 
-describe("createLlmCompleteError", () => {
-  it("creates a plain Error with the stable completion error fields and cause", () => {
+describe("LlmCompleteError", () => {
+  it("preserves the completion error identity, fields and cause", () => {
     const cause = new Error("provider failed");
-    const error = createLlmCompleteError("LLM_COMPLETION_FAILED", "Completion failed.", cause);
+    const error = new LlmCompleteError("LLM_COMPLETION_FAILED", "Completion failed.", cause);
 
-    expect(Object.getPrototypeOf(error)).toBe(Error.prototype);
+    expect(error).toBeInstanceOf(LlmCompleteError);
+    expect(error).toBeInstanceOf(Error);
     expect(error).toMatchObject({
       name: "LlmCompleteError",
       code: "LLM_COMPLETION_FAILED",
@@ -17,7 +18,7 @@ describe("createLlmCompleteError", () => {
   });
 
   it("omits the cause property when no cause is supplied", () => {
-    const error = createLlmCompleteError("LLM_COMPLETION_ABORTED", "Completion aborted.");
+    const error = new LlmCompleteError("LLM_COMPLETION_ABORTED", "Completion aborted.");
 
     expect(Object.hasOwn(error, "cause")).toBe(false);
   });

@@ -1,11 +1,16 @@
+import { setCurrentManifestModelIdNormalizationPolicies } from "@openclaw/model-catalog-core/provider-model-id-normalization";
 // Covers context-token lookup caches, catalog warmup, and provider-qualified
 // model resolution.
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ModelDefinitionConfig } from "../config/types.models.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { replaceDiscoveredContextTokenCache } from "./context-cache.js";
-import { ANTHROPIC_CONTEXT_1M_TOKENS } from "./context-resolution.js";
+import {
+  ANTHROPIC_CONTEXT_1M_TOKENS,
+  resolveAuthoredModelContextTokens,
+} from "./context-resolution.js";
 import { CONTEXT_WINDOW_RUNTIME_STATE } from "./context-runtime-state.js";
+import { resolveContextWindowInfo } from "./context-window-guard.js";
 
 type DiscoveredModel = {
   id: string;
@@ -161,6 +166,40 @@ async function importResolveContextTokensForModel() {
 }
 
 describe("lookupContextTokens", () => {
+  it("keeps provider-normalized context targets stable while reading authored budgets", () => {
+    setCurrentManifestModelIdNormalizationPolicies(
+      new Map([["custom", { stripPrefixes: ["vendor/"] }]]),
+    );
+    try {
+      const cfg: OpenClawConfig = {
+        models: {
+          providers: {
+            custom: {
+              baseUrl: "https://example.invalid/v1",
+              models: [
+                { ...createConfiguredModel("vendor/vendor/model", 128_000), contextTokens: 64_000 },
+              ],
+            },
+          },
+        },
+      };
+      expect(
+        resolveAuthoredModelContextTokens({ cfg, provider: "custom", model: "vendor/model" }),
+      ).toBe(64_000);
+      expect(
+        resolveContextWindowInfo({
+          cfg,
+          provider: "custom",
+          modelId: "vendor/model",
+          modelContextWindow: 512_000,
+          defaultTokens: 200_000,
+        }),
+      ).toEqual({ source: "modelsConfig", tokens: 64_000 });
+    } finally {
+      setCurrentManifestModelIdNormalizationPolicies(undefined);
+    }
+  });
+
   beforeAll(async () => {
     contextModule = await importFreshContextModule();
   });
@@ -605,29 +644,29 @@ describe("lookupContextTokens", () => {
     expect(lookupContextTokens("claude-sonnet")).toBe(654_321);
   });
 
-  it("resolveContextTokensForModel handles self-prefixed provider-owned discovery ids", async () => {
+  it("resolveContextTokensForModel keeps discovered provider-local namespaces separate", async () => {
     mockDiscoveryDeps([
       {
-        provider: "github-copilot",
-        id: "github-copilot/gemini-3.1-pro-preview",
-        contextWindow: 128_000,
+        provider: "custom",
+        id: "custom/model",
+        contextWindow: 32_000,
       },
       {
-        provider: "google-gemini-cli",
-        id: "google-gemini-cli/gemini-3.1-pro-preview",
-        contextWindow: 1_048_576,
+        provider: "custom",
+        id: "model",
+        contextWindow: 128_000,
       },
     ]);
 
     const { lookupContextTokens, resolveContextTokensForModel } = await importContextModule();
-    lookupContextTokens("google-gemini-cli/gemini-3.1-pro-preview");
+    lookupContextTokens("model");
     await flushAsyncWarmup();
 
     const result = resolveContextTokensForModel({
-      provider: "google-gemini-cli",
-      model: "gemini-3.1-pro-preview",
+      provider: "custom",
+      model: "model",
     });
-    expect(result).toBe(1_048_576);
+    expect(result).toBe(128_000);
   });
 
   it("resolveContextTokensForModel returns configured override via direct config scan (beats discovery)", async () => {
@@ -651,10 +690,10 @@ describe("lookupContextTokens", () => {
 
   it.each([
     {
-      name: "matches a bare configured row for a provider-self-prefixed runtime model",
+      name: "does not apply a bare row's context limit to a different namespaced model",
       model: "kilocode/kilo-auto/balanced",
       configuredModels: [createConfiguredModel("kilo-auto/balanced", 900_000)],
-      expected: 900_000,
+      expected: 128_000,
     },
     {
       name: "prefers the exact qualified row over an earlier bare row",
@@ -815,20 +854,26 @@ describe("lookupContextTokens", () => {
     expect(googleUnconfiguredResult).toBeUndefined();
   });
 
-  it("resolveContextTokensForModel follows modelProvider aliases to per-model config", async () => {
-    mockDiscoveryDeps([]);
-    const cfg = createContextOverrideConfig("anthropic", "claude-custom", 180_000);
-    const resolveContextTokensForModel = await importResolveContextTokensForModel();
+  it.each([
+    { model: "claude-custom", expected: 180_000 },
+    { model: "anthropic/claude-custom", expected: undefined },
+  ])(
+    "follows provider aliases without reinterpreting model namespace $model",
+    async ({ model, expected }) => {
+      mockDiscoveryDeps([]);
+      const cfg = createContextOverrideConfig("anthropic", "claude-custom", 180_000);
+      const resolveContextTokensForModel = await importResolveContextTokensForModel();
 
-    expect(
-      resolveContextTokensForModel({
-        cfg: cfg as never,
-        provider: "fixture-cli",
-        modelProvider: "anthropic",
-        model: "anthropic/claude-custom",
-      }),
-    ).toBe(180_000);
-  });
+      expect(
+        resolveContextTokensForModel({
+          cfg: cfg as never,
+          provider: "fixture-cli",
+          modelProvider: "anthropic",
+          model,
+        }),
+      ).toBe(expected);
+    },
+  );
 
   it("resolveContextTokensForModel prefers exact provider key over alias-normalized match", async () => {
     // When both "bedrock" and "amazon-bedrock" exist as config keys (alias pattern),

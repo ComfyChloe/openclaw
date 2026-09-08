@@ -1,8 +1,8 @@
 import { normalizeProviderId } from "@openclaw/model-catalog-core/provider-id";
-import { stripSelfProviderModelPrefix } from "@openclaw/model-catalog-core/provider-model-id-normalization";
 import {
   resolveMergedModelProviderConfig,
   createModelProviderRouteOverrideResolver,
+  findProviderModelConfig,
 } from "../../config/model-provider-config.js";
 import type { PluginRegistry } from "../../plugins/registry.js";
 import { getActivePluginRegistry } from "../../plugins/runtime.js";
@@ -41,8 +41,8 @@ export function createAgentHarnessCatalogEvaluator(
     }
     const provider = normalizeProviderId(entry.provider);
     const configured = resolveMergedModelProviderConfig(params.config, provider);
-    const modelKey = (id: string) =>
-      stripSelfProviderModelPrefix(provider, splitTrailingAuthProfile(id).model.trim()).trim();
+    const modelId = splitTrailingAuthProfile(entry.id).model;
+    const configuredModel = findProviderModelConfig(configured?.models, provider, modelId);
     // Native account evidence cannot satisfy an authored host route, key, profile,
     // or request override. Those keep the existing prepared-route evaluator.
     if (
@@ -53,9 +53,8 @@ export function createAgentHarnessCatalogEvaluator(
       configured?.baseUrl ||
       configured?.apiKey ||
       configured?.auth ||
-      configured?.models?.some(
-        (model) => modelKey(model.id) === modelKey(entry.id) && (model.api || model.baseUrl),
-      ) ||
+      configuredModel?.api ||
+      configuredModel?.baseUrl ||
       Object.keys(params.config.auth?.order ?? {}).some(
         (id) => normalizeProviderId(id) === provider,
       ) ||

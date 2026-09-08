@@ -8,6 +8,7 @@ import {
   formatFastModeValue,
   resolveFastModeState,
 } from "../../agents/fast-mode.js";
+import { findModelInCatalog } from "../../agents/model-catalog-lookup.js";
 import { persistStickyModelSelectionBestEffort } from "../../agents/sticky-model-selection.js";
 import { resolveEffectiveAgentRuntime } from "../../agents/thinking-runtime.js";
 import { resolveCollapsedSessionAuthPinSource } from "../../config/sessions/auth-profile-override-provenance.js";
@@ -53,10 +54,7 @@ import {
 } from "./directive-handling.shared.js";
 import { resolveDirectiveRuntimeContext } from "./directive-runtime-context.js";
 import type { ReasoningLevel, ThinkLevel } from "./directives.js";
-import {
-  findSelectedCatalogEntry,
-  prepareModelSelectionRuntime,
-} from "./model-runtime-normalization.js";
+import { prepareModelSelectionRuntime } from "./model-runtime-normalization.js";
 import { refreshQueuedFollowupSession } from "./queue.js";
 
 /** Handles inline directives that can be acknowledged without a model turn. */
@@ -191,11 +189,11 @@ export async function handleDirectiveOnly(
   }
   const prospectiveSessionEntry = { ...sessionEntry };
   applyModelRuntimeDirective(prospectiveSessionEntry, modelRuntimeResolution);
-  const selectedCatalogEntry = findSelectedCatalogEntry({
-    catalog: thinkingCatalog,
-    provider: resolvedProvider,
-    model: resolvedModel,
-  });
+  const selectedCatalogEntry = findModelInCatalog(
+    thinkingCatalog ?? [],
+    resolvedProvider,
+    resolvedModel,
+  );
   const resolveThinkingRuntime = (entry: typeof sessionEntry) =>
     resolveEffectiveAgentRuntime({
       cfg: params.cfg,

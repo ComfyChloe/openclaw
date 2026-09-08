@@ -12,7 +12,6 @@ import type {
   ModelCatalogProvider,
   NormalizedModelCatalogRow,
 } from "@openclaw/model-catalog-core/model-catalog-types";
-import { normalizeLowercaseStringOrEmpty } from "../../packages/normalization-core/src/string-coerce.js";
 import { normalizeUniqueStringEntries } from "../../packages/normalization-core/src/string-normalization.js";
 
 type ManifestModelCatalogPlugin = {
@@ -332,22 +331,21 @@ export function planManifestModelCatalogSuppressions(params: {
   const providerFilter = params.providerFilter
     ? normalizeModelCatalogProviderId(params.providerFilter)
     : undefined;
-  const modelFilter = params.modelFilter
-    ? normalizeLowercaseStringOrEmpty(params.modelFilter)
-    : undefined;
+  const modelFilter = params.modelFilter?.trim();
   const suppressions: ManifestModelCatalogSuppressionEntry[] = [];
   for (const plugin of params.registry.plugins) {
     let providerRefs: ReadonlySet<string> | undefined;
     for (const suppression of plugin.modelCatalog?.suppressions ?? []) {
       const provider = normalizeModelCatalogProviderId(suppression.provider);
-      const model = normalizeLowercaseStringOrEmpty(suppression.model);
+      const model = suppression.model.trim();
       if (!provider || !model) {
         continue;
       }
       if (providerFilter && provider !== providerFilter) {
         continue;
       }
-      if (modelFilter && model !== modelFilter) {
+      const mergeKey = buildModelCatalogMergeKey(provider, model);
+      if (modelFilter && mergeKey !== buildModelCatalogMergeKey(provider, modelFilter)) {
         continue;
       }
       // Suppressions can affect owned providers and their declared aliases only;
@@ -360,7 +358,7 @@ export function planManifestModelCatalogSuppressions(params: {
         pluginId: plugin.id,
         provider,
         model,
-        mergeKey: buildModelCatalogMergeKey(provider, model),
+        mergeKey,
         ...(suppression.reason ? { reason: suppression.reason } : {}),
         ...(suppression.retirement ? { retirement: suppression.retirement } : {}),
         ...(suppression.when ? { when: suppression.when } : {}),

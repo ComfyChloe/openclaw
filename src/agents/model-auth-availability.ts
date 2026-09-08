@@ -6,7 +6,10 @@ import {
 } from "@openclaw/model-catalog-core/provider-id";
 import { hasNonEmptyString as hasSecret } from "@openclaw/normalization-core/string-coerce";
 import { resolveAgentModelPrimaryValue } from "../config/model-input.js";
-import { resolveMergedModelProviderConfig } from "../config/model-provider-config.js";
+import {
+  findProviderModelConfig,
+  resolveMergedModelProviderConfig,
+} from "../config/model-provider-config.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { coerceSecretRef } from "../config/types.secrets.js";
 import type {
@@ -258,20 +261,6 @@ function modeAllowed(provider: string, target: AuthTarget, mode: string | undefi
         requirement === "api-key";
 }
 
-function normalizeModelIdForProvider(provider: string, modelId: string): string | undefined {
-  const trimmed = splitTrailingAuthProfile(modelId).model.trim();
-  if (!trimmed) {
-    return undefined;
-  }
-  const slash = trimmed.indexOf("/");
-  if (slash <= 0) {
-    return trimmed;
-  }
-  return normalizeProviderIdForAuth(trimmed.slice(0, slash)) === provider
-    ? trimmed.slice(slash + 1).trim() || undefined
-    : undefined;
-}
-
 /** Builds one snapshot-scoped read-only auth evaluator. */
 export function createModelAuthAvailabilityResolver(
   params: CreateModelAuthAvailabilityResolverParams,
@@ -412,12 +401,11 @@ export function createModelAuthAvailabilityResolver(
     resolveProviderConfigSecretInput(params.cfg, provider);
   const prepareAuthTarget = (provider: string, ref: ModelAuthAvailabilityRef): AuthTarget => {
     const { providerConfig: configured } = providerInput(provider);
-    const configuredModelId = ref.modelId
-      ? normalizeModelIdForProvider(provider, ref.modelId)
-      : undefined;
-    const configuredModel = configuredModelId
-      ? configured?.models?.find(
-          (model) => normalizeModelIdForProvider(provider, model.id) === configuredModelId,
+    const configuredModel = ref.modelId
+      ? findProviderModelConfig(
+          configured?.models,
+          provider,
+          splitTrailingAuthProfile(ref.modelId).model.trim(),
         )
       : undefined;
     return {
@@ -1101,7 +1089,7 @@ export function createModelAuthAvailabilityResolver(
       ref.pinnedProfileId,
     );
     const materializedModelId = ref.modelId
-      ? normalizeModelIdForProvider(provider, ref.modelId)?.toLowerCase()
+      ? splitTrailingAuthProfile(ref.modelId).model.trim()
       : undefined;
     const materialized =
       !modelLock &&

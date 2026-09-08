@@ -26,7 +26,6 @@ import {
   buildModelAliasIndex,
   type ModelAliasIndex,
   modelKey,
-  normalizeModelRef,
   normalizeProviderId,
   resolveConfiguredModelRef,
   resolveModelRefFromString,
@@ -457,8 +456,8 @@ async function resolveLiteralPrefixProviderIds(params: {
 }
 
 function modelCatalogEntryKey(entry: { provider: string; id: string }): string {
-  const normalizedRef = normalizeModelRef(entry.provider, entry.id);
-  return modelKey(normalizedRef.provider, normalizedRef.model);
+  // Retired config aliases keep their write contract; provider input hooks do not run here.
+  return normalizeAgentModelRefForConfig(modelKey(entry.provider, entry.id));
 }
 
 async function addModelSelectOption(params: {
@@ -479,15 +478,17 @@ async function addModelSelectOption(params: {
   isVisibleProvider: (provider: string) => boolean;
   resolveModelRouteRuntime: ModelRouteRuntimeResolver;
 }) {
-  const normalizedRef = normalizeModelRef(params.entry.provider, params.entry.id);
   const key = modelCatalogEntryKey(params.entry);
+  const modelRef = splitModelKey(key);
   if (
+    !modelRef ||
     params.seen.has(key) ||
     HIDDEN_ROUTER_MODELS.has(key) ||
-    !params.isVisibleProvider(normalizedRef.provider)
+    !params.isVisibleProvider(modelRef.provider)
   ) {
     return;
   }
+  const { provider, id: model } = modelRef;
   const hints: string[] = [];
   if (params.entry.name && params.entry.name !== params.entry.id) {
     hints.push(params.entry.name);
@@ -503,8 +504,8 @@ async function addModelSelectOption(params: {
     hints.push(`alias: ${aliases.join(", ")}`);
   }
   const routeHint = resolveModelRouteHint({
-    provider: normalizedRef.provider,
-    modelId: normalizedRef.model,
+    provider,
+    modelId: model,
     api: params.entry.api,
     baseUrl: params.entry.baseUrl,
     resolveModelRouteRuntime: params.resolveModelRouteRuntime,
@@ -513,8 +514,8 @@ async function addModelSelectOption(params: {
     hints.push(routeHint);
   }
   if (
-    !(await params.hasAuth(normalizedRef.provider, {
-      modelId: normalizedRef.model,
+    !(await params.hasAuth(provider, {
+      modelId: model,
       api: params.entry.api,
       baseUrl: params.entry.baseUrl,
     }))
@@ -522,8 +523,8 @@ async function addModelSelectOption(params: {
     return;
   }
   const label = formatModelRefLabel({
-    provider: normalizedRef.provider,
-    model: normalizedRef.model,
+    provider,
+    model,
     key,
     literalPrefixProviders: params.literalPrefixProviders,
   });
@@ -1551,6 +1552,9 @@ export function applyModelAllowlist(
   const aliasIndex = buildModelAliasIndex({ cfg, defaultProvider: DEFAULT_PROVIDER });
   const isPolicyRefInScope = (raw: string): boolean => {
     const trimmed = raw.trim();
+    if (scopeKeySet?.has(trimmed)) {
+      return true;
+    }
     if (trimmed.endsWith("/*")) {
       return scopeProviders.has(normalizeProviderId(trimmed.slice(0, -2)));
     }

@@ -1,5 +1,4 @@
 import { isDeepStrictEqual } from "node:util";
-import type { AgentExecutionAuthBinding } from "../agents/execution-auth-binding.js";
 import { applyMergePatch } from "../config/merge-patch.js";
 import {
   attachRuntimeConfigWriteApplication,
@@ -15,10 +14,7 @@ import {
   resolveSystemAgentConfiguredRouteFromConfig,
   sameDefaultInferenceRoute,
 } from "./inference-route.js";
-import type {
-  SystemAgentConfiguredRoute,
-  SystemAgentConfiguredRouteDeps,
-} from "./inference-route.js";
+import type { SystemAgentConfiguredRouteDeps } from "./inference-route.js";
 import {
   SetupInferenceActivationIndeterminateError,
   SetupInferenceActivationUnavailableError,
@@ -28,6 +24,7 @@ import {
   type ActivateSetupInferenceParams,
   type ActivateSetupInferenceResult,
 } from "./setup-inference-core.js";
+import { revalidateStableSetupInferenceOwner } from "./setup-inference-owner.js";
 import {
   configReferencesManualAuthProfiles,
   isCodexInstallRecordPersisted,
@@ -39,6 +36,7 @@ import {
 } from "./setup-inference-persist.js";
 import {
   projectSetupTargetModelMetadata,
+  parseRef,
   type SetupInferenceTestPlan,
 } from "./setup-inference-plan-helpers.js";
 import { runSetupInferenceTest } from "./setup-inference-test.js";
@@ -54,7 +52,10 @@ export type SetupInferenceActivationPersistenceState = {
 
 /** Build one typed candidate projection for verification and final persistence. */
 export async function createSetupInferenceCandidateStager(params: {
-  plan: Pick<SetupInferenceTestPlan, "manualAuth" | "persistModelRef" | "authProfileId">;
+  plan: Pick<
+    SetupInferenceTestPlan,
+    "manualAuth" | "persistModelRef" | "authProfileId" | "requestedRouteResolution"
+  >;
   targetAgentId?: string;
   agentRuntimeId?: string;
   codexPluginPatch: unknown;
@@ -65,7 +66,10 @@ export async function createSetupInferenceCandidateStager(params: {
   const { stripPendingPluginInstallRecords } = await import("../plugins/install-record-commit.js");
   const selectModel = plan.persistModelRef
     ? await createSystemAgentModelSelectionUpdater({
-        model: plan.persistModelRef,
+        model:
+          plan.requestedRouteResolution === "resolved"
+            ? parseRef(plan.persistModelRef)
+            : plan.persistModelRef,
         ...(params.targetAgentId ? { targetAgentId: params.targetAgentId } : {}),
         ...(params.agentRuntimeId ? { agentRuntimeId: params.agentRuntimeId } : {}),
         ...(plan.manualAuth && plan.authProfileId ? { authProfileId: plan.authProfileId } : {}),
@@ -117,16 +121,10 @@ export async function persistActivatedSetupInference(input: {
   stagedOwnerPluginArtifacts: SystemAgentOwnerPluginArtifactSnapshot;
   baselineTargetModelMetadata: unknown;
   sourceTargetModelMetadata: unknown;
-  routeDeps: Pick<SystemAgentConfiguredRouteDeps, "pluginMetadataPlugins">;
+  routeDeps: Pick<SystemAgentConfiguredRouteDeps, "pluginMetadataPlugins" | "resolvedModelCatalog">;
   readSnapshot: NonNullable<ActivateSetupInferenceDeps["readConfigFileSnapshot"]>;
   hasPreparedAuthProfiles: boolean;
   state: SetupInferenceActivationPersistenceState;
-  revalidateOwner: (params: {
-    route: SystemAgentConfiguredRoute;
-    auth: AgentExecutionAuthBinding;
-    stagedOwnerPluginArtifacts: SystemAgentOwnerPluginArtifactSnapshot | undefined;
-    deps: ActivateSetupInferenceDeps;
-  }) => Promise<unknown>;
 }): Promise<ActivateSetupInferenceResult | undefined> {
   const {
     params,
@@ -148,7 +146,6 @@ export async function persistActivatedSetupInference(input: {
     readSnapshot,
     hasPreparedAuthProfiles,
     state,
-    revalidateOwner,
   } = input;
   let { codexInstallOwnership } = state;
   const requestedAgentId = targetAgentId;
@@ -308,7 +305,7 @@ export async function persistActivatedSetupInference(input: {
             "The source config no longer matches the verified candidate, so it was not saved. Review the current config and retry.",
           );
         }
-        await revalidateOwner({
+        await revalidateStableSetupInferenceOwner({
           route: nextResolvedRoute,
           auth: test.auth,
           stagedOwnerPluginArtifacts,

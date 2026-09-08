@@ -19,6 +19,11 @@ import {
 import { buildTestCtx } from "./test-ctx.js";
 
 const selectAgentHarnessMock = vi.hoisted(() => vi.fn());
+const normalizeProviderModelMock = vi.hoisted(() => vi.fn());
+
+vi.mock("../../agents/provider-model-normalization.runtime.js", () => ({
+  normalizeProviderModelIdWithRuntime: normalizeProviderModelMock,
+}));
 
 vi.mock("../../agents/harness/selection.js", () => ({
   selectAgentHarness: (...args: unknown[]) => selectAgentHarnessMock(...args),
@@ -90,6 +95,7 @@ describe("turn model selection harness-path differential", () => {
     resetPluginRuntimeStateForTest();
     setActivePluginRegistry(createSessionConversationTestRegistry());
     selectAgentHarnessMock.mockImplementation(() => recorderHarness);
+    normalizeProviderModelMock.mockReset();
   });
 
   afterEach(() => {
@@ -172,4 +178,61 @@ describe("turn model selection harness-path differential", () => {
       }),
     );
   });
+
+  it.each(["stored", "default", "channel", "turn"])(
+    "chooses delivery defaults from the raw %s model exactly once",
+    (source) => {
+      normalizeProviderModelMock.mockImplementation(
+        ({ context }: { context: { modelId: string } }) =>
+          context.modelId === "latest"
+            ? "middle"
+            : context.modelId === "middle"
+              ? "final"
+              : undefined,
+      );
+      selectAgentHarnessMock.mockImplementation(({ modelId }: { modelId?: string }) => ({
+        ...recorderHarness,
+        deliveryDefaults: modelId
+          ? { visibleReplies: modelId === "middle" ? "message_tool" : "automatic" }
+          : undefined,
+      }));
+      const entry: SessionEntry = {
+        sessionId: "raw-pin-harness",
+        updatedAt: 1,
+        ...(source === "stored"
+          ? {
+              providerOverride: "custom",
+              modelOverride: "latest",
+            }
+          : {}),
+        chatType: "direct",
+      };
+      const before = { ...entry };
+      const result = resolveVisibleRepliesPolicy({
+        cfg: {
+          agents: {
+            defaults: {
+              model: { primary: source === "default" ? "custom/latest" : "custom/default" },
+            },
+          },
+          ...(source === "channel"
+            ? { channels: { modelByChannel: { telegram: { "*": "custom/latest" } } } }
+            : {}),
+        },
+        chatType: "direct",
+        ctx: buildTestCtx({
+          Provider: "telegram",
+          Surface: "telegram",
+          ChatType: "direct",
+          From: "telegram:1000",
+          To: "telegram:2000",
+        }),
+        entry,
+        sessionAgentId: "main",
+        ...(source === "turn" ? { turnModelOverride: "custom/latest" } : {}),
+      });
+      expect(result.harnessDefaultVisibleReplies).toBe("message_tool");
+      expect(entry).toEqual(before);
+    },
+  );
 });

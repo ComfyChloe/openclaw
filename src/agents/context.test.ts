@@ -197,17 +197,18 @@ describe("applyConfiguredContextWindows", () => {
     expect(cache.get("google-gemini-cli/gemini-3.1-pro-preview")).toBe(1_048_576);
   });
 
-  it("writes provider-owned bare keys for self-prefixed configured ids", () => {
+  it("keeps configured context limits separate for provider-local namespaces", () => {
     const cache = new Map<string, number>();
     applyConfiguredContextWindows({
       cache,
       windowCache: new Map(),
       modelsConfig: {
         providers: {
-          "google-gemini-cli": {
+          custom: {
             models: [
+              { id: "model", contextTokens: 128_000 },
               {
-                id: "google-gemini-cli/gemini-3.1-pro-preview",
+                id: "custom/model",
                 contextTokens: 1_000_000,
               },
             ],
@@ -216,9 +217,8 @@ describe("applyConfiguredContextWindows", () => {
       },
     });
 
-    expect(
-      cache.get(providerContextTokenCacheKey("google-gemini-cli", "gemini-3.1-pro-preview")),
-    ).toBe(1_000_000);
+    expect(cache.get(providerContextTokenCacheKey("custom", "model"))).toBe(128_000);
+    expect(cache.get(providerContextTokenCacheKey("custom", "custom/model"))).toBe(1_000_000);
   });
 
   it("adds config-only model context windows and ignores invalid entries", () => {

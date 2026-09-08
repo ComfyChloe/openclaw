@@ -3,11 +3,11 @@ import {
   type ConfiguredModelRef,
 } from "@openclaw/model-catalog-core/configured-model-refs";
 import {
-  buildModelCatalogMergeKey,
   parseModelCatalogRef,
   type ModelCatalogRef,
 } from "@openclaw/model-catalog-core/model-catalog-refs";
 import { normalizeProviderId } from "@openclaw/model-catalog-core/provider-id";
+import { resolveMergedModelProviderModels } from "../config/model-provider-config.js";
 import { MODEL_APIS } from "../config/types.models.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import type { PluginMetadataSnapshot } from "../plugins/plugin-metadata-snapshot.types.js";
@@ -18,9 +18,13 @@ import {
 import type { ProviderRuntimeModel } from "../plugins/provider-runtime-model.types.js";
 import { resolveAgentEntry } from "./agent-scope-config.js";
 import { buildInlineProviderModels } from "./embedded-agent-runner/model.inline-provider.js";
-import type { StaticModelIdMatcher } from "./embedded-agent-runner/model.static-id.js";
+import {
+  findStaticModel,
+  type StaticModelIdNormalizer,
+} from "./embedded-agent-runner/model.static-id.js";
 import { resolveConfiguredModelHarnessRuntime } from "./harness-runtimes.js";
 import type { ModelCatalogEntry } from "./model-catalog.js";
+import { resolveModelCatalogIdentityKey } from "./openai-model-routes.js";
 import type { AuthStorageData } from "./sessions/auth-storage.js";
 import { resolveEffectiveAgentRuntime } from "./thinking-runtime.js";
 
@@ -36,6 +40,35 @@ export type PreparedConfiguredRuntimeModel = Readonly<{
  * are intentionally omitted from the configured view.
  */
 export type PreparedRuntimeCapabilityModel = PreparedConfiguredRuntimeModel;
+
+function findConfiguredStaticModel<T extends { id: string; provider?: string }>(
+  models: readonly T[],
+  provider: string,
+  modelId: string,
+  normalizeModelId: StaticModelIdNormalizer,
+): T | undefined {
+  return (
+    findStaticModel(models, provider, modelId) ??
+    findStaticModel(models, provider, normalizeModelId(provider, modelId))
+  );
+}
+
+function resolveConfiguredStaticModel(
+  params: {
+    resolveStaticCatalogModel: (lookup: ModelCatalogRef) => ProviderRuntimeModel | undefined;
+    normalizeModelId: StaticModelIdNormalizer;
+  },
+  provider: string,
+  modelId: string,
+): ProviderRuntimeModel | undefined {
+  return (
+    params.resolveStaticCatalogModel({ provider, modelId }) ??
+    params.resolveStaticCatalogModel({
+      provider,
+      modelId: params.normalizeModelId(provider, modelId),
+    })
+  );
+}
 
 /** Collects defaults, global refs, and only the selected agent's overrides. */
 export function collectPreparedModelRuntimeConfiguredRefs(
@@ -125,19 +158,15 @@ function hasConfiguredInlineProviderModel(
   config: OpenClawConfig,
   provider: string,
   modelId: string,
-  matchesStaticModelId: StaticModelIdMatcher,
+  normalizeModelId: StaticModelIdNormalizer,
 ): boolean {
   return Object.entries(config.models?.providers ?? {}).some(
     ([providerId, providerConfig]) =>
       normalizeProviderId(providerId) === provider &&
-      (providerConfig.models ?? []).some((model) =>
-        matchesStaticModelId({
-          candidateId: model.id,
-          rowProvider: providerId,
-          provider,
-          modelId,
-        }),
-      ),
+      resolveMergedModelProviderModels({
+        models: providerConfig.models,
+        normalizeModelId: (id) => normalizeModelId(provider, id),
+      }).has(modelId),
   );
 }
 
@@ -148,7 +177,7 @@ export function collectConfiguredProviderIdsNeedingStaticCatalog(params: {
     provider: string;
     modelId: string;
   }) => ProviderRuntimeModel | undefined;
-  matchesStaticModelId: StaticModelIdMatcher;
+  normalizeModelId: StaticModelIdNormalizer;
 }): string[] {
   const providerIds = new Set<string>();
   for (const { value } of params.configuredModelRefs ?? collectConfiguredModelRefs(params.config)) {
@@ -158,13 +187,8 @@ export function collectConfiguredProviderIdsNeedingStaticCatalog(params: {
     }
     const { provider, modelId } = parsed;
     if (
-      hasConfiguredInlineProviderModel(
-        params.config,
-        provider,
-        modelId,
-        params.matchesStaticModelId,
-      ) ||
-      params.resolveStaticCatalogModel({ provider, modelId })
+      hasConfiguredInlineProviderModel(params.config, provider, modelId, params.normalizeModelId) ||
+      resolveConfiguredStaticModel(params, provider, modelId)
     ) {
       continue;
     }
@@ -182,12 +206,12 @@ export function prepareConfiguredRuntimeModels(params: {
     provider: string;
     modelId: string;
   }) => ProviderRuntimeModel | undefined;
-  matchesStaticModelId: StaticModelIdMatcher;
+  normalizeModelId: StaticModelIdNormalizer;
 }): PreparedConfiguredRuntimeModel[] {
   const prepared: PreparedConfiguredRuntimeModel[] = [];
   const seen = new Set<string>();
   for (const { modelId, provider } of params.configuredModelRefs) {
-    const key = buildModelCatalogMergeKey(provider, modelId);
+    const key = resolveModelCatalogIdentityKey({ provider, id: modelId });
     if (seen.has(key)) {
       continue;
     }
@@ -195,21 +219,19 @@ export function prepareConfiguredRuntimeModels(params: {
     // Match request-time fallback precedence exactly: manifest/runtime-discovery rows win,
     // and the provider-static catalog fills only models absent from that surface.
     const model =
-      params.resolveStaticCatalogModel({ provider, modelId }) ??
+      resolveConfiguredStaticModel(params, provider, modelId) ??
       findPreparedProviderStaticCatalogModel({
         prepared: params.preparedStaticProviderCatalog,
         metadataSnapshot: params.metadataSnapshot,
         provider,
         modelId,
-        matchesStaticModelId: params.matchesStaticModelId,
+        normalizeModelId: params.normalizeModelId,
       }) ??
-      params.providerStaticModels.find((candidate) =>
-        params.matchesStaticModelId({
-          candidateId: candidate.id,
-          rowProvider: candidate.provider,
-          provider,
-          modelId,
-        }),
+      findConfiguredStaticModel(
+        params.providerStaticModels,
+        provider,
+        modelId,
+        params.normalizeModelId,
       );
     if (model) {
       prepared.push({ provider, modelId, model });
@@ -247,7 +269,7 @@ export function prepareRuntimeCapabilityModels(params: {
     if (runtime === provider || runtime === "openclaw") {
       continue;
     }
-    const key = buildModelCatalogMergeKey(provider, modelId);
+    const key = resolveModelCatalogIdentityKey({ provider, id: modelId });
     if (seen.has(key)) {
       continue;
     }
@@ -266,7 +288,7 @@ function findPreparedProviderStaticCatalogModel(params: {
   metadataSnapshot: PluginMetadataSnapshot;
   provider: string;
   modelId: string;
-  matchesStaticModelId: StaticModelIdMatcher;
+  normalizeModelId: StaticModelIdNormalizer;
 }): ProviderRuntimeModel | undefined {
   if (!params.prepared) {
     return undefined;
@@ -275,13 +297,14 @@ function findPreparedProviderStaticCatalogModel(params: {
     for (const [providerId, providerConfig] of Object.entries(
       normalizePluginDiscoveryResult({ provider, result }),
     )) {
-      const model = (providerConfig.models ?? []).find((candidate) =>
-        params.matchesStaticModelId({
-          candidateId: candidate.id,
-          rowProvider: providerId,
-          provider: params.provider,
-          modelId: params.modelId,
-        }),
+      if (normalizeProviderId(providerId) !== normalizeProviderId(params.provider)) {
+        continue;
+      }
+      const model = findConfiguredStaticModel(
+        providerConfig.models ?? [],
+        params.provider,
+        params.modelId,
+        params.normalizeModelId,
       );
       if (!model) {
         continue;

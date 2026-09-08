@@ -10,6 +10,7 @@ import {
 import { createExecutionIdentityAdmissionToken } from "../../audit/execution-identity-admission.js";
 import { upsertSessionEntryCore } from "../../config/sessions/session-accessor.js";
 import { GatewayClientRequestError } from "../../gateway/client.js";
+import { resolveSessionPatchModelSelection } from "../../gateway/sessions-patch.js";
 import { withTestDir } from "../../test-helpers/temp-dir.js";
 import { createOperationalRunInstanceRef } from "../admitted-run-context.js";
 import { finalizeAgentToolAvailability } from "../agent-tool-availability.js";
@@ -1026,6 +1027,74 @@ describe("sessions_spawn tool", () => {
       expect.objectContaining({ runId: "run-visible-timed", runTimeoutSeconds: 7 }),
     );
   });
+
+  it.each([undefined, "default", "fast", "custom/model-b"])(
+    "lets sessions.create resolve visible model input %s against its current config",
+    async (model) => {
+      const initial = {
+        agents: {
+          defaults: {
+            model: { primary: "custom/base" },
+            subagents: { model: "fast" },
+            models: { "custom/model-a": { alias: "fast" } },
+          },
+        },
+      };
+      const receiving = {
+        agents: {
+          defaults: {
+            ...initial.agents.defaults,
+            models: { "custom/model-b": { alias: "fast" } },
+          },
+        },
+      };
+      const selections: Array<ReturnType<typeof resolveSessionPatchModelSelection>> = [];
+      const callGateway = vi.fn(async (_method: string, params: { model: string }) => {
+        const selection = resolveSessionPatchModelSelection({
+          cfg: receiving,
+          agentId: "main",
+          raw: params.model,
+          catalog: [
+            { provider: "custom", id: "model-a", name: "A" },
+            { provider: "custom", id: "model-b", name: "B" },
+          ],
+          defaultProvider: "custom",
+          defaultModel: "base",
+        });
+        selections.push(selection);
+        if (!selection.ok) {
+          throw new Error(selection.error);
+        }
+        return {
+          key: "agent:main:dashboard:visible-alias",
+          runStarted: true,
+          runId: "visible-alias",
+        };
+      });
+      const tool = createSessionsSpawnTool({
+        agentSessionKey: "agent:main:main",
+        config: initial,
+        callGateway: callGateway as never,
+        registerRun: vi.fn(),
+        countActiveRuns: () => 0,
+      });
+      const result = await tool.execute("visible-alias", {
+        task: "inspect",
+        visible: true,
+        ...(model ? { model } : {}),
+      });
+      expect(result.details).toMatchObject({ status: "accepted" });
+      expect(callGateway).toHaveBeenCalledWith(
+        "sessions.create",
+        expect.objectContaining({
+          model: model === "custom/model-b" ? model : "fast",
+        }),
+      );
+      expect(selections).toEqual([
+        expect.objectContaining({ ok: true, provider: "custom", model: "model-b" }),
+      ]);
+    },
+  );
 
   it("uses the target agent model for cross-agent visible sessions", async () => {
     const callGateway = vi.fn(async () => ({

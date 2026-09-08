@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterAll, beforeEach, describe, expect, onTestFinished, test, vi } from "vitest";
 import { writeAcpSessionMetaForMigration } from "../acp/runtime/session-meta.js";
+import { makeModel } from "../agents/embedded-agent-runner/model.test-harness.js";
 import { resolveExecDefaults } from "../agents/exec-defaults.js";
 import { resolveLegacyInheritedAuthAgentId } from "../agents/legacy-inherited-auth-dir.js";
 import * as sessionModelRefs from "../agents/session-model-ref.js";
@@ -5053,7 +5054,7 @@ describe("session list selected model display", () => {
     const cfg = {
       agents: {
         defaults: { model: { primary: "openai/gpt-5.4" } },
-        list: [{ id: "main", model: { primary: "anthropic/claude-sonnet-4-6" } }],
+        list: [{ id: "main", model: { primary: "anthropic/claude-opus-4-6" } }],
       },
     } as OpenClawConfig;
 
@@ -5065,7 +5066,8 @@ describe("session list selected model display", () => {
           sessionId: "sess-main",
           updatedAt: Date.now(),
           providerOverride: "anthropic",
-          modelOverride: "sonnet-4.6",
+          modelOverride: "claude-sonnet-4-6",
+          modelOverrideRouteResolution: "resolved",
         } as SessionEntry,
       },
       opts: {},
@@ -5212,6 +5214,88 @@ describe("resolveGatewayModelSupportsImages", () => {
     routeVariants: [],
     ...(params.staticEntries ? { staticEntries: params.staticEntries } : {}),
   });
+
+  test.each([
+    {
+      label: "neighbor text-only",
+      selected: "model",
+      selectedInput: ["text", "image"],
+      neighborInput: ["text"],
+      neighborApi: "openai-responses",
+      expected: true,
+    },
+    {
+      label: "selected text-only",
+      selected: "Model",
+      selectedInput: ["text"],
+      neighborInput: ["text", "image"],
+      neighborApi: "openai-responses",
+      expected: false,
+    },
+    {
+      label: "neighbor transport",
+      selected: "model",
+      selectedInput: ["text", "image"],
+      neighborInput: ["text", "image"],
+      neighborApi: "openai-completions",
+      expected: true,
+    },
+  ] as const)(
+    "keeps case-distinct configured image policy separate: $label",
+    async ({ selected, selectedInput, neighborInput, neighborApi, expected }) => {
+      const snapshot = createModelCatalogSnapshot({
+        agentId: "qa",
+        catalogComplete: true,
+        config: {
+          models: {
+            providers: {
+              custom: {
+                api: "openai-responses",
+                baseUrl: "https://models.example.test/v1",
+                models: [
+                  {
+                    ...makeModel(selected === "model" ? "Model" : "model"),
+                    input: [...neighborInput],
+                    api: neighborApi,
+                  },
+                  { ...makeModel(selected), input: [...selectedInput], api: "openai-responses" },
+                ],
+              },
+            },
+          },
+        },
+        entries: [
+          {
+            id: selected,
+            name: selected,
+            provider: "custom",
+            api: "openai-responses",
+            baseUrl: "https://models.example.test/v1",
+            input: ["text"],
+          },
+        ],
+        staticEntries: [
+          {
+            id: selected,
+            name: selected,
+            provider: "custom",
+            api: "openai-responses",
+            baseUrl: "https://models.example.test/v1",
+            input: ["text", "image"],
+          },
+        ],
+      });
+      await expect(
+        resolveGatewayModelSupportsImages({
+          agentId: "qa",
+          provider: "custom",
+          model: selected,
+          loadGatewayModelCatalog: async () => [],
+          loadGatewayModelCatalogSnapshot: async () => snapshot,
+        }),
+      ).resolves.toBe(expected);
+    },
+  );
 
   test("uses prepared Sol capabilities without starting full catalog discovery", async () => {
     const loadGatewayModelCatalog = vi.fn(async () => []);
@@ -5793,7 +5877,7 @@ describe("resolveGatewayModelSupportsImages", () => {
     ).resolves.toBe(true);
   });
 
-  test("matches catalog model ids case-insensitively for explicit providers", async () => {
+  test("prefers exact text-only identity over a case-distinct image-capable neighbor", async () => {
     await expect(
       resolveGatewayModelSupportsImages({
         model: "Qwen/Qwen3.5-35B-A3B",
@@ -5805,9 +5889,15 @@ describe("resolveGatewayModelSupportsImages", () => {
             provider: "modelscope",
             input: ["text", "image"],
           },
+          {
+            id: "Qwen/Qwen3.5-35B-A3B",
+            name: "Exact text-only Qwen3.5 35B",
+            provider: "modelscope",
+            input: ["text"],
+          },
         ],
       }),
-    ).resolves.toBe(true);
+    ).resolves.toBe(false);
   });
 
   test("does not borrow image support from another provider when provider is explicit", async () => {
@@ -5825,7 +5915,7 @@ describe("resolveGatewayModelSupportsImages", () => {
   test("uses a unique providerless catalog match", async () => {
     await expect(
       resolveGatewayModelSupportsImages({
-        model: "Qwen/Qwen3.5-35B-A3B",
+        model: "qwen/qwen3.5-35b-a3b",
         loadGatewayModelCatalog: async () => [
           {
             id: "qwen/qwen3.5-35b-a3b",

@@ -18,8 +18,9 @@ describe("modelKey", () => {
     expect(modelKey("openai", "   ")).toBe("openai");
   });
 
-  it("avoids double prefix when model already contains provider prefix", () => {
-    expect(modelKey("openai", "openai/gpt-5")).toBe("openai/gpt-5");
+  it("preserves a provider-local model namespace even when it repeats the provider", () => {
+    expect(modelKey("custom", "custom/model")).toBe("custom/custom/model");
+    expect(modelKey("custom", "model")).toBe("custom/model");
   });
 
   it("trims whitespace from both arguments", () => {

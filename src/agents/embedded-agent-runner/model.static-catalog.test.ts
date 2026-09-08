@@ -2,6 +2,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ModelDefinitionConfig } from "../../config/types.models.js";
+import type { PluginManifestRecord } from "../../plugins/manifest-registry.types.js";
+import { createPluginMetadataSnapshotFixture } from "../../plugins/plugin-metadata.test-support.js";
 import { createManifestRecord } from "./model.static-catalog.test-helpers.js";
 
 const repoRoot = path.resolve(import.meta.dirname, "../../..");
@@ -91,7 +93,7 @@ function setManifestPlugins(plugins: unknown[]) {
 
 function createMistralManifestPlugin(overrides?: {
   discovery?: "static" | "refreshable" | "runtime";
-  origin?: string;
+  origin?: PluginManifestRecord["origin"];
   cost?: ModelDefinitionConfig["cost"];
 }) {
   return {
@@ -124,7 +126,7 @@ function createMistralManifestPlugin(overrides?: {
         mistral: overrides?.discovery ?? "static",
       },
     },
-  };
+  } satisfies Pick<PluginManifestRecord, "id" | "origin" | "providers" | "modelCatalog">;
 }
 
 beforeEach(() => {
@@ -153,6 +155,55 @@ beforeEach(() => {
 });
 
 describe("resolveBundledStaticCatalogModel", () => {
+  it.each(["manifest", "provider"] as const)(
+    "does not borrow another identity's capabilities on a %s catalog miss",
+    async (source) => {
+      const plugin = createMistralManifestPlugin();
+      plugin.modelCatalog.providers.mistral.models[0]!.id = "final";
+      const metadataSnapshot = createPluginMetadataSnapshotFixture({
+        plugins: [
+          {
+            ...plugin,
+            origin: "bundled",
+            modelIdNormalization: { providers: { mistral: { aliases: { middle: "final" } } } },
+          },
+        ],
+      });
+      providerMocks.resolveOwningPluginIdsForProviderRef.mockReturnValue(["mistral"]);
+      providerMocks.resolveBundledProviderCompatPluginIds.mockReturnValue(["mistral"]);
+      providerMocks.resolveRuntimePluginDiscoveryProviders.mockResolvedValue([
+        { id: "mistral", pluginId: "mistral", label: "Mistral", auth: [] },
+      ]);
+      providerMocks.normalizePluginDiscoveryResult.mockReturnValue(plugin.modelCatalog.providers);
+      const resolveModel =
+        source === "manifest"
+          ? resolveBundledStaticCatalogModel
+          : resolveBundledProviderStaticCatalogModel;
+      const lookup = { provider: "mistral", cfg: {}, metadataSnapshot };
+      await expect(
+        Promise.resolve(resolveModel({ ...lookup, modelId: "middle" })),
+      ).resolves.toBeUndefined();
+      await expect(
+        Promise.resolve(resolveModel({ ...lookup, modelId: "final" })),
+      ).resolves.toMatchObject({ id: "final", contextWindow: 262144 });
+    },
+  );
+  it.each([
+    ["Alpha", "alpha"],
+    ["alpha", "Alpha"],
+  ])("keeps manifest model %s separate from a %s lookup", (modelId, differentCase) => {
+    const plugin = createMistralManifestPlugin();
+    const base = plugin.modelCatalog.providers.mistral.models[0]!;
+    plugin.modelCatalog.providers.mistral.models = [{ ...base, id: modelId, contextWindow: 32000 }];
+    setManifestPlugins([plugin]);
+    const resolveModel = createBundledStaticCatalogModelResolver({ cfg: {} });
+    expect(resolveModel({ provider: "mistral", modelId })).toMatchObject({
+      id: modelId,
+      contextWindow: 32000,
+    });
+    expect(resolveModel({ provider: "mistral", modelId: differentCase })).toBeUndefined();
+  });
+
   it("keeps static catalog plans inside their metadata owner for the same env and config", () => {
     const plugin = createMistralManifestPlugin();
     setManifestPlugins([plugin]);

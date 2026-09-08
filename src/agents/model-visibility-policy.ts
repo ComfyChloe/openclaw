@@ -69,6 +69,7 @@ export function createModelVisibilityPolicy(
     allowManifestNormalization: params.allowManifestNormalization ?? false,
     allowPluginNormalization: params.allowPluginNormalization ?? false,
     manifestPlugins: params.manifestPlugins,
+    resolvedModelCatalog: params.resolvedModelCatalog,
   });
 }
 

@@ -3,13 +3,10 @@ import { isPromiseLike } from "@openclaw/normalization-core/promise-like";
 import { isRecord } from "@openclaw/normalization-core/record-coerce";
 // Model-backed image understanding runtime for providers without a native media
 // provider hook.
-import { normalizeMediaProviderId } from "../../packages/media-understanding-common/src/provider-id.js";
-import { isMinimaxVlmModel, minimaxUnderstandImage } from "../agents/minimax-vlm.js";
-import { requireApiKey, resolveApiKeyForProviderCore } from "../agents/model-auth.js";
+import { minimaxUnderstandImage } from "../agents/minimax-vlm.js";
 import { resolveProviderRequestCapabilities } from "../agents/provider-attribution.js";
 import {
   getModelProviderRequestRouteFacts,
-  getModelProviderRequestTransport,
   type ModelProviderRequestTransportOverrides,
 } from "../agents/provider-request-config.js";
 import {
@@ -21,13 +18,11 @@ import {
   coerceImageAssistantText,
   hasImageReasoningOnlyResponse,
 } from "../agents/tools/image-tool.helpers.js";
-import { isSecretRef } from "../config/types.secrets.js";
 import { complete } from "../llm/stream.js";
 import type { AssistantMessage, Context, Model, ProviderStreamOptions } from "../llm/types.js";
-import { getResolvedImageRuntimeContext, resolveImageRuntime } from "./image-model-runtime.js";
+import { resolveImageRuntime, resolveImageRuntimeForModel } from "./image-model-runtime.js";
 import type {
   ImageDescriptionRequest,
-  ImageDescriptionResult,
   ImagesDescriptionRequest,
   ImagesDescriptionResult,
 } from "./types.js";
@@ -229,105 +224,6 @@ async function describeImagesWithMinimax(params: {
   };
 }
 
-function isUnknownModelError(err: unknown): boolean {
-  return err instanceof Error && /^Unknown model:/i.test(err.message);
-}
-
-function resolveConfiguredProviderBaseUrl(
-  cfg: ImageDescriptionRequest["cfg"],
-  provider: string,
-): string | undefined {
-  const direct = cfg.models?.providers?.[provider];
-  if (typeof direct?.baseUrl === "string" && direct.baseUrl.trim()) {
-    return direct.baseUrl.trim();
-  }
-  const normalizedProvider = normalizeMediaProviderId(provider);
-  const normalized = cfg.models?.providers?.[normalizedProvider];
-  if (typeof normalized?.baseUrl === "string" && normalized.baseUrl.trim()) {
-    if (isMinimaxCnAlias(provider) && !isMinimaxCnBaseUrl(normalized.baseUrl)) {
-      return undefined;
-    }
-    return normalized.baseUrl.trim();
-  }
-  return undefined;
-}
-
-function resolveConfiguredProviderAllowPrivateNetwork(
-  cfg: ImageDescriptionRequest["cfg"],
-  provider: string,
-): boolean | undefined {
-  const direct = cfg.models?.providers?.[provider]?.request?.allowPrivateNetwork;
-  if (typeof direct === "boolean") {
-    return direct;
-  }
-  const normalizedProvider = normalizeMediaProviderId(provider);
-  const normalized = cfg.models?.providers?.[normalizedProvider]?.request?.allowPrivateNetwork;
-  if (typeof normalized === "boolean") {
-    return normalized;
-  }
-  return undefined;
-}
-
-function isMinimaxCnAlias(provider: string): boolean {
-  const normalized = provider.trim().toLowerCase();
-  return normalized === "minimax-cn" || normalized === "minimax-portal-cn";
-}
-
-function isMinimaxCnBaseUrl(baseUrl: string): boolean {
-  const trimmed = baseUrl.trim();
-  if (!trimmed) {
-    return false;
-  }
-  try {
-    const parsed = new URL(/^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`);
-    return parsed.hostname.toLowerCase() === "api.minimaxi.com";
-  } catch {
-    return false;
-  }
-}
-
-function hasConfiguredProviderApiKey(
-  cfg: ImageDescriptionRequest["cfg"],
-  provider: string,
-): boolean {
-  const apiKey = cfg.models?.providers?.[provider]?.apiKey;
-  return (typeof apiKey === "string" && apiKey.trim().length > 0) || isSecretRef(apiKey);
-}
-
-function resolveMinimaxVlmAuthProvider(
-  cfg: ImageDescriptionRequest["cfg"],
-  provider: string,
-): string {
-  if (!isMinimaxCnAlias(provider) || hasConfiguredProviderApiKey(cfg, provider)) {
-    return provider;
-  }
-  return normalizeMediaProviderId(provider);
-}
-
-async function resolveMinimaxVlmFallbackRuntime(params: {
-  cfg: ImageDescriptionRequest["cfg"];
-  agentDir: string;
-  workspaceDir?: string;
-  provider: string;
-  profile?: string;
-  preferredProfile?: string;
-}): Promise<{ runtimeValue: string; modelBaseUrl?: string }> {
-  const authProvider = resolveMinimaxVlmAuthProvider(params.cfg, params.provider);
-  const auth = await resolveApiKeyForProviderCore({
-    provider: authProvider,
-    cfg: params.cfg,
-    secretSentinels: true,
-    profileId: params.profile,
-    preferredProfile: params.preferredProfile,
-    agentDir: params.agentDir,
-    ...(params.workspaceDir ? { workspaceDir: params.workspaceDir } : {}),
-  });
-  return {
-    runtimeValue: requireApiKey(auth, authProvider),
-    modelBaseUrl: resolveConfiguredProviderBaseUrl(params.cfg, params.provider),
-  };
-}
-
 function resolveImageDescriptionTimeoutMs(timeoutMs: number | undefined) {
   return clampPositiveTimerTimeoutMs(timeoutMs);
 }
@@ -410,9 +306,14 @@ async function withImageDescriptionTimeout<T>(params: {
 }
 
 async function describeImagesWithModelInternal(
-  params: ImagesDescriptionRequest,
-  options: { onPayload?: ProviderStreamOptions["onPayload"] } = {},
+  request: ImagesDescriptionRequest,
+  options: {
+    onPayload?: ProviderStreamOptions["onPayload"];
+    resolveRuntime: typeof resolveImageRuntime;
+  },
 ): Promise<ImagesDescriptionResult> {
+  // Multi-image callers may retain their request object while setup awaits admission.
+  const params = { ...request };
   const prompt = params.prompt ?? "Describe the image.";
   params.signal?.throwIfAborted();
   const startedAtMs = Date.now();
@@ -421,17 +322,14 @@ async function describeImagesWithModelInternal(
     ? AbortSignal.any([params.signal, controller.signal])
     : controller.signal;
   const configuredTimeoutMs = resolveImageDescriptionTimeoutMs(params.timeoutMs);
-  const allowPrivateNetwork = resolveConfiguredProviderAllowPrivateNetwork(
-    params.cfg,
-    params.provider,
-  );
-  let runtimeValue: string;
-  let model: Model | undefined;
-  let releaseRuntime: (() => void) | undefined;
-  const resolutionTask = resolveImageRuntime({ ...params, signal: requestSignal });
+  let resolved: Awaited<ReturnType<typeof resolveImageRuntime>>;
+  const resolutionTask = options.resolveRuntime({
+    ...params,
+    signal: requestSignal,
+  });
 
   try {
-    const resolved = await withImageDescriptionTimeout({
+    resolved = await withImageDescriptionTimeout({
       controller,
       signal: params.signal,
       timeoutMs: configuredTimeoutMs,
@@ -439,9 +337,6 @@ async function describeImagesWithModelInternal(
         buildImageDescriptionTimeoutError({ phase: "setup", timeoutMs }),
       task: resolutionTask,
     });
-    runtimeValue = resolved.runtimeValue;
-    model = resolved.model;
-    releaseRuntime = resolved.release;
   } catch (err) {
     // The setup timeout does not cancel catalog preparation. If it wins the race, release any
     // generation that resolves afterward instead of abandoning its retained lease.
@@ -449,51 +344,24 @@ async function describeImagesWithModelInternal(
       (late) => late.release(),
       () => undefined,
     );
-    params.signal?.throwIfAborted();
-    if (!isMinimaxVlmModel(params.provider, params.model) || !isUnknownModelError(err)) {
-      throw err;
-    }
-    const fallback = await withImageDescriptionTimeout({
-      controller,
-      signal: params.signal,
-      timeoutMs: configuredTimeoutMs,
-      createTimeoutError: (timeoutMs) =>
-        buildImageDescriptionTimeoutError({ phase: "setup", timeoutMs }),
-      task: resolveMinimaxVlmFallbackRuntime(params),
-    });
-    return await describeImagesWithMinimax({
-      runtimeValue: fallback.runtimeValue,
-      provider: params.provider,
-      modelId: params.model,
-      modelBaseUrl: fallback.modelBaseUrl,
-      prompt,
-      timeoutMs: params.timeoutMs,
-      images: params.images,
-      allowPrivateNetwork,
-      signal: params.signal,
-    });
+    throw err;
   }
 
-  const apiKey = runtimeValue;
   try {
     params.signal?.throwIfAborted();
     const setupDurationMs = Date.now() - startedAtMs;
 
-    if (isMinimaxVlmModel(model.provider, model.id)) {
+    if (resolved.kind === "minimax") {
       return await describeImagesWithMinimax({
-        runtimeValue,
-        provider: model.provider,
-        modelId: model.id,
-        modelBaseUrl: model.baseUrl,
+        ...resolved,
         prompt,
         timeoutMs: params.timeoutMs,
         images: params.images,
-        request: getModelProviderRequestTransport(model),
-        signal: params.signal,
+        signal: requestSignal,
       });
     }
 
-    const resolvedRuntimeContext = getResolvedImageRuntimeContext(model);
+    const { model, runtimeValue: apiKey } = resolved;
     // Prepared auth may carry sentinel-protected request headers. Resolve them only at this
     // final direct-completion boundary so provider SDKs never receive sentinel placeholders.
     const requestModel = unwrapModelHeaderSentinelsForProviderEgress(
@@ -502,14 +370,11 @@ async function describeImagesWithModelInternal(
     );
     const providerStreamFn = registerProviderStreamForModel({
       model: requestModel,
-      cfg: resolvedRuntimeContext?.cfg ?? params.cfg,
-      agentDir: resolvedRuntimeContext?.agentDir ?? params.agentDir,
+      cfg: resolved.cfg,
+      agentDir: resolved.agentDir,
       wrapProviderStream: true,
-      ...(resolvedRuntimeContext?.workspaceDir
-        ? { workspaceDir: resolvedRuntimeContext.workspaceDir }
-        : params.workspaceDir
-          ? { workspaceDir: params.workspaceDir }
-          : {}),
+      capability: "image",
+      ...(resolved.workspaceDir ? { workspaceDir: resolved.workspaceDir } : {}),
     });
 
     const context = buildImageContext(prompt, params.images, {
@@ -571,7 +436,7 @@ async function describeImagesWithModelInternal(
     });
     return { text, model: model.id };
   } finally {
-    releaseRuntime?.();
+    resolved.release();
   }
 }
 
@@ -601,31 +466,34 @@ function toImagesDescriptionRequest(params: ImageDescriptionRequest): ImagesDesc
   };
 }
 
-export async function describeImagesWithModelCore(
-  params: ImagesDescriptionRequest,
-): Promise<ImagesDescriptionResult> {
-  return await describeImagesWithModelInternal(params);
+function createImageDescriptions(resolveRuntime: typeof resolveImageRuntime) {
+  const describe = (
+    params: ImagesDescriptionRequest,
+    onPayload?: ProviderStreamOptions["onPayload"],
+  ) => describeImagesWithModelInternal(params, { onPayload, resolveRuntime });
+  return {
+    single: (params: ImageDescriptionRequest) => describe(toImagesDescriptionRequest(params)),
+    multiple: (params: ImagesDescriptionRequest) => describe(params),
+    singleWithPayload: (
+      params: ImageDescriptionRequest,
+      onPayload: ProviderStreamOptions["onPayload"],
+    ) => describe(toImagesDescriptionRequest(params), onPayload),
+    multipleWithPayload: (
+      params: ImagesDescriptionRequest,
+      onPayload: ProviderStreamOptions["onPayload"],
+    ) => describe(params, onPayload),
+  };
 }
 
-export async function describeImagesWithModelPayloadTransformCore(
-  params: ImagesDescriptionRequest,
-  onPayload: ProviderStreamOptions["onPayload"],
-): Promise<ImagesDescriptionResult> {
-  return await describeImagesWithModelInternal(params, { onPayload });
-}
+export const {
+  single: describeImageWithModelCore,
+  multiple: describeImagesWithModelCore,
+  singleWithPayload: describeImageWithModelPayloadTransformCore,
+  multipleWithPayload: describeImagesWithModelPayloadTransformCore,
+} = createImageDescriptions(resolveImageRuntime);
 
-export async function describeImageWithModelCore(
-  params: ImageDescriptionRequest,
-): Promise<ImageDescriptionResult> {
-  return await describeImagesWithModelCore(toImagesDescriptionRequest(params));
-}
-
-export async function describeImageWithModelPayloadTransformCore(
-  params: ImageDescriptionRequest,
-  onPayload: ProviderStreamOptions["onPayload"],
-): Promise<ImageDescriptionResult> {
-  return await describeImagesWithModelPayloadTransformCore(
-    toImagesDescriptionRequest(params),
-    onPayload,
-  );
-}
+// Internal fallback candidates have already consumed input normalization.
+export const {
+  single: describeImageWithResolvedModelCore,
+  multiple: describeImagesWithResolvedModelCore,
+} = createImageDescriptions(resolveImageRuntimeForModel);

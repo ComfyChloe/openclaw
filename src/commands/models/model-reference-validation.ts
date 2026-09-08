@@ -1,5 +1,5 @@
-import { buildModelCatalogMergeKey } from "@openclaw/model-catalog-core/model-catalog-refs";
 import { normalizeProviderId } from "@openclaw/model-catalog-core/provider-id";
+import { resolveModelCatalogIdentityKey } from "../../agents/openai-model-routes.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { planEffectiveModelCatalogRows } from "../../model-catalog/index.js";
 import { loadManifestMetadataSnapshot } from "../../plugins/manifest-contract-eligibility.js";
@@ -42,11 +42,11 @@ function createModelReferenceInspector(params: ModelReferenceInspectionParams) {
     planEffectiveModelCatalogRows({
       registry: snapshot.manifestRegistry,
       config: params.cfg,
-    }).rows.map((row) => row.mergeKey),
+    }).rows.map(resolveModelCatalogIdentityKey),
   );
   for (const [provider, providerConfig] of Object.entries(params.cfg.models?.providers ?? {})) {
     for (const model of providerConfig.models ?? []) {
-      knownModels.add(buildModelCatalogMergeKey(provider, model.id));
+      knownModels.add(resolveModelCatalogIdentityKey({ provider, id: model.id }));
     }
   }
   const inspect = (candidate: { provider: string; model: string }): ModelReferenceInspection => {
@@ -56,7 +56,7 @@ function createModelReferenceInspector(params: ModelReferenceInspectionParams) {
     if (!knownProviders.has(provider)) {
       return { ref, provider, model, status: "unknown-provider" };
     }
-    const status = knownModels.has(buildModelCatalogMergeKey(provider, model))
+    const status = knownModels.has(resolveModelCatalogIdentityKey({ provider, id: model }))
       ? "known"
       : "unknown-model";
     return { ref, provider, model, status };

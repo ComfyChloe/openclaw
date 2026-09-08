@@ -1,4 +1,5 @@
 import { resolveAgentDir, type AgentModelPrimaryWriteTarget } from "../agents/agent-scope.js";
+import { findModelInCatalog } from "../agents/model-catalog-lookup.js";
 import type { ModelCatalogEntry } from "../agents/model-catalog.js";
 import { modelKey } from "../agents/model-selection.js";
 import {
@@ -12,10 +13,7 @@ import {
 } from "../agents/sticky-model-selection.js";
 import { resolveEffectiveAgentRuntime } from "../agents/thinking-runtime.js";
 import { applyModelRuntimeDirective } from "../auto-reply/reply/directive-handling.model-runtime.js";
-import {
-  prepareModelSelectionRuntime,
-  findSelectedCatalogEntry,
-} from "../auto-reply/reply/model-runtime-normalization.js";
+import { prepareModelSelectionRuntime } from "../auto-reply/reply/model-runtime-normalization.js";
 import { resolveContextTokens } from "../auto-reply/reply/model-selection-context.js";
 import { refreshQueuedFollowupSession } from "../auto-reply/reply/queue.js";
 import { persistReplySessionEntry } from "../auto-reply/reply/session-entry-persistence.js";
@@ -219,7 +217,11 @@ export async function applySessionModelSelection(
   }
   const runtime = prepared.runtime;
   const thinkingCatalog = prepared.catalog;
-  const selectedCatalogEntry = findSelectedCatalogEntry({ catalog: thinkingCatalog, ...request });
+  const selectedCatalogEntry = findModelInCatalog(
+    thinkingCatalog ?? [],
+    request.provider,
+    request.model,
+  );
   const nextEntry = { ...startingEntry };
   const applied = applySessionModelSelectionToEntry({
     cfg: params.cfg,

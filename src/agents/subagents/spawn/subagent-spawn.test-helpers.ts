@@ -5,6 +5,8 @@ import { normalizeOptionalString } from "@openclaw/normalization-core/string-coe
 import { expect, vi } from "vitest";
 import { resolveLeastPrivilegeOperatorScopesForMethod } from "../../../gateway/method-scopes.js";
 import type { SubagentLifecycleHookRunner } from "../../../plugins/hooks.js";
+import { createPluginMetadataSnapshotFixture } from "../../../plugins/plugin-metadata.test-support.js";
+import { withPluginRuntimeGenerationScope } from "../../../plugins/runtime/generation-scope.js";
 
 type MockFn = (...args: unknown[]) => unknown;
 type MockImplementationTarget = {
@@ -149,7 +151,6 @@ export async function loadSubagentSpawnModuleForTest(params: {
   hookRunner?: HookRunner;
   resolveAgentConfig?: (cfg: Record<string, unknown>, agentId: string) => unknown;
   resolveAgentWorkspaceDir?: (cfg: Record<string, unknown>, agentId: string) => string;
-  resolveSubagentSpawnModelSelection?: () => string | undefined;
   getSubagentDepthFromSessionStore?: (sessionKey: string, opts?: unknown) => number;
   countActiveRunsForSession?: (sessionKey: string) => number;
   listSwarmRunsForGroup?: (groupId: string) => unknown[];
@@ -214,6 +215,30 @@ export async function loadSubagentSpawnModuleForTest(params: {
 
   vi.doMock("../../provider-model-normalization.runtime.js", () => ({
     normalizeProviderModelIdWithRuntime: () => undefined,
+  }));
+
+  // Lifecycle tests receive prepared facts; generation ownership has its own boundary suite.
+  vi.doMock("../../prepared-model-selection.js", () => ({
+    withPreparedModelSelection: async (
+      input: { cfg: Record<string, unknown>; agentDir?: string; workspaceDir?: string },
+      _derive: unknown,
+      run: (context: Record<string, unknown>) => Promise<unknown>,
+    ) => {
+      const metadataSnapshot = createPluginMetadataSnapshotFixture();
+      const runtime = {
+        config: input.cfg,
+        agentDir: input.agentDir ?? params.workspaceDir ?? os.tmpdir(),
+        workspaceDir: input.workspaceDir ?? params.workspaceDir ?? os.tmpdir(),
+        metadataSnapshot,
+        modelCatalog: { entries: [], routeVariants: [] },
+      };
+      return await withPluginRuntimeGenerationScope(runtime, () =>
+        run({
+          preparedModelRuntime: runtime,
+          workspaceDir: runtime.workspaceDir,
+        }),
+      );
+    },
   }));
 
   vi.doMock("./subagent-spawn.runtime.js", () => ({
@@ -376,12 +401,6 @@ export async function loadSubagentSpawnModuleForTest(params: {
     resolveAgentConfig: params.resolveAgentConfig ?? (() => undefined),
     resolveAgentWorkspaceDir:
       params.resolveAgentWorkspaceDir ?? (() => params.workspaceDir ?? os.tmpdir()),
-    resolveSubagentSpawnModelSelection:
-      params.resolveSubagentSpawnModelSelection ??
-      ((spawnParams: { modelOverride?: unknown }) =>
-        typeof spawnParams.modelOverride === "string" && spawnParams.modelOverride.trim()
-          ? spawnParams.modelOverride.trim()
-          : "openai/gpt-4"),
     resolveSandboxRuntimeStatus:
       params.resolveSandboxRuntimeStatus ?? (() => ({ sandboxed: false })),
     ...createDefaultSessionHelperMocks(),

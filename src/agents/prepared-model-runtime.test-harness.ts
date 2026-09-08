@@ -279,7 +279,7 @@ vi.mock("./auth-profiles/runtime-materializations.js", () => ({
   }) => {
     preparedModelRuntimeMocks.preparedAuthMaterializations.push({
       provider: params.provider.trim().toLowerCase(),
-      modelId: params.modelId.trim().toLowerCase(),
+      modelId: params.modelId.trim(),
       modelApi: params.modelApi.trim().toLowerCase(),
       modelBaseUrl: params.modelBaseUrl,
       requestTransportOverrides: params.requestTransportOverrides,

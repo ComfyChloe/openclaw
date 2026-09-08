@@ -1,4 +1,5 @@
 import path from "node:path";
+import { normalizeProviderId } from "@openclaw/model-catalog-core/provider-id";
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import { ErrorCodes, errorShape } from "../../../packages/gateway-protocol/src/index.js";
 import { tryResolveLegacyCompatibilityAgentId } from "../../agents/agent-scope.js";
@@ -217,6 +218,20 @@ export function prepareAgentRequestPreflight(params: {
     return undefined;
   }
   if (
+    request.requestedRouteResolution === "resolved" &&
+    (!normalizeOptionalString(request.provider) || !normalizeOptionalString(request.model))
+  ) {
+    params.io.emitAcceptance([
+      false,
+      undefined,
+      errorShape(
+        ErrorCodes.INVALID_REQUEST,
+        "resolved model requests require both provider and model; omit requestedRouteResolution for raw input.",
+      ),
+    ]);
+    return undefined;
+  }
+  if (
     (requestedInternalSessionEffects || requestedPromptPersistenceSuppression) &&
     !canUseInternalRuntimeHandoff
   ) {
@@ -287,8 +302,16 @@ export function prepareAgentRequestPreflight(params: {
     canUseCronRunContinuation,
     expectedSession: expectedSessionResult.constraint,
     expectedExistingSessionId: expectedSessionResult.constraint?.sessionId,
-    providerOverride: allowModelOverride ? request.provider : undefined,
-    modelOverride: allowModelOverride ? request.model : undefined,
+    providerOverride: allowModelOverride
+      ? request.requestedRouteResolution === "resolved"
+        ? normalizeProviderId(request.provider ?? "")
+        : request.provider
+      : undefined,
+    modelOverride: allowModelOverride
+      ? request.requestedRouteResolution === "resolved"
+        ? request.model?.trim()
+        : request.model
+      : undefined,
     execApprovalFollowupApprovalId,
     normalizedSpawned: normalizeSpawnedRunMetadata({
       groupId: request.groupId,

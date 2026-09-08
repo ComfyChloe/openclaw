@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { setCurrentManifestModelIdNormalizationPolicies } from "@openclaw/model-catalog-core/provider-model-id-normalization";
+import { describe, expect, it, vi } from "vitest";
 import {
   resolveMergedModelProviderModels,
   createModelProviderRouteOverrideResolver,
@@ -10,10 +11,39 @@ function model(id: string, fields: Partial<ModelDefinitionConfig> = {}): ModelDe
 }
 
 describe("resolveMergedModelProviderModels", () => {
-  it("keeps first-row fields and fills only omissions from canonical duplicates", () => {
+  it("preserves exact resolved rows across alias chains without renormalizing lookups", () => {
+    const aliases: Record<string, string> = { latest: "middle", middle: "final" };
+    const normalizeModelId = vi.fn((id: string) =>
+      id === "filtered" ? undefined : (aliases[id] ?? id),
+    );
+    const rows = resolveMergedModelProviderModels({
+      models: [
+        model("latest", { params: { inherited: true }, headers: {} }),
+        model("middle", { headers: { "x-route": "middle" } }),
+        model("final", { headers: {} }),
+        model("filtered", { headers: { "x-route": "excluded" } }),
+      ],
+      normalizeModelId,
+    });
+    expect(normalizeModelId).toHaveBeenCalledTimes(4);
+    for (const id of ["middle", "final", "middle", "latest", "filtered"]) {
+      expect(rows.get(id)).toEqual(
+        id === "filtered"
+          ? undefined
+          : {
+              id,
+              headers: id === "middle" ? { "x-route": "middle" } : {},
+              ...(id === "middle" || id === "latest" ? { params: { inherited: true } } : {}),
+            },
+      );
+    }
+    expect(normalizeModelId).toHaveBeenCalledTimes(4);
+  });
+
+  it("keeps first-row fields and fills only omissions from exact duplicate rows", () => {
     const models = resolveMergedModelProviderModels({
       models: [
-        model("openai/gpt-5.5", {
+        model("gpt-5.5", {
           api: "openai-responses",
           headers: {},
         }),
@@ -28,7 +58,7 @@ describe("resolveMergedModelProviderModels", () => {
     });
 
     expect(models.get("gpt-5.5")).toEqual({
-      id: "openai/gpt-5.5",
+      id: "gpt-5.5",
       api: "openai-responses",
       baseUrl: "https://relay.example.test/v1",
       headers: {},
@@ -50,6 +80,58 @@ describe("resolveMergedModelProviderModels", () => {
 });
 
 describe("createModelProviderRouteOverrideResolver", () => {
+  it.each([false, true])(
+    "keeps cached alias-chain queries independent (reversed=%s)",
+    (reverse) => {
+      setCurrentManifestModelIdNormalizationPolicies(
+        new Map([["custom", { aliases: { latest: "middle", middle: "final" } }]]),
+      );
+      try {
+        const resolve = createModelProviderRouteOverrideResolver({
+          provider: "custom",
+          authoredConfig: {
+            models: {
+              providers: {
+                custom: {
+                  baseUrl: "https://models.example.test",
+                  models: [
+                    model("latest", { headers: {} }),
+                    model("middle", { headers: { "x-route": "middle" } }),
+                    model("final", { headers: {} }),
+                  ],
+                },
+              },
+            },
+          },
+        });
+        const ids = reverse ? ["final", "middle", "final"] : ["middle", "final", "middle"];
+        expect(ids.map((id) => resolve(id))).toEqual(
+          ids.map((id) => (id === "middle" ? "present" : "none")),
+        );
+      } finally {
+        setCurrentManifestModelIdNormalizationPolicies(undefined);
+      }
+    },
+  );
+
+  it("keeps another namespaced model's request overrides off the selected route", () => {
+    const resolve = createModelProviderRouteOverrideResolver({
+      provider: "custom",
+      authoredConfig: {
+        models: {
+          providers: {
+            custom: {
+              baseUrl: "https://models.example.test",
+              models: [model("custom/model", { params: { route: "namespaced" } }), model("model")],
+            },
+          },
+        },
+      },
+    });
+    expect(resolve("model")).toBe("none");
+    expect(resolve("custom/model")).toBe("present");
+  });
+
   it.each([
     ["empty metadata", {}, "none"],
     ["affirmative reasoning support", { supportsReasoningEffort: true }, "none"],

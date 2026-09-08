@@ -664,6 +664,39 @@ describe("manifest model catalog planner", () => {
 });
 
 describe("manifest model catalog suppression planner", () => {
+  it.each(["Alpha", "alpha", " ALPHA "])(
+    "filters suppression %j by merge identity without changing authored spelling",
+    (modelFilter) => {
+      const plan = planManifestModelCatalogSuppressions({
+        registry: {
+          plugins: [
+            {
+              id: "fixture",
+              providers: ["fixture"],
+              modelCatalog: {
+                aliases: { "fixture-alias": { provider: "fixture" } },
+                suppressions: [
+                  { provider: "fixture-alias", model: "Alpha" },
+                  { provider: "fixture-alias", model: "Other" },
+                ],
+              },
+            },
+          ],
+        },
+        providerFilter: "FIXTURE-ALIAS",
+        modelFilter,
+      });
+      expect(plan.suppressions).toEqual([
+        {
+          pluginId: "fixture",
+          provider: "fixture-alias",
+          model: "Alpha",
+          mergeKey: "fixture-alias::alpha",
+        },
+      ]);
+    },
+  );
+
   it("plans suppressions for owned providers and declared provider aliases", () => {
     const plan = planManifestModelCatalogSuppressions({
       registry: {
@@ -706,7 +739,7 @@ describe("manifest model catalog suppression planner", () => {
       {
         pluginId: "openai",
         provider: "azure-openai-responses",
-        model: "gpt-5.3-codex-spark",
+        model: "GPT-5.3-Codex-Spark",
         mergeKey: "azure-openai-responses::gpt-5.3-codex-spark",
         reason: "Use openai/gpt-5.5.",
       },

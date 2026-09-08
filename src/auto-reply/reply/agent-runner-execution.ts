@@ -27,6 +27,11 @@ import { runEmbeddedAgent } from "../../agents/embedded-agent.js";
 import { renderRateLimitOrOverloadedCopy } from "../../agents/failover/user-copy.js";
 import { LiveSessionModelSwitchError } from "../../agents/live-model-switch-error.js";
 import { leaseMcpAppModelContextForTurn } from "../../agents/mcp-app-model-context.js";
+import { resolveDefaultModelForAgent } from "../../agents/model-selection-config.js";
+import {
+  getPreparedModelRuntimePluginGeneration,
+  getPreparedModelRuntimeBorrowedSnapshot,
+} from "../../agents/prepared-model-runtime-generation-scope.js";
 import { createAgentPatchedSessionModelRunGuard } from "../../agents/session-model-auto-revert.js";
 import { readChannelContextGatewayContextResolver } from "../../channels/message-access/admission-evidence.js";
 import type { SessionEntry } from "../../config/sessions.js";
@@ -121,7 +126,10 @@ async function executeAgentTurnInternalLoop(
   commitTerminalOutcome: () => void,
   commitMcpAppModelContext: () => void,
   preparedRunAdmission: PreparedAgentRunAdmission,
-  admittedRunContext: { current?: AdmittedRunContext },
+  admittedRunContext: {
+    current?: AdmittedRunContext;
+    configuredDefault?: { provider: string; model: string };
+  },
   deferredLifecycle: DeferredEmbeddedRunLifecycleManager,
   compaction: AgentTurnCompaction,
 ): Promise<AgentTurnInternalResult> {
@@ -134,9 +142,7 @@ async function executeAgentTurnInternalLoop(
     entry: params.activeSessionStore?.[params.sessionKey ?? ""] ?? params.getActiveSessionEntry(),
     sessionKey: params.sessionKey,
   });
-  if (runnableRun !== params.followupRun.run) {
-    params.followupRun.run = runnableRun;
-  }
+  params.followupRun.run = runnableRun;
   const runtimeConfig = resolveQueuedReplyRuntimeConfig(runnableRun.config);
   const effectiveRun =
     runtimeConfig === runnableRun.config
@@ -151,20 +157,6 @@ async function executeAgentTurnInternalLoop(
         "agentHarnessId" | "agentRuntimeOverride" | "modelSelectionLocked" | "pluginOwnerId"
       >
     | undefined;
-  const applyLiveModelSwitchToRun = (
-    run: FollowupRun["run"],
-    err: LiveSessionModelSwitchError,
-  ): void => {
-    run.provider = err.provider;
-    run.model = err.model;
-    run.authProfileId = err.authProfileId;
-    run.authProfileIdSource = err.authProfileId ? err.authProfileIdSource : undefined;
-    run.autoFallbackPrimaryProbe = undefined;
-    // Keep runtime paired with the error's model/auth winner even if the
-    // active in-memory session snapshot lags the persisted directive write.
-    liveModelSwitchRuntimeEntry = { agentRuntimeOverride: err.agentRuntimeOverride };
-  };
-
   const runId = params.opts?.runId ?? crypto.randomUUID();
   const agentTurnTiming = createAgentTurnTimingTracker({
     profilerEnabled: isReplyProfilerEnabled({ config: runtimeConfig }),
@@ -320,6 +312,18 @@ async function executeAgentTurnInternalLoop(
       params.getActiveSessionEntry()?.systemPromptReport,
     ),
   };
+  const projectTerminalResult = (
+    result: Extract<AgentTurnInternalResult, { kind: "final" | "aborted" }>,
+  ) =>
+    result.kind === "aborted"
+      ? result
+      : {
+          ...result,
+          resolved: {
+            provider: fallbackCycleState.attemptedRuntimeProvider,
+            model: fallbackCycleState.attemptedRuntimeModel,
+          },
+        };
   const clearRecoveredAutoFallbackPrimaryProbe = async (paramsForClear: {
     provider: string;
     model: string;
@@ -343,6 +347,11 @@ async function executeAgentTurnInternalLoop(
         heartbeatState,
       });
       const cycle = await executeAgentFallbackCycle({
+        onConfiguredDefault: (ref) => {
+          if (!admittedRunContext.current) {
+            admittedRunContext.configuredDefault = ref;
+          }
+        },
         preparedRunAdmission,
         turn: params,
         effectiveRun,
@@ -364,17 +373,8 @@ async function executeAgentTurnInternalLoop(
         clearRecoveredAutoFallbackPrimaryProbe,
       });
       lifecycleGeneration = fallbackCycleState.lifecycleGeneration;
-      if (cycle.kind === "aborted") {
-        return cycle;
-      }
-      if (cycle.kind === "final") {
-        return {
-          ...cycle,
-          resolved: {
-            provider: fallbackCycleState.attemptedRuntimeProvider,
-            model: fallbackCycleState.attemptedRuntimeModel,
-          },
-        };
+      if (cycle.kind === "aborted" || cycle.kind === "final") {
+        return projectTerminalResult(cycle);
       }
       runResult = cycle.runResult;
       fallbackProvider = cycle.fallbackProvider;
@@ -398,27 +398,23 @@ async function executeAgentTurnInternalLoop(
         timing: agentTurnTiming,
         modelPatch,
       });
-      if (action.kind === "aborted") {
-        return action;
-      }
-      if (action.kind === "final") {
-        return {
-          ...action,
-          resolved: {
-            provider: fallbackCycleState.attemptedRuntimeProvider,
-            model: fallbackCycleState.attemptedRuntimeModel,
-          },
-        };
+      if (action.kind === "aborted" || action.kind === "final") {
+        return projectTerminalResult(action);
       }
       if (action.liveModelSwitchError) {
         const switchError = action.liveModelSwitchError;
-        applyLiveModelSwitchToRun(params.followupRun.run, switchError);
-        if (runnableRun !== params.followupRun.run) {
-          applyLiveModelSwitchToRun(runnableRun, switchError);
+        for (const run of new Set([params.followupRun.run, runnableRun, effectiveRun])) {
+          run.provider = switchError.provider;
+          run.model = switchError.model;
+          run.authProfileId = switchError.authProfileId;
+          run.authProfileIdSource = switchError.authProfileId
+            ? switchError.authProfileIdSource
+            : undefined;
+          run.autoFallbackPrimaryProbe = undefined;
         }
-        if (effectiveRun !== runnableRun && effectiveRun !== params.followupRun.run) {
-          applyLiveModelSwitchToRun(effectiveRun, switchError);
-        }
+        // Keep runtime paired with the error's model/auth winner even if the
+        // active in-memory session snapshot lags the persisted directive write.
+        liveModelSwitchRuntimeEntry = { agentRuntimeOverride: switchError.agentRuntimeOverride };
       }
       continue;
     }
@@ -533,7 +529,10 @@ async function executeAgentTurnInternal(
   compaction: AgentTurnCompaction,
 ): Promise<AgentTurnInternalResult> {
   const runId = params.opts?.runId ?? crypto.randomUUID();
-  const admittedRunContext: { current?: AdmittedRunContext } = {};
+  const admittedRunContext: {
+    current?: AdmittedRunContext;
+    configuredDefault?: { provider: string; model: string };
+  } = {};
   const gatewayContextResolver =
     readChannelContextGatewayContextResolver(params.sessionCtx) ??
     getPluginRuntimeGatewayRequestScope()?.resolveGatewayContext;
@@ -547,6 +546,22 @@ async function executeAgentTurnInternal(
     onAdmitted: (context) => {
       bindGatewayContextResolver(context, gatewayContextResolver);
       admittedRunContext.current = context;
+      // Queue accounting outlives the embedded lease; retain the admitted default,
+      // never infer it later from the model selected by fallback.
+      const generation = getPreparedModelRuntimePluginGeneration();
+      const snapshot = generation && getPreparedModelRuntimeBorrowedSnapshot(generation);
+      if (
+        !admittedRunContext.configuredDefault &&
+        snapshot?.agentId === params.followupRun.run.agentId
+      ) {
+        admittedRunContext.configuredDefault = resolveDefaultModelForAgent({
+          cfg: snapshot.config,
+          agentId: snapshot.agentId,
+          allowPluginNormalization: true,
+          manifestPlugins: snapshot.metadataSnapshot,
+          resolvedModelCatalog: snapshot.modelCatalog.entries,
+        });
+      }
       params.followupRun.run.skillLibraryAuthoring?.bind(context);
     },
   });
@@ -559,7 +574,7 @@ async function executeAgentTurnInternal(
     abortSignal: params.replyOperation?.abortSignal ?? params.opts?.abortSignal,
   });
   try {
-    return await executeAgentTurnInternalLoop(
+    const outcome = await executeAgentTurnInternalLoop(
       params,
       commitTerminalOutcome,
       commitMcpAppModelContext,
@@ -568,6 +583,9 @@ async function executeAgentTurnInternal(
       deferredLifecycle,
       compaction,
     );
+    return outcome.kind === "completed"
+      ? { ...outcome, configuredDefault: admittedRunContext.configuredDefault }
+      : outcome;
   } finally {
     await deferredLifecycle.complete();
     preparedRunAdmission.close();
@@ -689,6 +707,7 @@ async function executeAgentTurnOutcome(params: AgentTurnParams): Promise<AgentTu
         autoCompactionCount: internal.autoCompactionCount,
         ...completedCompaction(),
         didLogHeartbeatStrip: internal.didLogHeartbeatStrip,
+        configuredDefault: internal.configuredDefault,
         directlySentBlockKeys: internal.directlySentBlockKeys,
         directlySentBlockPayloads: internal.directlySentBlockPayloads,
       },

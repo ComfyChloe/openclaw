@@ -124,7 +124,7 @@ type RunWithModelFallbackParams<T> = {
   mergeExhaustedResult?: (params: { latestResult: T; preferredResult: T }) => T;
   skipAuthProfileRuntime?: boolean;
   abortSignal?: AbortSignal;
-} & ModelManifestNormalizationContext;
+} & Pick<ModelManifestNormalizationContext, "manifestPlugins">;
 
 type DeferredSessionSuspensionState = {
   pending?: SessionSuspensionParams;

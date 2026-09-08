@@ -1,4 +1,5 @@
 import { normalizeProviderId } from "@openclaw/model-catalog-core/provider-id";
+import { normalizeConfiguredProviderCatalogModelId } from "@openclaw/model-catalog-core/provider-model-id-normalization";
 import { asOptionalRecord as readRecord } from "@openclaw/normalization-core/record-coerce";
 import type { ProviderRouteOverridePresence } from "../plugin-sdk/provider-model-types.js";
 import type { ModelDefinitionConfig, ModelProviderConfig } from "./types.models.js";
@@ -8,6 +9,18 @@ type MergedModelProviderEntry = {
   providerKey: string;
   providerConfig: ModelProviderConfig;
 };
+
+/** Read exact-row fields and inherited omissions without renormalizing the selected identity. */
+export function findProviderModelConfig<T extends { id?: string }>(
+  models: readonly T[] | undefined,
+  provider: string,
+  modelId: string,
+): T | undefined {
+  return resolveMergedModelProviderModels({
+    models,
+    normalizeModelId: (id) => normalizeConfiguredProviderCatalogModelId(provider, id.trim()),
+  }).get(modelId);
+}
 
 const BUILT_IN_MODEL_PROVIDER_OVERLAY_IDS = new Set([
   "amazon-bedrock",
@@ -96,32 +109,34 @@ export function isBuiltInModelProviderOverlayId(providerId: string): boolean {
   return BUILT_IN_MODEL_PROVIDER_OVERLAY_IDS.has(normalizeProviderId(providerId));
 }
 
-/** Indexes configured model rows after caller-owned model-id normalization. */
-export function resolveMergedModelProviderModels(params: {
-  models: readonly ModelDefinitionConfig[] | undefined;
+/** Indexes exact configured model rows and caller-owned model-id equivalents. */
+export function resolveMergedModelProviderModels<T extends { id?: string }>(params: {
+  models: readonly T[] | undefined;
   normalizeModelId: (modelId: string) => string | undefined;
-}): ReadonlyMap<string, ModelDefinitionConfig> {
-  const models = new Map<string, ModelDefinitionConfig>();
+}): ReadonlyMap<string, T> {
+  const models = new Map<string, T>();
+  const exactRows: Array<{ model: T; id: string }> = [];
   for (const model of params.models ?? []) {
-    const modelId = params.normalizeModelId(model.id);
+    const rawId = model?.id;
+    if (typeof rawId !== "string") {
+      continue;
+    }
+    const modelId = params.normalizeModelId(rawId);
     if (!modelId) {
       continue;
     }
+    exactRows.push({ model, id: rawId.trim() });
     const existing = models.get(modelId);
-    // Earlier rows stay authoritative, including explicit empty objects;
-    // later duplicates only supply top-level fields the first row omitted.
     models.set(modelId, existing ? { ...model, ...existing } : model);
   }
+  // Resolved IDs may themselves be input aliases. Keep their exact rows ahead
+  // of normalized aliases; reverse order preserves first-row fields and lets
+  // later exact duplicates fill omissions before aliases do.
+  for (const { model, id: modelId } of exactRows.toReversed()) {
+    const existing = models.get(modelId);
+    models.set(modelId, existing && existing !== model ? { ...existing, ...model } : model);
+  }
   return models;
-}
-
-function normalizeModelId(provider: string, modelId: string): string {
-  const trimmed = modelId.trim();
-  const slashIndex = trimmed.indexOf("/");
-  return slashIndex > 0 &&
-    normalizeProviderId(trimmed.slice(0, slashIndex)) === normalizeProviderId(provider)
-    ? trimmed.slice(slashIndex + 1).trim()
-    : trimmed;
 }
 
 function hasNonEmptyRecord(value: unknown): boolean {
@@ -172,20 +187,25 @@ export function createModelProviderRouteOverrideResolver(params: {
     return () => "present";
   }
   const canonicalize = (modelId: string) => {
-    const normalized = normalizeModelId(params.provider, modelId);
+    const normalized = modelId.trim();
     const canonical = params.canonicalizeModelId?.(normalized).trim();
     return canonical || normalized;
   };
+  const normalizeConfiguredModelId = params.canonicalizeModelId
+    ? canonicalize
+    : (modelId: string) =>
+        normalizeConfiguredProviderCatalogModelId(params.provider, modelId.trim());
   let configuredModels: ReadonlyMap<string, ModelDefinitionConfig> | undefined;
   return (modelId) => {
     if (!modelId) {
       return "none";
     }
-    // Keep provider-only queries lazy and normalize the query before the first row pass.
+    // Only authored rows need input normalization. Resolved targets retain their
+    // identity unless the provider explicitly supplies catalog equivalence.
     const canonicalModelId = canonicalize(modelId);
     const configuredModel = (configuredModels ??= resolveMergedModelProviderModels({
       models: providerConfig.models,
-      normalizeModelId: canonicalize,
+      normalizeModelId: normalizeConfiguredModelId,
     })).get(canonicalModelId);
     return configuredModel &&
       (hasNonEmptyRecord(configuredModel.headers) ||

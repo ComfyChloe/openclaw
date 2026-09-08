@@ -9,10 +9,10 @@ import {
 } from "../../auto-reply/thinking.js";
 import { formatCliCommand } from "../../cli/command-format.js";
 import type { InternalSessionEntry } from "../../config/sessions/types.js";
-import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { resolveAgentExplicitRecipientSession } from "../../infra/outbound/agent-delivery.js";
 import { buildOutboundSessionContext } from "../../infra/outbound/session-context.js";
 import { resolvePluginMetadataSnapshot } from "../../plugins/plugin-metadata-snapshot.js";
+import { withPluginRuntimeGenerationScope } from "../../plugins/runtime/generation-scope.js";
 import {
   classifySessionKeyShape,
   isUnscopedSessionKeySentinel,
@@ -41,9 +41,14 @@ import {
   resolveInternalEventTranscriptBody,
 } from "../internal-events.js";
 import { AGENT_LANE_SUBAGENT } from "../lanes.js";
+import { resolveLegacyInheritedAuthDir } from "../legacy-inherited-auth-dir.js";
 import type { ModelManifestNormalizationContext } from "../model-ref-shared.js";
 import { buildConfiguredModelCatalog, resolveConfiguredModelRef } from "../model-selection.js";
-import type { PreparedModelRuntimePluginGeneration } from "../prepared-model-runtime.types.js";
+import { withPreparedModelRuntimePluginGenerationScope } from "../prepared-model-runtime-generation-scope.js";
+import type {
+  PreparedModelRuntimeSnapshot,
+  PreparedModelRuntimeLease,
+} from "../prepared-model-runtime.types.js";
 import { normalizeSpawnedRunMetadata } from "../spawned-context.js";
 import { resolveEffectiveAgentRuntime } from "../thinking-runtime.js";
 import { resolveAgentTimeoutMs } from "../timeout.js";
@@ -84,10 +89,38 @@ export function normalizeExplicitOverrideInput(raw: string, kind: "provider" | "
   return trimmed;
 }
 
-export type PreparedAgentCommandRuntimeContext = Readonly<{
-  config: OpenClawConfig;
-  pluginGeneration: PreparedModelRuntimePluginGeneration;
-}>;
+export type PreparedAgentCommandRuntimeContext = Pick<
+  PreparedModelRuntimeLease,
+  "pluginGeneration"
+> & {
+  snapshot: Pick<
+    PreparedModelRuntimeSnapshot,
+    "config" | "agentId" | "agentDir" | "workspaceDir" | "modelCatalog"
+  >;
+  borrowSnapshot?: () => PreparedModelRuntimeSnapshot | undefined;
+};
+
+/** Keeps policy selection and execution on the same admitted runtime generation. */
+export function withPreparedAgentCommandRuntime<T>(
+  context: PreparedAgentCommandRuntimeContext | undefined,
+  run: () => T,
+): T {
+  if (!context) {
+    return run();
+  }
+  return withPreparedModelRuntimePluginGenerationScope(
+    context.pluginGeneration,
+    () =>
+      withPluginRuntimeGenerationScope(
+        {
+          metadataSnapshot: context.pluginGeneration.pluginMetadataSnapshot,
+          pluginRegistry: context.pluginGeneration.pluginRegistry,
+        },
+        run,
+      ),
+    context.borrowSnapshot,
+  );
+}
 
 export async function prepareAgentCommandExecution(
   opts: AgentCommandOpts,
@@ -282,79 +315,137 @@ export async function prepareAgentCommandExecution(
     normalizeOptionalString(sessionEntryRaw?.spawnedCwd) ??
     (isAcpPlacedSession ? undefined : resolveAgentRunCwd(cfg, sessionAgentId));
   const agentDir = resolveAgentDir(cfg, sessionAgentId);
-  const pluginsEnabled = cfg.plugins?.enabled !== false;
-  const preparedMetadataSnapshot = runtimeContext?.pluginGeneration.pluginMetadataSnapshot;
-  const manifestMetadataSnapshot = pluginsEnabled
-    ? (preparedMetadataSnapshot ??
-      resolvePluginMetadataSnapshot({ config: cfg, env: process.env, workspaceDir }))
-    : undefined;
-  const modelManifestContext = {
-    manifestPlugins: manifestMetadataSnapshot ?? [],
-  } satisfies ModelManifestNormalizationContext;
-  const configuredModel = resolveConfiguredModelRef({
-    cfg,
-    agentId: sessionAgentId,
-    defaultProvider: DEFAULT_PROVIDER,
-    defaultModel: DEFAULT_MODEL,
-    allowPluginNormalization: pluginsEnabled,
-    ...modelManifestContext,
-  });
-  const configuredThinkingCatalog = buildConfiguredModelCatalog({
-    cfg,
-    workspaceDir,
-    ...modelManifestContext,
-  });
-  const configuredThinkingRuntime = resolveEffectiveAgentRuntime({
-    cfg,
-    provider: configuredModel.provider,
-    modelId: configuredModel.model,
-    agentId: sessionAgentId,
-    sessionKey,
-    sessionEntry: sessionEntryRaw,
-  });
-  if (
-    sessionEntryRaw &&
-    commandOpts.cliSessionBindingFacts === undefined &&
-    isSyntheticSourceReplyTurn({
-      inputProvenance: commandOpts.inputProvenance,
-      isHeartbeat: commandOpts.bootstrapContextRunKind === "heartbeat",
-    })
-  ) {
-    commandOpts = {
-      ...commandOpts,
-      cliSessionBindingFacts: {
-        sourceReplyDeliveryMode: resolveSessionStableReplyMode({
-          cfg,
-          ctx: { CommandAuthorized: false },
-          sessionEntry: sessionEntryRaw,
-          sessionAgentId,
-          sessionKey,
-        }),
+  // Standalone commands admit their runtime before model-specific policy. Gateway commands
+  // already carry a lease; they borrow it and never release their parent's ownership.
+  const modelRuntime =
+    runtimeContext || acpResolution?.kind !== "ready" || isOneShotModelRun
+      ? await import("../prepared-model-runtime.js")
+      : undefined;
+  let ownedModelRuntimeLease: PreparedModelRuntimeLease | undefined;
+  let leaseOpen = true;
+  let commandRuntimeContext: PreparedAgentCommandRuntimeContext | undefined;
+  const ownerMatches = (context: PreparedAgentCommandRuntimeContext) =>
+    modelRuntime?.preparedModelRuntimeConfigsMatch(context.snapshot.config, cfg) === true &&
+    context.snapshot.agentId === sessionAgentId &&
+    context.snapshot.agentDir === agentDir &&
+    context.snapshot.workspaceDir === workspaceDir;
+  if (runtimeContext && ownerMatches(runtimeContext)) {
+    commandRuntimeContext = runtimeContext;
+  } else if (modelRuntime) {
+    const lease = await modelRuntime.acquireAgentRunPreparedModelRuntime(
+      {
+        config: cfg,
+        agentId: sessionAgentId,
+        agentDir,
+        inheritedAuthDir: resolveLegacyInheritedAuthDir(cfg),
+        workspaceDir,
       },
+      {
+        catalogMode: "static",
+        abortSignal: opts.abortSignal,
+        pluginGeneration: runtimeContext?.pluginGeneration,
+      },
+    );
+    ownedModelRuntimeLease = lease;
+    const snapshot = lease.snapshot;
+    commandRuntimeContext = {
+      snapshot,
+      pluginGeneration: lease.pluginGeneration,
+      borrowSnapshot: () => (leaseOpen ? snapshot : undefined),
     };
   }
-  const thinkingLevelsHint = formatThinkingLevels(
-    configuredModel.provider,
-    configuredModel.model,
-    ", ",
-    configuredThinkingCatalog.length > 0 ? configuredThinkingCatalog : undefined,
-    configuredThinkingRuntime,
-  );
-  const thinkOverride = normalizeThinkLevel(opts.thinking);
-  const thinkOnce = normalizeThinkLevel(opts.thinkingOnce);
-  if (opts.thinking && !thinkOverride) {
-    throw new Error(`Invalid thinking level. Use one of: ${thinkingLevelsHint}.`);
-  }
-  if (opts.thinkingOnce && !thinkOnce) {
-    throw new Error(`Invalid one-shot thinking level. Use one of: ${thinkingLevelsHint}.`);
-  }
-  const resolvedCwd = cwd ? resolveUserPath(cwd) : undefined;
-  const worktreeId = await resolveWorktreeIdForPath({
-    sessionEntry: sessionEntryRaw,
-    candidatePaths: [resolvedCwd ?? workspaceDir, workspaceDir],
-  });
-  const runLease = worktreeId ? await acquireWorktreeRunLease(worktreeId) : undefined;
+  let worktreeRunLease: Awaited<ReturnType<typeof acquireWorktreeRunLease>> | undefined;
+  const runLease = {
+    async release() {
+      leaseOpen = false;
+      try {
+        await worktreeRunLease?.release();
+      } finally {
+        ownedModelRuntimeLease?.release();
+      }
+    },
+  };
   try {
+    if (commandRuntimeContext && !ownerMatches(commandRuntimeContext)) {
+      throw new Error(
+        "Agent command configuration changed during runtime admission; retry the command.",
+      );
+    }
+    const pluginsEnabled = cfg.plugins?.enabled !== false;
+    const preparedMetadataSnapshot = commandRuntimeContext?.pluginGeneration.pluginMetadataSnapshot;
+    const manifestMetadataSnapshot = pluginsEnabled
+      ? (preparedMetadataSnapshot ??
+        resolvePluginMetadataSnapshot({ config: cfg, env: process.env, workspaceDir }))
+      : undefined;
+    const modelManifestContext = {
+      resolvedModelCatalog: commandRuntimeContext?.snapshot.modelCatalog.entries,
+      manifestPlugins: manifestMetadataSnapshot ?? [],
+    } satisfies ModelManifestNormalizationContext;
+    const configuredModel = withPreparedAgentCommandRuntime(commandRuntimeContext, () =>
+      resolveConfiguredModelRef({
+        cfg,
+        agentId: sessionAgentId,
+        defaultProvider: DEFAULT_PROVIDER,
+        defaultModel: DEFAULT_MODEL,
+        allowPluginNormalization: pluginsEnabled && commandRuntimeContext !== undefined,
+        ...modelManifestContext,
+      }),
+    );
+    const configuredThinkingCatalog = buildConfiguredModelCatalog({
+      cfg,
+      workspaceDir,
+      ...modelManifestContext,
+    });
+    const configuredThinkingRuntime = resolveEffectiveAgentRuntime({
+      cfg,
+      provider: configuredModel.provider,
+      modelId: configuredModel.model,
+      agentId: sessionAgentId,
+      sessionKey,
+      sessionEntry: sessionEntryRaw,
+    });
+    if (
+      sessionEntryRaw &&
+      commandOpts.cliSessionBindingFacts === undefined &&
+      isSyntheticSourceReplyTurn({
+        inputProvenance: commandOpts.inputProvenance,
+        isHeartbeat: commandOpts.bootstrapContextRunKind === "heartbeat",
+      })
+    ) {
+      commandOpts = {
+        ...commandOpts,
+        cliSessionBindingFacts: {
+          sourceReplyDeliveryMode: resolveSessionStableReplyMode({
+            cfg,
+            ctx: { CommandAuthorized: false },
+            sessionEntry: sessionEntryRaw,
+            sessionAgentId,
+            sessionKey,
+          }),
+        },
+      };
+    }
+    const thinkingLevelsHint = formatThinkingLevels(
+      configuredModel.provider,
+      configuredModel.model,
+      ", ",
+      configuredThinkingCatalog.length > 0 ? configuredThinkingCatalog : undefined,
+      configuredThinkingRuntime,
+    );
+    const thinkOverride = normalizeThinkLevel(opts.thinking);
+    const thinkOnce = normalizeThinkLevel(opts.thinkingOnce);
+    if (opts.thinking && !thinkOverride) {
+      throw new Error(`Invalid thinking level. Use one of: ${thinkingLevelsHint}.`);
+    }
+    if (opts.thinkingOnce && !thinkOnce) {
+      throw new Error(`Invalid one-shot thinking level. Use one of: ${thinkingLevelsHint}.`);
+    }
+    const resolvedCwd = cwd ? resolveUserPath(cwd) : undefined;
+    const worktreeId = await resolveWorktreeIdForPath({
+      sessionEntry: sessionEntryRaw,
+      candidatePaths: [resolvedCwd ?? workspaceDir, workspaceDir],
+    });
+    worktreeRunLease = worktreeId ? await acquireWorktreeRunLease(worktreeId) : undefined;
     const { resolveAcpAgentWorkspaceProvisioningForTurn } =
       await import("../acp-workspace-provisioning.js");
     const workspaceProvisioning = await resolveAcpAgentWorkspaceProvisioningForTurn({
@@ -422,6 +513,7 @@ export async function prepareAgentCommandExecution(
       transcriptBody,
       cfg,
       configuredThinkingCatalog,
+      configuredModel,
       normalizedSpawned,
       agentCfg,
       thinkOverride,
@@ -445,7 +537,7 @@ export async function prepareAgentCommandExecution(
       agentDir,
       pluginsEnabled,
       manifestMetadataSnapshot,
-      ...(runtimeContext ? { commandRuntimeContext: runtimeContext } : {}),
+      commandRuntimeContext,
       modelManifestContext,
       runId,
       isSubagentLane,

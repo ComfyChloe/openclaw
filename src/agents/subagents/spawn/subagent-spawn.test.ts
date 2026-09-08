@@ -221,7 +221,6 @@ describe("spawnSubagentDirect seam flow", () => {
       resolveContextEngineMock: hoisted.resolveContextEngineMock,
       countActiveRunsForSession: hoisted.countActiveRunsForSessionMock,
       listSwarmRunsForGroup: hoisted.listSwarmRunsForGroupMock,
-      resolveSubagentSpawnModelSelection: () => "openai/gpt-5.4",
       resolveSandboxRuntimeStatus: hoisted.resolveSandboxRuntimeStatusMock,
       sessionStorePath: "/tmp/subagent-spawn-session-store.json",
     }));
@@ -705,6 +704,7 @@ describe("spawnSubagentDirect seam flow", () => {
       provider: "plugin-provider",
       config: hoisted.configOverride,
       workspaceDir: resolveUserPath("/tmp/workspace-main"),
+      metadataSnapshot: expect.anything(),
     });
   });
 
@@ -761,6 +761,7 @@ describe("spawnSubagentDirect seam flow", () => {
       provider: "future-provider",
       config: hoisted.configOverride,
       workspaceDir: resolveUserPath("/tmp/workspace-main"),
+      metadataSnapshot: expect.anything(),
     });
     expectNoChildSpawnSideEffects();
   });
@@ -795,7 +796,7 @@ describe("spawnSubagentDirect seam flow", () => {
     expect(result).toMatchObject({ status: "accepted", modelApplied: true });
   });
 
-  it("does not load the model catalog for an implicit default", async () => {
+  it("does not load a live model catalog for an implicit default", async () => {
     const result = await spawnSubagentDirect(
       { task: "inherit the default model" },
       { agentSessionKey: "agent:main:main" },
@@ -803,7 +804,6 @@ describe("spawnSubagentDirect seam flow", () => {
 
     expect(result.status).toBe("accepted");
     expect(hoisted.loadPreparedModelCatalogMock).not.toHaveBeenCalled();
-    expect(hoisted.resolveProviderRefOwnershipMock).not.toHaveBeenCalled();
   });
 
   it("rejects an explicit model when catalog validation fails without creating child state", async () => {
@@ -816,7 +816,7 @@ describe("spawnSubagentDirect seam flow", () => {
 
     expect(result.status).toBe("error");
     expect(result.error).toContain(
-      "sessions_spawn could not verify the requested model: catalog unavailable",
+      "sessions_spawn could not verify the selected model: catalog unavailable",
     );
     expectNoChildSpawnSideEffects();
   });
@@ -1437,6 +1437,7 @@ describe("spawnSubagentDirect seam flow", () => {
     expect(hoisted.loadPreparedModelCatalogMock).toHaveBeenCalledTimes(1);
     expect(hoisted.loadPreparedModelCatalogMock).toHaveBeenCalledWith({
       config: hoisted.configOverride,
+      agentId: "main",
       agentDir: expect.any(String),
       workspaceDir: resolveUserPath("/tmp/workspace-main"),
       readOnly: true,

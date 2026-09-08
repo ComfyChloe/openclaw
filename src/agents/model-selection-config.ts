@@ -21,6 +21,7 @@ export function resolveDefaultModelForAgent(
     allowManifestNormalization: params.allowManifestNormalization,
     allowPluginNormalization: params.allowPluginNormalization,
     manifestPlugins: params.manifestPlugins,
+    resolvedModelCatalog: params.resolvedModelCatalog,
   });
 }
 
@@ -35,4 +36,24 @@ export function resolveSubagentConfiguredModelSelection(params: {
     normalizeModelSelection(params.cfg.agents?.defaults?.subagents?.model) ??
     (params.includeAgentPrimary === false ? undefined : normalizeModelSelection(agentConfig?.model))
   );
+}
+
+/** Select authored spawn input without turning aliases into execution identities. */
+export function resolveSubagentSpawnModelInput(
+  params: {
+    cfg: OpenClawConfig;
+    agentId: string;
+    modelOverride?: unknown;
+    allowPluginNormalization?: boolean;
+  } & ModelManifestNormalizationContext,
+): string {
+  const raw =
+    normalizeModelSelection(params.modelOverride) ??
+    resolveSubagentConfiguredModelSelection(params) ??
+    normalizeModelSelection(params.cfg.agents?.defaults?.model);
+  if (raw) {
+    return raw;
+  }
+  const fallback = resolveDefaultModelForAgent(params);
+  return `${fallback.provider}/${fallback.model}`;
 }

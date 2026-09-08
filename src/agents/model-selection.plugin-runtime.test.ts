@@ -124,6 +124,7 @@ describe("model-selection plugin runtime normalization", () => {
         },
         defaultProvider: "openai",
         defaultModel: "gpt-5.5",
+        allowPluginNormalization: true,
       }),
     ).toEqual({
       provider: "custom-provider",
@@ -160,9 +161,7 @@ describe("model-selection plugin runtime normalization", () => {
     }
   });
 
-  it("keeps plugin-normalized stored overrides allowed in auto-reply runtime selection", async () => {
-    // Stored session overrides are runtime inputs, so provider-owned
-    // normalization keeps old persisted ids usable without resetting them.
+  it.each([false, true])("enforces policy on exact legacy pins (excluded=%s)", async (excluded) => {
     normalizeProviderModelIdWithPluginMock.mockImplementation(normalizeLegacyFixtureModel);
 
     const cfg = {
@@ -171,6 +170,7 @@ describe("model-selection plugin runtime normalization", () => {
           models: {
             "custom-provider/custom-legacy-model": {},
           },
+          modelPolicy: excluded ? { allow: ["custom-provider/custom-modern-model"] } : {},
         },
       },
     };
@@ -190,55 +190,127 @@ describe("model-selection plugin runtime normalization", () => {
       sessionStore,
       sessionKey,
       defaultProvider: "custom-provider",
-      defaultModel: "custom-legacy-model",
+      defaultModel: "custom-modern-model",
       provider: "custom-provider",
-      model: "custom-legacy-model",
+      model: "custom-modern-model",
       hasModelDirective: false,
     });
 
     expect(state.provider).toBe("custom-provider");
-    expect(state.model).toBe("custom-modern-model");
-    expect(state.resetModelOverride).toBe(false);
+    expect(state.model).toBe(excluded ? "custom-modern-model" : "custom-legacy-model");
+    expect(state.resetModelOverride).toBe(excluded);
+    expect(state.resetModelOverrideReason).toBe(excluded ? "disallowed" : undefined);
+    expect(state.resetModelOverrideRef).toBe(
+      excluded ? "custom-provider/custom-legacy-model" : undefined,
+    );
+    expect(sessionEntry.modelOverride).toBe(excluded ? undefined : "custom-legacy-model");
   });
 
-  it("keeps resolved persisted overrides off plugin runtime hooks", () => {
-    normalizeProviderModelIdWithPluginMock.mockReturnValue("incorrectly-renormalized-model");
-
-    expect(
-      resolveSessionModelRef(
-        {},
-        {
-          providerOverride: "custom-provider",
-          modelOverride: "custom-modern-model",
-          modelOverrideRouteResolution: "resolved",
+  it.each(["middle", "latest"])(
+    "resolves %s against the admitted catalog before visibility",
+    async (input) => {
+      normalizeProviderModelIdWithPluginMock.mockImplementation(({ context }) =>
+        context.modelId === "latest"
+          ? "middle"
+          : context.modelId === "middle"
+            ? "final"
+            : undefined,
+      );
+      const cfg = {
+        agents: {
+          defaults: {
+            model: { primary: `custom-provider/${input}` },
+            modelPolicy: { allow: ["custom-provider/middle"] },
+          },
         },
-        "main",
-      ),
-    ).toEqual({
-      provider: "custom-provider",
-      model: "custom-modern-model",
-    });
-    expect(normalizeProviderModelIdWithPluginMock).not.toHaveBeenCalled();
-  });
-
-  it("normalizes raw persisted overrides through plugin runtime hooks", () => {
-    normalizeProviderModelIdWithPluginMock.mockImplementation(normalizeLegacyFixtureModel);
-
-    expect(
-      resolveSessionModelRef(
-        {},
-        {
-          providerOverride: "custom-provider",
-          modelOverride: "custom-legacy-model",
+      };
+      const catalog = [
+        { provider: "custom-provider", id: "middle", name: "Selected" },
+        { provider: "custom-provider", id: "final", name: "Other" },
+      ];
+      const { resolveDefaultModelForAgent } = await import("./model-selection-config.js");
+      const selected = resolveDefaultModelForAgent({
+        cfg,
+        allowPluginNormalization: true,
+        manifestPlugins: emptyPluginMetadataSnapshot,
+        resolvedModelCatalog: catalog,
+      });
+      const state = await createModelSelectionStateForTest({
+        cfg,
+        agentCfg: cfg.agents.defaults,
+        defaultProvider: selected.provider,
+        defaultModel: selected.model,
+        ...selected,
+        hasModelDirective: false,
+        preparedModelCatalog: {
+          routeVariants: [],
+          entries: catalog,
         },
-        "main",
-      ),
-    ).toEqual({
-      provider: "custom-provider",
-      model: "custom-modern-model",
+      });
+      expect(state.provider).toBe("custom-provider");
+      expect(state.model).toBe("middle");
+      expect(state.modelPolicy.allows({ provider: "custom-provider", model: "middle" })).toBe(true);
+      expect(state.modelPolicy.allows({ provider: "custom-provider", model: "final" })).toBe(false);
+    },
+  );
+
+  it("keeps a normalized default authorized when its target is absent from the captured catalogue", async () => {
+    normalizeProviderModelIdWithPluginMock.mockImplementation(({ context }) =>
+      context.modelId === "latest" ? "middle" : context.modelId === "middle" ? "final" : undefined,
+    );
+    const cfg = {
+      agents: {
+        defaults: {
+          model: { primary: "custom-provider/latest" },
+          modelPolicy: { allow: ["custom-provider/latest"] },
+        },
+      },
+    };
+    const catalog = [{ provider: "custom-provider", id: "final", name: "Other" }];
+    const { resolveDefaultModelForAgent } = await import("./model-selection-config.js");
+    const selected = resolveDefaultModelForAgent({
+      cfg,
+      allowPluginNormalization: true,
+      manifestPlugins: emptyPluginMetadataSnapshot,
+      resolvedModelCatalog: catalog,
     });
-    expect(normalizeProviderModelIdWithPluginMock).toHaveBeenCalledOnce();
+    expect(selected).toEqual({ provider: "custom-provider", model: "middle" });
+    const state = await createModelSelectionStateForTest({
+      cfg,
+      agentCfg: cfg.agents.defaults,
+      defaultProvider: selected.provider,
+      defaultModel: selected.model,
+      ...selected,
+      hasModelDirective: false,
+      preparedModelCatalog: { entries: catalog, routeVariants: catalog },
+    });
+    expect(state.model).toBe("middle");
+    expect(state.modelPolicy.allows({ provider: state.provider, model: state.model })).toBe(true);
+    expect(state.modelPolicy.allows({ provider: "custom-provider", model: "final" })).toBe(false);
   });
+
+  it.each([
+    { name: "recorded", model: "custom-modern-model", routeResolution: "resolved" },
+    { name: "pre-source", model: "custom-legacy-model", routeResolution: undefined },
+  ] as const)(
+    "keeps $name persisted selections off runtime hooks",
+    ({ model, routeResolution }) => {
+      normalizeProviderModelIdWithPluginMock.mockReturnValue("incorrectly-renormalized-model");
+
+      expect(
+        resolveSessionModelRef(
+          {},
+          {
+            providerOverride: "custom-provider",
+            modelOverride: model,
+            ...(routeResolution ? { modelOverrideRouteResolution: routeResolution } : {}),
+          },
+          "main",
+        ),
+      ).toEqual({ provider: "custom-provider", model });
+      expect(normalizeProviderModelIdWithPluginMock).not.toHaveBeenCalled();
+    },
+  );
 
   it("reuses one lifecycle metadata snapshot across auto-reply model normalization", async () => {
     normalizeProviderModelIdWithPluginMock.mockReturnValue(undefined);
@@ -329,7 +401,7 @@ describe("model-selection plugin runtime normalization", () => {
     ]);
   });
 
-  it("preserves runtime discovery fallback across configured, stored, and fallback refs", async () => {
+  it("normalizes configured and fallback refs while preserving the selected stored ref", async () => {
     getCurrentPluginMetadataSnapshotMock.mockReturnValue(undefined);
     const aliases = new Map([
       ["configured-legacy", "configured-modern"],
@@ -362,7 +434,7 @@ describe("model-selection plugin runtime normalization", () => {
       sessionId: sessionKey,
       updatedAt: 1,
       providerOverride: "custom-provider",
-      modelOverride: "stored-legacy",
+      modelOverride: "stored-modern",
     };
 
     const state = await createModelSelectionStateForTest({

@@ -3177,7 +3177,54 @@ describe("runWithModelFallback", () => {
     ]);
   });
 
-  it("normalizes self-prefixed fallback candidates independently", () => {
+  it("keeps different provider-local model namespaces as separate fallback candidates", () => {
+    const cfg = makeCfg({
+      agents: {
+        defaults: {
+          model: { primary: "custom/model", fallbacks: ["custom/custom/model"] },
+        },
+      },
+    });
+    expect(testing.resolveFallbackCandidates({ cfg, provider: "custom", model: "model" })).toEqual([
+      { provider: "custom", model: "model" },
+      { provider: "custom", model: "custom/model" },
+    ]);
+  });
+
+  it("normalizes raw fallback refs once and preserves already resolved model candidates", () => {
+    const cfg = makeCfg({
+      models: {
+        providers: {
+          custom: { api: "openai-completions", baseUrl: "https://example.invalid/v1", models: [] },
+        },
+      },
+      agents: {
+        defaults: {
+          model: {
+            primary: "custom/vendor/vendor/primary",
+            fallbacks: ["custom/vendor/vendor/fallback"],
+          },
+        },
+      },
+    });
+    expect(
+      testing.resolveFallbackCandidates({
+        cfg,
+        provider: "custom",
+        model: "vendor/requested",
+        requestedRouteResolution: "resolved",
+        manifestPlugins: [
+          { modelIdNormalization: { providers: { custom: { stripPrefixes: ["vendor/"] } } } },
+        ],
+      }),
+    ).toEqual([
+      { provider: "custom", model: "vendor/requested" },
+      { provider: "custom", model: "vendor/fallback" },
+      { provider: "custom", model: "vendor/primary" },
+    ]);
+  });
+
+  it("normalizes provider-owned fallback aliases independently", () => {
     const cfg = makeCfg({
       agents: {
         defaults: {
@@ -3197,7 +3244,7 @@ describe("runWithModelFallback", () => {
     const candidates = testing.resolveFallbackCandidates({
       cfg,
       provider: "google",
-      model: "google/gemini-2.0-flash",
+      model: "gemini-2.0-flash",
     });
 
     expect(candidates).toEqual([

@@ -1,12 +1,12 @@
 import type { LlmCompleteErrorCode } from "./types-core.js";
 
-export function createLlmCompleteError(
-  code: LlmCompleteErrorCode,
-  message: string,
-  cause?: unknown,
-): Error & { code: LlmCompleteErrorCode } {
-  return Object.assign(new Error(message, cause === undefined ? undefined : { cause }), {
-    name: "LlmCompleteError",
-    code,
-  });
+export class LlmCompleteError extends Error {
+  constructor(
+    readonly code: LlmCompleteErrorCode,
+    message: string,
+    cause?: unknown,
+  ) {
+    super(message, cause === undefined ? undefined : { cause });
+    this.name = "LlmCompleteError";
+  }
 }

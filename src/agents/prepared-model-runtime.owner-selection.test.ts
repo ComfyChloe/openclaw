@@ -727,7 +727,6 @@ describe("prepared model runtime owner selection", () => {
     ).toEqual([["codex"], ["codex"], ["codex"], ["codex"]]);
     expect(mocks.resolveAmbientCredentials).toHaveBeenCalledTimes(2);
     expect(mocks.prepareStaticCatalog).toHaveBeenCalledTimes(2);
-    expect(mocks.resolveStaticCatalogModel).toHaveBeenCalledTimes(2);
     expect(mocks.buildPreparedModelCatalogSnapshot).not.toHaveBeenCalled();
     expect(mocks.discoverModels).toHaveBeenCalledTimes(2);
     expect(stats).toMatchObject({
@@ -757,26 +756,28 @@ describe("prepared model runtime owner selection", () => {
     for (const agentId of mocks.configuredAgentIds) {
       mocks.configuredWorkspaces.set(agentId, "/tmp/shared-agent-model-workspace");
     }
-    mocks.resolveStaticCatalogModel.mockImplementation(
-      ({ provider, modelId }: { provider: string; modelId: string }) => ({
-        id: modelId,
-        name: modelId,
-        provider,
-        api: "openai-completions",
-        baseUrl: "https://models.example/v1",
-        reasoning: false,
-        input: ["text"],
-        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-        contextWindow: 128_000,
-        maxTokens: 8_192,
-      }),
+    mocks.resolveStaticCatalogModel.mockImplementation(({ provider, modelId }) =>
+      provider === "custom" && ["shared-model", "Model", "model"].includes(modelId)
+        ? {
+            id: modelId,
+            name: modelId,
+            provider,
+            api: "openai-completions",
+            baseUrl: "https://models.example/v1",
+            reasoning: false,
+            input: ["text"],
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+            contextWindow: 128_000,
+            maxTokens: 8_192,
+          }
+        : undefined,
     );
     const config = {
       agents: {
-        defaults: { model: "custom/shared-model" },
+        defaults: { model: "custom/shared-model", models: { "custom/missing": {} } },
         list: [
-          { id: "agent-a", model: "custom/model-a" },
-          { id: "agent-b", model: "custom/model-b" },
+          { id: "agent-a", model: "custom/Model" },
+          { id: "agent-b", model: "custom/model" },
         ],
       },
     };
@@ -794,15 +795,20 @@ describe("prepared model runtime owner selection", () => {
         inheritedAuthDir: state.agentDir("default"),
         workspaceDir: "/tmp/shared-agent-model-workspace",
       });
-      expect(snapshot?.configuredRuntimeModels.map(({ modelId }) => modelId)).toEqual([
-        "shared-model",
-        agentId === "agent-a" ? "model-a" : "model-b",
+      const selectedId = agentId === "agent-a" ? "Model" : "model";
+      const models = snapshot?.configuredRuntimeModels;
+      expect(models?.map(({ modelId, model }) => [modelId, model.id])).toEqual([
+        ["shared-model", "shared-model"],
+        [selectedId, selectedId],
       ]);
       expect(snapshot?.modelCatalog.entries.map(({ id }) => id)).not.toContain(
-        agentId === "agent-a" ? "model-b" : "model-a",
+        agentId === "agent-a" ? "model" : "Model",
       );
     }
     expect(mocks.prepareStaticCatalog).toHaveBeenCalledOnce();
+    expect(
+      mocks.resolveStaticCatalogModel.mock.calls.filter(([lookup]) => lookup.modelId === "missing"),
+    ).toHaveLength(1);
   });
 
   it("parses one static registry per exact agent catalog and credential generation", async () => {

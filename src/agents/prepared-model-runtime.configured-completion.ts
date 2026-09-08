@@ -1,7 +1,7 @@
-import { buildModelCatalogMergeKey } from "@openclaw/model-catalog-core/model-catalog-refs";
 import { findNormalizedProviderValue } from "@openclaw/model-catalog-core/provider-id";
 import { resolveLoadedProviderRuntimePlugin } from "../plugins/provider-hook-runtime.js";
 import { withPluginRuntimeGenerationScope } from "../plugins/runtime/generation-scope.js";
+import { resolveModelCatalogIdentityKey } from "./openai-model-routes.js";
 import type { PreparedModelRuntimeAgentFacts } from "./prepared-model-runtime.catalog-contract.js";
 import type { PreparedConfiguredRuntimeModel } from "./prepared-model-runtime.configured.js";
 import type { PreparedModelRuntimePluginGeneration } from "./prepared-model-runtime.types.js";
@@ -27,7 +27,7 @@ export function completeConfiguredRuntimeModels(
     () => {
       const existing = new Map(
         configuredRuntimeModels.map((configured) => [
-          buildModelCatalogMergeKey(configured.provider, configured.modelId),
+          resolveModelCatalogIdentityKey({ provider: configured.provider, id: configured.modelId }),
           configured,
         ]),
       );
@@ -35,7 +35,7 @@ export function completeConfiguredRuntimeModels(
       const seen = new Set<string>();
       for (const ref of configuredModelRefs) {
         const { provider, modelId } = ref;
-        const key = buildModelCatalogMergeKey(provider, modelId);
+        const key = resolveModelCatalogIdentityKey({ provider, id: modelId });
         if (seen.has(key)) {
           continue;
         }

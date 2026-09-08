@@ -4,6 +4,7 @@ import { MAX_TIMER_TIMEOUT_MS } from "@openclaw/normalization-core/number-coerci
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { loadBundledPluginPublicSurface } from "../../plugin-sdk/test-helpers/public-surface-loader.js";
 import { createPluginMetadataSnapshotFixture } from "../../plugins/plugin-metadata.test-support.js";
+import { withPluginRuntimeGenerationScope } from "../../plugins/runtime/generation-scope.js";
 import type { ProviderPlugin } from "../../plugins/types.js";
 import {
   createOpenClawTestState,
@@ -15,6 +16,7 @@ import {
   replaceRuntimeAuthProfileStoreSnapshots,
   saveAuthProfileStore,
 } from "../auth-profiles.js";
+import { normalizeModelRef } from "../model-ref-shared.js";
 import {
   encodePluginModelCatalogRelativePath,
   PLUGIN_MODEL_CATALOG_GENERATED_BY,
@@ -592,6 +594,58 @@ function makeVllmQwenConfig(
 }
 
 describe("resolveModel", () => {
+  it.each([
+    { mode: "sync", registered: true },
+    { mode: "async", registered: true },
+    { mode: "sync", registered: false },
+    { mode: "async", registered: false },
+  ] as const)(
+    "preserves a selected ID in $mode resolution (registered=$registered)",
+    async ({ mode, registered }) => {
+      const metadataSnapshot = createPluginMetadataSnapshotFixture({
+        plugins: [
+          {
+            id: "exact-registry",
+            modelIdNormalization: { providers: { custom: { aliases: { middle: "final" } } } },
+          },
+        ],
+      });
+      const cfg = makeProviderConfig("custom", {
+        api: "openai-completions",
+        baseUrl: "https://example.invalid/v1",
+        models: [],
+      });
+      if (registered) {
+        mockDiscoveredModel(discoverModels, {
+          provider: "custom",
+          modelId: "middle",
+          templateModel: {
+            ...makeModel("middle"),
+            provider: "custom",
+            api: "openai-completions",
+            baseUrl: "https://example.invalid/v1",
+          },
+        });
+      }
+      const resolved = await withPluginRuntimeGenerationScope({ metadataSnapshot }, async () =>
+        mode === "sync"
+          ? resolveModelWithRegistry({
+              provider: "custom",
+              modelId: "middle",
+              agentDir: state.agentDir(),
+              cfg,
+              modelRegistry: discoverModels(
+                discoverAuthStorage(state.agentDir()),
+                state.agentDir(),
+              ),
+              runtimeHooks: createRuntimeHooks(),
+            })
+          : (await resolveModelForTest("custom", "middle", state.agentDir(), cfg)).model,
+      );
+      expect(resolved?.id).toBe("middle");
+    },
+  );
+
   it("consumes a directly prepared model through configured overrides and normalization", async () => {
     const preparedModel = {
       ...makeModel("prepared-model"),
@@ -1607,7 +1661,7 @@ describe("resolveModel", () => {
     },
   );
 
-  it("looks up each static fallback candidate with its own normalized model id", async () => {
+  it("looks up each selected static fallback candidate with its own model id", async () => {
     resolveBundledStaticCatalogModelMock.mockImplementation(({ provider, modelId }) => ({
       provider,
       id: modelId,
@@ -1619,7 +1673,7 @@ describe("resolveModel", () => {
 
     const anthropicResult = await resolveModelAsync(
       "anthropic",
-      "anthropic/claude-haiku-4-5",
+      "claude-haiku-4-5",
       state.agentDir(),
       undefined,
       {
@@ -2728,44 +2782,50 @@ describe("resolveModel", () => {
     expect(model.maxTokens).toBe(32768);
   });
 
-  it("merges configured model params with agent defaults for resolved models", async () => {
-    mockMinimalModelDiscovery("ollama", "qwen3:32b", {
-      params: { num_ctx: 4096, keep_alive: "1m" },
-    });
-    const cfg = makeOpenClawConfigFixture({
-      agents: {
-        defaults: {
-          models: {
-            "OLLAMA/qwen3:32B": {
-              params: { num_ctx: 8192, thinking: "low" },
+  it.each([
+    { key: "OLLAMA/qwen3:32b", thinking: "low" },
+    { key: "OLLAMA/qwen3:32B", thinking: undefined },
+  ])(
+    "merges model params with agent defaults only for exact local model identity: $key",
+    async ({ key, thinking }) => {
+      mockMinimalModelDiscovery("ollama", "qwen3:32b", {
+        params: { num_ctx: 4096, keep_alive: "1m" },
+      });
+      const cfg = makeOpenClawConfigFixture({
+        agents: {
+          defaults: {
+            models: {
+              [key]: {
+                params: { num_ctx: 8192, thinking: "low" },
+              },
             },
           },
         },
-      },
-      models: {
-        providers: {
-          ollama: {
-            baseUrl: "http://localhost:11434",
-            models: [
-              {
-                ...makeModel("qwen3:32b"),
-                params: { num_ctx: 16384 },
-              },
-            ],
+        models: {
+          providers: {
+            ollama: {
+              baseUrl: "http://localhost:11434",
+              models: [
+                {
+                  ...makeModel("qwen3:32b"),
+                  params: { num_ctx: 16384 },
+                },
+              ],
+            },
           },
         },
-      },
-    });
+      });
 
-    const result = await resolveModelForTest("ollama", "qwen3:32b", state.agentDir(), cfg);
+      const result = await resolveModelForTest("ollama", "qwen3:32b", state.agentDir(), cfg);
 
-    expect(result.error).toBeUndefined();
-    expect((result.model as { params?: Record<string, unknown> } | undefined)?.params).toEqual({
-      num_ctx: 16384,
-      keep_alive: "1m",
-      thinking: "low",
-    });
-  });
+      expect(result.error).toBeUndefined();
+      expect((result.model as { params?: Record<string, unknown> } | undefined)?.params).toEqual({
+        num_ctx: 16384,
+        keep_alive: "1m",
+        ...(thinking ? { thinking } : {}),
+      });
+    },
+  );
 
   it("applies configured provider params to resolved models", async () => {
     mockMinimalModelDiscovery("ollama", "qwen3:32b", { params: { keep_alive: "1m" } });
@@ -3016,14 +3076,19 @@ describe("resolveModel", () => {
     expect(result.model?.input).toEqual(["text", "image"]);
   });
 
-  it("propagates image input when configured model ids include the provider prefix", async () => {
+  it("preserves the exact selected namespaced model and its image input", async () => {
     const cfg = makeProviderConfig("custom", {
       baseUrl: "http://localhost:9000",
       api: "openai-completions",
       models: [{ ...makeModel("custom/vision-model"), input: ["text", "image"] }],
     });
 
-    const result = await resolveModelForTest("custom", "vision-model", state.agentDir(), cfg);
+    const result = await resolveModelForTest(
+      "custom",
+      "custom/vision-model",
+      state.agentDir(),
+      cfg,
+    );
 
     expect(result.error).toBeUndefined();
     expectRecordFields(result.model, {
@@ -3342,29 +3407,32 @@ describe("resolveModel", () => {
     },
   );
 
-  it("does not treat arbitrary namespaced model ids as provider prefixes", async () => {
-    const cfg = makeOpenClawConfigFixture({
-      models: {
-        providers: {
-          custom: {
-            baseUrl: "http://localhost:9000",
-            api: "openai-completions",
-            models: [
-              {
-                ...makeModel("meta/vision-model"),
-                input: ["text", "image"],
-              },
-            ],
+  it.each(["meta", "custom"])(
+    "does not borrow a %s namespaced model when resolving a bare local model",
+    async (namespace) => {
+      const cfg = makeOpenClawConfigFixture({
+        models: {
+          providers: {
+            custom: {
+              baseUrl: "http://localhost:9000",
+              api: "openai-completions",
+              models: [
+                {
+                  ...makeModel(`${namespace}/vision-model`),
+                  input: ["text", "image"],
+                },
+              ],
+            },
           },
         },
-      },
-    });
+      });
 
-    const result = await resolveModelForTest("custom", "vision-model", state.agentDir(), cfg);
+      const result = await resolveModelForTest("custom", "vision-model", state.agentDir(), cfg);
 
-    expect(result.model?.id).toBe("vision-model");
-    expect(result.model?.input).toEqual(["text"]);
-  });
+      expect(result.model?.id).toBe("vision-model");
+      expect(result.model?.input).toEqual(["text"]);
+    },
+  );
 
   it("resolves custom MLX-style Hugging Face ids without adding the provider prefix", async () => {
     const modelId = "mlx-community/Qwen3-30B-A3B-6bit";
@@ -3403,7 +3471,7 @@ describe("resolveModel", () => {
     });
   });
 
-  it("prefers provider-prefixed configured metadata over discovered text-only models", async () => {
+  it("keeps namespaced configured metadata off a discovered sibling model", async () => {
     mockMinimalModelDiscovery("custom", "vision-model", { input: ["text"] });
     const cfg = makeOpenClawConfigFixture({
       models: {
@@ -3427,8 +3495,8 @@ describe("resolveModel", () => {
     expect(result.error).toBeUndefined();
     expectRecordFields(result.model, {
       provider: "custom",
-      id: "custom/vision-model",
-      input: ["text", "image"],
+      id: "vision-model",
+      input: ["text"],
     });
   });
 
@@ -3827,11 +3895,8 @@ describe("resolveModel", () => {
       input: ["text"],
     });
 
-    const result = await resolveModelForTest(
-      "huggingface",
-      "huggingface/deepseek-ai/DeepSeek-R1",
-      state.agentDir(),
-    );
+    const selected = normalizeModelRef("huggingface", "huggingface/deepseek-ai/DeepSeek-R1");
+    const result = await resolveModelForTest(selected.provider, selected.model, state.agentDir());
 
     expect(result.error).toBeUndefined();
     expectRecordFields(result.model, {
@@ -5028,27 +5093,34 @@ describe("resolveModel", () => {
       }),
     });
 
-    const result = await resolveModelAsync("xai", "grok-4.3-latest", state.agentDir(), undefined, {
-      authStorage: { mocked: true } as never,
-      modelRegistry: discoverModels({ mocked: true } as never, state.agentDir()),
-      runtimeHooks: {
-        buildProviderUnknownModelHintWithPlugin: () => undefined,
-        prepareProviderDynamicModel: async () => {},
-        runProviderDynamicModel: () => undefined,
-        applyProviderResolvedTransportWithPlugin: ({ provider, context }) =>
-          provider === "xai" &&
-          context.model.api === "openai-completions" &&
-          context.model.baseUrl === "https://api.x.ai/v1"
-            ? {
-                ...context.model,
-                api: "openai-responses",
-              }
-            : undefined,
-        normalizeProviderResolvedModelWithPlugin: ({ provider, context }) =>
-          provider === "xai" ? (context.model as never) : undefined,
-        normalizeProviderTransportWithPlugin: () => undefined,
+    const selected = normalizeModelRef("xai", "grok-4.3-latest");
+    const result = await resolveModelAsync(
+      selected.provider,
+      selected.model,
+      state.agentDir(),
+      undefined,
+      {
+        authStorage: { mocked: true } as never,
+        modelRegistry: discoverModels({ mocked: true } as never, state.agentDir()),
+        runtimeHooks: {
+          buildProviderUnknownModelHintWithPlugin: () => undefined,
+          prepareProviderDynamicModel: async () => {},
+          runProviderDynamicModel: () => undefined,
+          applyProviderResolvedTransportWithPlugin: ({ provider, context }) =>
+            provider === "xai" &&
+            context.model.api === "openai-completions" &&
+            context.model.baseUrl === "https://api.x.ai/v1"
+              ? {
+                  ...context.model,
+                  api: "openai-responses",
+                }
+              : undefined,
+          normalizeProviderResolvedModelWithPlugin: ({ provider, context }) =>
+            provider === "xai" ? (context.model as never) : undefined,
+          normalizeProviderTransportWithPlugin: () => undefined,
+        },
       },
-    });
+    );
 
     expect(result.error).toBeUndefined();
     expectRecordFields(result.model, {

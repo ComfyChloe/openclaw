@@ -2,8 +2,15 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../../test/helpers/temp-dir.js";
 import * as preparedModelCatalog from "../../agents/prepared-model-catalog.js";
+import * as providerNormalization from "../../agents/provider-model-normalization.runtime.js";
 import type { OpenClawConfig } from "../../config/config.js";
-import { replaceSessionEntry } from "../../config/sessions/session-accessor.js";
+import {
+  loadSessionEntryReadOnly,
+  replaceSessionEntry,
+} from "../../config/sessions/session-accessor.js";
+import * as pluginMetadata from "../../plugins/current-plugin-metadata-snapshot.js";
+import * as manifestScan from "../../plugins/manifest-metadata-scan.js";
+import { createPluginMetadataSnapshotFixture } from "../../plugins/plugin-metadata.test-support.js";
 import { resetPluginRuntimeStateForTest, setActivePluginRegistry } from "../../plugins/runtime.js";
 import { createSessionConversationTestRegistry } from "../../test-utils/session-conversation-registry.js";
 import { normalizeSessionDeliveryState } from "../../utils/delivery-context.shared.js";
@@ -12,6 +19,8 @@ import { buildTestCtx } from "./test-ctx.js";
 import type { TypingController } from "./typing.js";
 
 type NativeStatusSelectionCase = {
+  agentId?: string;
+  modelThinking?: "low" | "high";
   selection: string;
   source: "user" | "auto" | undefined;
   channelModel?: string;
@@ -25,6 +34,7 @@ type NativeStatusSelectionCase = {
   modelParentSessionKey?: string;
   preparedModel?: string;
   preparedProvider?: string;
+  parentPin?: "raw-config" | "resolved" | "legacy";
 };
 
 const buildStatusReplyMock = vi.hoisted(() => vi.fn());
@@ -55,27 +65,54 @@ describe("native /status channel model routing", () => {
     vi.stubEnv("OPENCLAW_TEST_FAST", "1");
     resetPluginRuntimeStateForTest();
     setActivePluginRegistry(createSessionConversationTestRegistry());
-    vi.spyOn(preparedModelCatalog, "loadPreparedModelCatalog").mockResolvedValue([
-      {
-        id: "gpt-5.5",
-        name: "GPT",
-        provider: "openai",
-        contextWindow: 400_000,
-        reasoning: false,
-      },
-      {
-        id: "claude-fable-5",
-        name: "Fable",
-        provider: "anthropic",
-        contextWindow: 1_000_000,
-        reasoning: true,
-      },
-    ]);
+    vi.spyOn(preparedModelCatalog, "loadPreparedModelCatalog").mockResolvedValue([]);
+    vi.spyOn(preparedModelCatalog, "getAvailablePreparedModelCatalogSnapshot").mockReturnValue({
+      entries: [
+        {
+          id: "gpt-5.5",
+          name: "GPT",
+          provider: "openai",
+          contextWindow: 400_000,
+          reasoning: false,
+        },
+        {
+          id: "claude-fable-5",
+          name: "Fable",
+          provider: "anthropic",
+          contextWindow: 1_000_000,
+          reasoning: true,
+        },
+      ],
+      routeVariants: [],
+    });
     buildStatusReplyMock.mockReset();
     buildStatusReplyMock.mockResolvedValue({ text: "selected model status" });
   });
 
   const statusSelectionCases: NativeStatusSelectionCase[] = [
+    {
+      selection: "alpha per-agent model thinking",
+      source: undefined,
+      agentId: "alpha",
+      modelThinking: "low",
+      channelModel: "openai/gpt-5.5",
+    },
+    {
+      selection: "beta per-agent model thinking",
+      source: undefined,
+      agentId: "beta",
+      modelThinking: "high",
+      channelModel: "openai/gpt-5.5",
+    },
+    ...(["raw-config", "resolved", "legacy"] as const).map((parentPin) => ({
+      selection: `${parentPin} parent model with a colliding input alias`,
+      source: undefined,
+      parentPin,
+      groupId: parentPin === "raw-config" ? "unmatched-child" : undefined,
+      channelModel: parentPin === "raw-config" ? "custom/latest" : undefined,
+      expectedProvider: "custom",
+      expectedModel: "middle",
+    })),
     { selection: "user override", source: "user" },
     { selection: "automatic fallback", source: "auto" },
     {
@@ -154,7 +191,8 @@ describe("native /status channel model routing", () => {
   it.each(statusSelectionCases)(
     "preserves canonical native /status $selection",
     async (testCase) => {
-      const targetSessionKey = "agent:main:main";
+      const agentId = testCase.agentId ?? "main";
+      const targetSessionKey = `agent:${agentId}:main`;
       const storePath = path.join(tempDirs.make("openclaw-native-status-"), "sessions.json");
       const {
         channelModel = "anthropic/claude-fable-5",
@@ -166,20 +204,69 @@ describe("native /status channel model routing", () => {
         groupId = "123",
         locked = false,
         modelParentSessionKey,
+        modelThinking,
         preparedModel = "gpt-5.5",
         preparedProvider = "openai",
         source,
+        parentPin,
       } = testCase;
+      const parentSessionKey = `agent:${agentId}:telegram:group:parent`;
+      const capturedCatalog = parentPin
+        ? [
+            { provider: "custom", id: "middle", name: "Selected", reasoning: true },
+            {
+              provider: "anthropic",
+              id: "claude-fable-5",
+              name: "Fable",
+              contextWindow: 1_000_000,
+              reasoning: true,
+            },
+          ]
+        : undefined;
+      if (parentPin) {
+        vi.spyOn(pluginMetadata, "getCurrentPluginMetadataSnapshot").mockReturnValue(
+          createPluginMetadataSnapshotFixture({
+            plugins: [
+              {
+                id: "status-input-owner",
+                modelIdNormalization: {
+                  providers: { custom: { aliases: { latest: "middle", middle: "final" } } },
+                },
+              },
+            ],
+          }),
+        );
+        vi.spyOn(manifestScan, "listOpenClawPluginManifestMetadata").mockReturnValue([]);
+        vi.spyOn(providerNormalization, "normalizeProviderModelIdWithRuntime").mockReturnValue(
+          undefined,
+        );
+        await replaceSessionEntry(
+          { agentId, storePath, sessionKey: parentSessionKey },
+          {
+            sessionId: "parent-status",
+            updatedAt: 1,
+            ...(parentPin === "raw-config"
+              ? {}
+              : {
+                  providerOverride: "custom",
+                  modelOverride: "middle",
+                  modelOverrideSource: "user" as const,
+                }),
+            ...(parentPin === "resolved" ? { modelOverrideRouteResolution: parentPin } : {}),
+          },
+        );
+      }
       const isDirect = directUserId !== undefined || directSenderId !== undefined;
       const overrideKey = directSenderId ?? directUserId ?? "123";
       const conflictingDirectUserId =
         directSenderId !== undefined && directUserId !== undefined ? directUserId : undefined;
       await replaceSessionEntry(
-        { agentId: "main", sessionKey: targetSessionKey, storePath },
+        { agentId, sessionKey: targetSessionKey, storePath },
         {
           sessionId: "status-session",
           updatedAt: Date.now(),
           contextTokens: 1_000_000,
+          ...(parentPin ? { parentSessionKey } : {}),
           delivery: normalizeSessionDeliveryState({
             context: { channel: deliveryChannel },
             ...(directUserId
@@ -206,6 +293,9 @@ describe("native /status channel model routing", () => {
         },
       );
 
+      const parentBefore = parentPin
+        ? loadSessionEntryReadOnly({ agentId, storePath, sessionKey: parentSessionKey })
+        : undefined;
       const result = await maybeResolveNativeSlashCommandFastReply({
         ctx: buildTestCtx({
           Body: "/status",
@@ -232,10 +322,21 @@ describe("native /status channel model routing", () => {
         cfg: markCompleteReplyConfig({
           session: { store: storePath },
           agents: {
+            ...(modelThinking
+              ? {
+                  ownership: "explicit" as const,
+                  entries: {
+                    [agentId]: {
+                      models: { "openai/gpt-5.5": { params: { thinking: modelThinking } } },
+                    },
+                  },
+                }
+              : {}),
             defaults: {
               model: { primary: "openai/gpt-5.5" },
               modelPolicy: { allow: ["openai/*", "anthropic/*", "xai/*"] },
               models: {
+                ...(modelThinking ? { "openai/gpt-5.5": { params: { thinking: "medium" } } } : {}),
                 "anthropic/claude-fable-5": {
                   alias: "Fable",
                   params: { thinking: "high", fastMode: true },
@@ -246,7 +347,7 @@ describe("native /status channel model routing", () => {
           channels: {
             modelByChannel: {
               telegram: {
-                [overrideKey]: channelModel,
+                [parentPin === "raw-config" ? "parent" : overrideKey]: channelModel,
                 ...(conflictingDirectUserId ? { [conflictingDirectUserId]: "xai/grok-4.3" } : {}),
                 "*": "openai/gpt-5.5",
               },
@@ -254,7 +355,7 @@ describe("native /status channel model routing", () => {
             },
           },
         } as OpenClawConfig),
-        agentId: "main",
+        agentId,
         agentDir: "/tmp/agent",
         agentCfg: undefined,
         commandAuthorized: true,
@@ -270,10 +371,20 @@ describe("native /status channel model routing", () => {
         model: preparedModel,
         workspaceDir: "/tmp/workspace",
         typing: createTypingController(),
+        ...(capturedCatalog
+          ? { preparedModelCatalog: { entries: capturedCatalog, routeVariants: capturedCatalog } }
+          : {}),
       });
 
       const statusCall = buildStatusReplyMock.mock.calls[0]?.[0];
-      expect(statusCall).toMatchObject({ provider: expectedProvider, model: expectedModel });
+      expect(statusCall).toMatchObject({
+        agentId,
+        provider: expectedProvider,
+        model: expectedModel,
+      });
+      if (modelThinking) {
+        await expect(statusCall.resolveDefaultThinkingLevel()).resolves.toBe(modelThinking);
+      }
       expect(statusCall.thinkingCatalog).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
@@ -285,6 +396,28 @@ describe("native /status channel model routing", () => {
       );
       if (expectedProvider === "anthropic") {
         await expect(statusCall.resolveDefaultThinkingLevel()).resolves.toBe("high");
+      }
+      if (parentPin) {
+        await expect(statusCall.resolveDefaultThinkingLevel()).resolves.toBe("medium");
+        await expect(statusCall.resolveDefaultThinkingLevel()).resolves.toBe("medium");
+        expect(vi.mocked(preparedModelCatalog.loadPreparedModelCatalog).mock.calls.length).toBe(0);
+        expect(vi.mocked(manifestScan.listOpenClawPluginManifestMetadata).mock.calls.length).toBe(
+          0,
+        );
+        expect(
+          vi.mocked(providerNormalization.normalizeProviderModelIdWithRuntime).mock.calls.length,
+        ).toBe(0);
+        expect(
+          loadSessionEntryReadOnly({ agentId, storePath, sessionKey: parentSessionKey }),
+        ).toEqual(parentBefore);
+        const childAfter = loadSessionEntryReadOnly({
+          agentId,
+          storePath,
+          sessionKey: targetSessionKey,
+        });
+        expect(childAfter?.modelOverride).toBeUndefined();
+        expect(childAfter?.providerOverride).toBeUndefined();
+        expect(childAfter?.authProfileOverride).toBeUndefined();
       }
       if (source) {
         expect(statusCall.sessionEntry).toMatchObject({

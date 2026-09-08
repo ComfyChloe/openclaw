@@ -394,6 +394,7 @@ describe("subagent registry seam flow", () => {
   }: QueuedRunOverrides): SubagentRunRecord => {
     const childSessionKey = overrides.childSessionKey ?? `agent:main:subagent:${overrides.runId}`;
     const requesterSessionKey = overrides.requesterSessionKey ?? "agent:main:main";
+    const { request: queuedRequest, ...queuedOptions } = queuedLaunchOverrides ?? {};
     return createSubagentRunRecord({
       childSessionKey,
       requesterSessionKey,
@@ -408,11 +409,12 @@ describe("subagent registry seam flow", () => {
         request: {
           sessionKey: childSessionKey,
           idempotencyKey: overrides.runId,
+          ...queuedRequest,
         },
         timeoutMs: 1_000,
         schedulerGroupKey: JSON.stringify([requesterSessionKey, overrides.groupId]),
         maxConcurrent: 1,
-        ...queuedLaunchOverrides,
+        ...queuedOptions,
       },
     });
   };
@@ -1716,14 +1718,20 @@ describe("subagent registry seam flow", () => {
     );
   });
 
-  it.each(["running", "interrupted"] as const)(
-    "rehydrates persisted collector FIFO queues after a %s owner releases capacity",
-    async (executionStatus) => {
+  it.each([
+    ["running", undefined],
+    ["running", "resolved"],
+    ["interrupted", undefined],
+    ["interrupted", "resolved"],
+  ] as const)(
+    "rehydrates collector FIFO after %s with model resolution %s",
+    async (executionStatus, requestedRouteResolution) => {
       const now = Date.now();
       mockSingleCollectorConcurrency();
       const queuedRunOverrides = {
         groupId: "logical-group",
         queuedLaunch: {
+          request: requestedRouteResolution ? { requestedRouteResolution } : {},
           authorization: { modelOverride: { provider: "openai", model: "gpt-5.4" } },
           maxConcurrent: 2,
         },
@@ -1792,9 +1800,13 @@ describe("subagent registry seam flow", () => {
             idempotencyKey: "run-queued-one",
             provider: "openai",
             model: "gpt-5.4",
+            ...(requestedRouteResolution ? { requestedRouteResolution } : {}),
           },
           scopes: ["operator.admin"],
         });
+        if (!requestedRouteResolution) {
+          expect(agentCalls[0]?.[0]).not.toHaveProperty("params.requestedRouteResolution");
+        }
       });
       expect(mod.getSubagentRunByRunId("run-queued-one")?.execution?.status).toBe("running");
       const acceptedRun = mod.getSubagentRunByRunId("gateway-run-one");

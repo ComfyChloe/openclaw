@@ -1,6 +1,5 @@
 /** Composes CLI inventory sources before rendering their shared catalog projection. */
 import { normalizeProviderIdForAuth } from "@openclaw/model-catalog-core/provider-id";
-import { stripSelfProviderModelPrefix } from "@openclaw/model-catalog-core/provider-model-id-normalization";
 import { DEFAULT_CONTEXT_TOKENS } from "../../agents/defaults.js";
 import { createModelCatalogView, type ModelCatalogView } from "../../agents/model-catalog-view.js";
 import type { ModelCatalogEntry, ModelCatalogSnapshot } from "../../agents/model-catalog.types.js";
@@ -286,13 +285,11 @@ class ModelListCatalog {
         if (!replaceMode && providerConfig.api === undefined && configuredModel.api === undefined) {
           continue;
         }
-        // Auth remains attached to the source provider; only the display key is aliased.
+        // Provider-owned aliases normalize before display aliasing; auth keeps the source owner.
         const id = replaceMode
-          ? normalizeConfiguredProviderCatalogModelId(
-              provider,
-              stripSelfProviderModelPrefix(provider, configuredModel.id),
-              { manifestPlugins: this.context.metadataSnapshot },
-            )
+          ? normalizeConfiguredProviderCatalogModelId(provider, configuredModel.id, {
+              manifestPlugins: this.context.metadataSnapshot,
+            })
           : configuredModel.id;
         const displayProvider = replaceMode
           ? this.context.canonicalizeProvider(provider)

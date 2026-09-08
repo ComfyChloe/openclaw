@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("./command/prepare.js", () => ({
   prepareAgentCommandExecution: mocks.prepare,
+  withPreparedAgentCommandRuntime: (_context: unknown, run: () => unknown) => run(),
 }));
 
 vi.mock("./command/runtime-loaders.js", () => ({

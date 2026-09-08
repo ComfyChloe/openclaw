@@ -1,4 +1,5 @@
 // Resolves image-capable model metadata and credential-bound runtime auth.
+import { normalizeMediaProviderId } from "../../packages/media-understanding-common/src/provider-id.js";
 import { resolveAgentWorkspaceDir } from "../agents/agent-scope.js";
 import { resolveModelAsync } from "../agents/embedded-agent-runner/model.js";
 import { isMinimaxVlmModel } from "../agents/minimax-vlm.js";
@@ -6,17 +7,23 @@ import {
   applySecretRefHeaderSentinels,
   getApiKeyForModelCore,
   requireApiKey,
+  resolveApiKeyForProviderCore,
 } from "../agents/model-auth.js";
-import { normalizeModelRef } from "../agents/model-selection.js";
+import { normalizeModelRef, type ModelRef } from "../agents/model-selection.js";
 import {
   acquireAgentRunPreparedModelRuntime,
   type PreparedModelRuntimeSnapshot,
 } from "../agents/prepared-model-runtime.js";
 import { resolveProviderModelMaterializationAuthMode } from "../agents/provider-model-route-auth.js";
-import { applyPreparedRuntimeAuthToModel } from "../agents/provider-request-config.js";
+import {
+  applyPreparedRuntimeAuthToModel,
+  getModelProviderRequestTransport,
+  type ModelProviderRequestTransportOverrides,
+} from "../agents/provider-request-config.js";
 import { protectPreparedProviderRuntimeAuth } from "../agents/provider-runtime-auth-protection.js";
 import { providerUsesCredentialScopedModelMetadata } from "../agents/runtime-plan/credential-scoped-model.js";
 import { getModelRegistryRuntime } from "../agents/sessions/model-registry-runtime.js";
+import { isSecretRef } from "../config/types.secrets.js";
 import { bindModelLlmRuntime } from "../llm/model-runtime-binding.js";
 import type { Model } from "../llm/types.js";
 import {
@@ -41,38 +48,147 @@ type ImageRuntimeParams = {
   preparedModelRuntime?: ImageDescriptionRequest["preparedModelRuntime"];
 };
 
-type ResolvedImageRuntimeContext = {
-  cfg: ImageRuntimeParams["cfg"];
-  agentDir: string;
-  workspaceDir?: string;
-};
-
-type PreparedImageRuntime = {
-  runtimeValue: string;
-  model: Model;
-};
+type PreparedImageRuntime = { runtimeValue: string } & (
+  | {
+      kind: "model";
+      model: Model;
+      cfg: ImageRuntimeParams["cfg"];
+      agentDir: string;
+      workspaceDir?: string;
+    }
+  | {
+      kind: "minimax";
+      provider: string;
+      modelId: string;
+      modelBaseUrl?: string;
+      allowPrivateNetwork?: boolean;
+      request?: ModelProviderRequestTransportOverrides;
+    }
+);
 
 type ResolvedImageRuntime = PreparedImageRuntime & { release: () => void };
 
-const resolvedImageRuntimeContexts = new WeakMap<Model, ResolvedImageRuntimeContext>();
-
-export function getResolvedImageRuntimeContext(
-  model: Model,
-): ResolvedImageRuntimeContext | undefined {
-  return resolvedImageRuntimeContexts.get(model);
-}
-
 function bindResolvedImageRuntime(
   params: ImageRuntimeParams,
-  apiKey: string,
+  runtimeValue: string,
   model: Model,
 ): PreparedImageRuntime {
-  resolvedImageRuntimeContexts.set(model, {
+  return isMinimaxVlmModel(model.provider, model.id)
+    ? {
+        kind: "minimax",
+        runtimeValue,
+        provider: model.provider,
+        modelId: model.id,
+        modelBaseUrl: model.baseUrl,
+        request: getModelProviderRequestTransport(model),
+      }
+    : {
+        kind: "model",
+        runtimeValue,
+        model,
+        cfg: params.cfg,
+        agentDir: params.agentDir,
+        ...(params.workspaceDir ? { workspaceDir: params.workspaceDir } : {}),
+      };
+}
+
+function isUnknownModelError(err: unknown): boolean {
+  return err instanceof Error && /^Unknown model:/i.test(err.message);
+}
+
+function resolveConfiguredProviderBaseUrl(
+  cfg: ImageDescriptionRequest["cfg"],
+  provider: string,
+): string | undefined {
+  const direct = cfg.models?.providers?.[provider];
+  if (typeof direct?.baseUrl === "string" && direct.baseUrl.trim()) {
+    return direct.baseUrl.trim();
+  }
+  const normalizedProvider = normalizeMediaProviderId(provider);
+  const normalized = cfg.models?.providers?.[normalizedProvider];
+  if (typeof normalized?.baseUrl === "string" && normalized.baseUrl.trim()) {
+    if (isMinimaxCnAlias(provider) && !isMinimaxCnBaseUrl(normalized.baseUrl)) {
+      return undefined;
+    }
+    return normalized.baseUrl.trim();
+  }
+  return undefined;
+}
+
+function resolveConfiguredProviderAllowPrivateNetwork(
+  cfg: ImageDescriptionRequest["cfg"],
+  provider: string,
+): boolean | undefined {
+  const direct = cfg.models?.providers?.[provider]?.request?.allowPrivateNetwork;
+  if (typeof direct === "boolean") {
+    return direct;
+  }
+  const normalizedProvider = normalizeMediaProviderId(provider);
+  const normalized = cfg.models?.providers?.[normalizedProvider]?.request?.allowPrivateNetwork;
+  if (typeof normalized === "boolean") {
+    return normalized;
+  }
+  return undefined;
+}
+
+function isMinimaxCnAlias(provider: string): boolean {
+  const normalized = provider.trim().toLowerCase();
+  return normalized === "minimax-cn" || normalized === "minimax-portal-cn";
+}
+
+function isMinimaxCnBaseUrl(baseUrl: string): boolean {
+  const trimmed = baseUrl.trim();
+  if (!trimmed) {
+    return false;
+  }
+  try {
+    const parsed = new URL(/^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`);
+    return parsed.hostname.toLowerCase() === "api.minimaxi.com";
+  } catch {
+    return false;
+  }
+}
+
+function hasConfiguredProviderApiKey(
+  cfg: ImageDescriptionRequest["cfg"],
+  provider: string,
+): boolean {
+  const apiKey = cfg.models?.providers?.[provider]?.apiKey;
+  return (typeof apiKey === "string" && apiKey.trim().length > 0) || isSecretRef(apiKey);
+}
+
+function resolveMinimaxVlmAuthProvider(
+  cfg: ImageDescriptionRequest["cfg"],
+  provider: string,
+): string {
+  if (!isMinimaxCnAlias(provider) || hasConfiguredProviderApiKey(cfg, provider)) {
+    return provider;
+  }
+  return normalizeMediaProviderId(provider);
+}
+
+async function resolveMinimaxVlmFallbackRuntime(
+  params: ImageRuntimeParams,
+): Promise<PreparedImageRuntime> {
+  const authProvider = resolveMinimaxVlmAuthProvider(params.cfg, params.provider);
+  const auth = await resolveApiKeyForProviderCore({
+    provider: authProvider,
     cfg: params.cfg,
+    secretSentinels: true,
+    store: params.authStore,
+    profileId: params.profile,
+    preferredProfile: params.preferredProfile,
     agentDir: params.agentDir,
     ...(params.workspaceDir ? { workspaceDir: params.workspaceDir } : {}),
   });
-  return { runtimeValue: apiKey, model };
+  return {
+    kind: "minimax",
+    provider: params.provider,
+    modelId: params.model,
+    runtimeValue: requireApiKey(auth, authProvider),
+    allowPrivateNetwork: resolveConfiguredProviderAllowPrivateNetwork(params.cfg, params.provider),
+    modelBaseUrl: resolveConfiguredProviderBaseUrl(params.cfg, params.provider),
+  };
 }
 
 function formatModelInputCapabilities(input: Model["input"] | undefined): string {
@@ -157,7 +273,7 @@ async function prepareResolvedImageRuntime(
         modelRegistry,
         skipAgentDiscovery: true,
         allowBundledStaticCatalogFallback: true,
-        preparedModelRuntime: params.preparedModelRuntime as PreparedModelRuntimeSnapshot,
+        preparedModelRuntime: preparedRuntime,
         ...(params.workspaceDir ? { workspaceDir: params.workspaceDir } : {}),
         ...(apiKeyInfo.profileId
           ? { authProfileId: apiKeyInfo.profileId }
@@ -213,10 +329,13 @@ async function prepareResolvedImageRuntime(
   return bindResolvedImageRuntime(params, apiKey, bindPreparedModel(model));
 }
 
-export async function resolveImageRuntime(
+async function resolveImageRuntimeInternal(
   params: ImageRuntimeParams,
+  selection: {
+    plan: (metadata: PreparedModelRuntimeSnapshot["metadataSnapshot"]) => ModelRef;
+    resolve: (runtime: PreparedModelRuntimeSnapshot) => ModelRef;
+  },
 ): Promise<ResolvedImageRuntime> {
-  const resolvedRef = normalizeModelRef(params.provider, params.model);
   const workspaceDir =
     params.workspaceDir ??
     (params.agentId ? resolveAgentWorkspaceDir(params.cfg ?? {}, params.agentId) : undefined);
@@ -237,17 +356,18 @@ export async function resolveImageRuntime(
           ...(params.agentId ? { agentId: params.agentId } : {}),
           config: params.cfg ?? {},
           ...(runtimeParams.workspaceDir ? { workspaceDir: runtimeParams.workspaceDir } : {}),
+          preserveWorkspaceDirOnRefresh: params.workspaceDir !== undefined,
           loadRuntimePlugins: true,
-          runtimePluginSelections: [
-            {
-              provider: resolvedRef.provider,
-              modelId: resolvedRef.model,
-              ...(params.agentId ? { agentId: params.agentId } : {}),
-            },
-          ],
         },
         // The request already chose a model; full inventory discovery must stay outside setup.
-        { catalogMode: "static", abortSignal: params.signal },
+        {
+          catalogMode: "static",
+          abortSignal: params.signal,
+          deriveRuntimePluginSelections: ({ metadataSnapshot }) => {
+            const ref = selection.plan(metadataSnapshot);
+            return [{ provider: ref.provider, modelId: ref.model, agentId: params.agentId }];
+          },
+        },
       );
   let leaseRetained = false;
   const retainLease = (resolved: PreparedImageRuntime): ResolvedImageRuntime => {
@@ -261,7 +381,8 @@ export async function resolveImageRuntime(
     const preparedParams: ImageRuntimeParams = {
       ...runtimeParams,
       agentDir: preparedRuntime.agentDir,
-      cfg: preparedRuntime.config,
+      // Borrowed generations supply metadata; the caller owns any route-projected config.
+      cfg: params.preparedModelRuntime ? params.cfg : preparedRuntime.config,
       preparedModelRuntime: preparedRuntime,
       ...(preparedWorkspaceDir ? { workspaceDir: preparedWorkspaceDir } : {}),
     };
@@ -279,35 +400,75 @@ export async function resolveImageRuntime(
       ...authProfileOptions,
     };
     return await withPluginRuntimeGenerationScope(preparedRuntime, async () => {
-      const resolved = await resolveModelAsync(
-        resolvedRef.provider,
-        resolvedRef.model,
-        preparedParams.agentDir,
-        preparedParams.cfg,
-        resolveOptions,
-      );
-      // Setup may have closed during model lookup; do not start auth for a late result.
-      params.signal?.throwIfAborted();
-      const model = requireImageCapableModel({
-        model: resolved.model,
-        resolvedProvider: resolvedRef.provider,
-        resolvedModel: resolvedRef.model,
-        requestedProvider: params.provider,
-        requestedModel: params.model,
-      });
-      return retainLease(
-        await prepareResolvedImageRuntime(
-          preparedParams,
-          preparedRuntime,
-          model,
-          resolved.authStorage,
-          resolved.modelRegistry,
-        ),
-      );
+      const resolvedRef = selection.resolve(preparedRuntime);
+      try {
+        const resolved = await resolveModelAsync(
+          resolvedRef.provider,
+          resolvedRef.model,
+          preparedParams.agentDir,
+          preparedParams.cfg,
+          resolveOptions,
+        );
+        // Setup may have closed during model lookup; do not start auth for a late result.
+        params.signal?.throwIfAborted();
+        const model = requireImageCapableModel({
+          model: resolved.model,
+          resolvedProvider: resolvedRef.provider,
+          resolvedModel: resolvedRef.model,
+          requestedProvider: params.provider,
+          requestedModel: params.model,
+        });
+        return retainLease(
+          await prepareResolvedImageRuntime(
+            preparedParams,
+            preparedRuntime,
+            model,
+            resolved.authStorage,
+            resolved.modelRegistry,
+          ),
+        );
+      } catch (error) {
+        // A late unknown-model result must not start new auth work after setup closes.
+        params.signal?.throwIfAborted();
+        if (
+          !isMinimaxVlmModel(resolvedRef.provider, resolvedRef.model) ||
+          !isUnknownModelError(error)
+        ) {
+          throw error;
+        }
+        // Regional endpoints and auth retain the authored provider key, including its spelling.
+        return retainLease(
+          await resolveMinimaxVlmFallbackRuntime({ ...preparedParams, model: resolvedRef.model }),
+        );
+      }
     });
   } finally {
     if (!leaseRetained) {
       preparedRuntimeLease.release();
     }
   }
+}
+
+/** Public image inputs are normalized only after their runtime is admitted. */
+export function resolveImageRuntime(params: ImageRuntimeParams): Promise<ResolvedImageRuntime> {
+  return resolveImageRuntimeInternal(params, {
+    plan: (metadata) =>
+      normalizeModelRef(params.provider, params.model, {
+        manifestPlugins: metadata,
+        allowPluginNormalization: false,
+      }),
+    resolve: (runtime) =>
+      normalizeModelRef(params.provider, params.model, {
+        manifestPlugins: runtime.metadataSnapshot,
+        resolvedModelCatalog: runtime.modelCatalog.entries,
+      }),
+  });
+}
+
+/** Internal selected candidates retain their exact identity across every preparation stage. */
+export function resolveImageRuntimeForModel(
+  params: ImageRuntimeParams,
+): Promise<ResolvedImageRuntime> {
+  const ref = { provider: params.provider, model: params.model };
+  return resolveImageRuntimeInternal(params, { plan: () => ref, resolve: () => ref });
 }

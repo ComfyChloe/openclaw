@@ -1,4 +1,5 @@
 /** Prepared plugin metadata handoff for runtime model normalization. */
+import { findModelInCatalog } from "../../agents/model-catalog-lookup.js";
 import type { ModelCatalogEntry } from "../../agents/model-catalog.js";
 import {
   findNormalizedProviderKey,
@@ -19,32 +20,18 @@ import { resolveModelRuntimeDirective } from "./directive-handling.model-runtime
 export type RuntimeModelNormalization = NonNullable<Parameters<typeof normalizeModelRef>[2]>;
 
 /** Carries the Gateway-owned metadata snapshot through one model-selection run. */
-export function resolveRuntimeNormalization(cfg: OpenClawConfig): RuntimeModelNormalization {
+export function resolveRuntimeNormalization(
+  cfg: OpenClawConfig,
+  resolvedModelCatalog?: readonly ModelCatalogEntry[],
+): RuntimeModelNormalization {
   return {
     ...RUNTIME_MODEL_VISIBILITY_NORMALIZATION,
+    resolvedModelCatalog,
     manifestPlugins: getCurrentPluginMetadataSnapshot({
       config: cfg,
       allowWorkspaceScopedSnapshot: true,
     }),
   };
-}
-
-export function normalizeRuntimeRef(
-  provider: string,
-  model: string,
-  normalization: RuntimeModelNormalization = RUNTIME_MODEL_VISIBILITY_NORMALIZATION,
-) {
-  return normalizeModelRef(provider, model, normalization);
-}
-
-export function findSelectedCatalogEntry(params: {
-  catalog?: readonly ModelCatalogEntry[];
-  provider: string;
-  model: string;
-}): ModelCatalogEntry | undefined {
-  const normalizedProvider = normalizeProviderId(params.provider);
-  const selectedKey = modelKey(normalizedProvider, params.model);
-  return params.catalog?.find((entry) => modelKey(entry.provider, entry.id) === selectedKey);
 }
 
 /** Provider identity comes from authored routes or prepared/plugin metadata, not model inventory. */
@@ -90,7 +77,7 @@ export async function prepareModelSelectionRuntime(params: {
   if (runtime.kind === "invalid") {
     return { status: "rejected", reason: "invalid-runtime", message: runtime.errorText };
   }
-  const selected = findSelectedCatalogEntry(params);
+  const selected = findModelInCatalog(params.catalog, params.provider, params.model);
   if (!isKnownModelSelectionProvider(params)) {
     return {
       status: "rejected",
@@ -111,7 +98,7 @@ export async function prepareModelSelectionRuntime(params: {
     provider: params.provider,
     model: params.model,
   });
-  const resolved = findSelectedCatalogEntry({ ...params, catalog });
+  const resolved = findModelInCatalog(catalog, params.provider, params.model);
   return {
     status: "ready",
     runtime,

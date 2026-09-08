@@ -48,7 +48,7 @@ const fallbackContextIds = new WeakMap<object, number>();
 let nextFallbackContextId = 0;
 const log = createSubsystemLogger("model-selection");
 
-type ModelCandidateChainParams = ModelManifestNormalizationContext & {
+type ModelCandidateChainParams = Pick<ModelManifestNormalizationContext, "manifestPlugins"> & {
   cfg: OpenClawConfig | undefined;
   agentId?: string;
   provider: string;
@@ -91,7 +91,7 @@ export function resolveImageFallbackCandidates(
     cfg: OpenClawConfig | undefined;
     defaultProvider: string;
     modelOverride?: string;
-  } & ModelManifestNormalizationContext,
+  } & Pick<ModelManifestNormalizationContext, "manifestPlugins">,
 ): ModelFallbackCandidate[] {
   const aliasIndex = buildModelAliasIndex({
     cfg: params.cfg ?? {},
@@ -278,20 +278,22 @@ function resolveFallbackCandidatesUncached(
   const defaultModel = primary?.model ?? DEFAULT_MODEL;
   const providerRaw = normalizeOptionalString(params.provider) || defaultProvider;
   const modelRaw = normalizeOptionalString(params.model) || defaultModel;
-  const normalizeCandidateRef = (provider: string, model: string) =>
-    normalizeModelRef(provider, model, {
-      allowPluginNormalization:
-        params.allowPluginNormalization !== false &&
-        allowsPluginModelNormalization({
-          cfg: params.cfg,
-          provider,
-          model,
-        }),
-      manifestPlugins: params.manifestPlugins,
-    });
   const allowPluginModelAliases =
     params.allowPluginNormalization !== false && params.cfg?.plugins?.enabled !== false;
-  const normalizedPrimary = normalizeCandidateRef(providerRaw, modelRaw);
+  const requestedRouteResolution = params.requestedRouteResolution ?? "raw";
+  const normalizedPrimary =
+    requestedRouteResolution === "resolved"
+      ? { provider: providerRaw, model: modelRaw }
+      : normalizeModelRef(providerRaw, modelRaw, {
+          allowPluginNormalization:
+            allowPluginModelAliases &&
+            allowsPluginModelNormalization({
+              cfg: params.cfg,
+              provider: providerRaw,
+              model: modelRaw,
+            }),
+          manifestPlugins: params.manifestPlugins,
+        });
   const aliasIndex = buildModelAliasIndex({
     cfg: params.cfg ?? {},
     agentId: params.agentId,
@@ -300,7 +302,6 @@ function resolveFallbackCandidatesUncached(
     manifestPlugins: params.manifestPlugins,
   });
   const { candidates, addCandidate } = createModelCandidateCollector();
-  const requestedRouteResolution = params.requestedRouteResolution ?? "raw";
   let requestedCandidate = normalizedPrimary;
   const exactRequestedRouteConfigured =
     hasExactConfiguredProviderModel({
@@ -320,7 +321,7 @@ function resolveFallbackCandidatesUncached(
         defaultProvider,
         aliasIndex,
         allowPluginNormalization:
-          params.allowPluginNormalization !== false &&
+          allowPluginModelAliases &&
           allowsPluginModelNormalization({
             cfg: params.cfg,
             provider: providerRaw,
@@ -329,11 +330,7 @@ function resolveFallbackCandidatesUncached(
         manifestPlugins: params.manifestPlugins,
       }) ?? normalizedPrimary;
   }
-  addCandidate(
-    normalizeCandidateRef(requestedCandidate.provider, requestedCandidate.model),
-    "requested",
-    requestedRouteResolution,
-  );
+  addCandidate(requestedCandidate, "requested", requestedRouteResolution);
 
   const modelFallbacks =
     params.fallbacksOverride !== undefined
@@ -356,19 +353,11 @@ function resolveFallbackCandidatesUncached(
     }
     // Fallbacks are explicit user intent; do not silently filter them by the
     // model allowlist.
-    addCandidate(
-      normalizeCandidateRef(resolved.ref.provider, resolved.ref.model),
-      "configured-fallback",
-      "resolved",
-    );
+    addCandidate(resolved.ref, "configured-fallback", "resolved");
   }
 
   if (params.fallbacksOverride === undefined && primary?.provider && primary.model) {
-    addCandidate(
-      normalizeCandidateRef(primary.provider, primary.model),
-      "configured-primary",
-      "resolved",
-    );
+    addCandidate(primary, "configured-primary", "resolved");
   }
   return candidates;
 }

@@ -51,6 +51,7 @@ import {
 } from "./command/post-run.js";
 import {
   prepareAgentCommandExecution,
+  withPreparedAgentCommandRuntime,
   type PreparedAgentCommandRuntimeContext,
 } from "./command/prepare.js";
 import { runEmbeddedAgentAttempt } from "./command/run-embedded-attempt.js";
@@ -67,7 +68,6 @@ import { createInternalSessionEffectsCleanup } from "./internal-session-effects.
 import { AGENT_LANE_SUBAGENT } from "./lanes.js";
 import type { MainSessionRecoveryPendingTarget } from "./main-session-recovery/main-session-recovery-store.js";
 import { createAgentRunRestartAbortError } from "./run-termination.js";
-import { withAgentPluginRegistry } from "./runtime-plugins.js";
 import { beginForegroundSessionMaintenance } from "./session-maintenance/coordinator.js";
 import {
   scheduleSessionMaintenance,
@@ -468,6 +468,7 @@ async function agentCommandInternal(
             pluginsEnabled,
             manifestMetadataSnapshot,
             modelManifestContext,
+            configuredModel: prepared.configuredModel,
             configuredThinkingCatalog,
             requestedThinkLevel,
             thinkOverride,
@@ -657,13 +658,7 @@ async function agentCommandFromIngressInternal(
               deps,
               true,
             );
-          return generation
-            ? await run()
-            : await withAgentPluginRegistry({
-                config: prepared.cfg,
-                workspaceDir: prepared.workspaceDir,
-                run,
-              });
+          return await withPreparedAgentCommandRuntime(prepared.commandRuntimeContext, run);
         },
       });
 

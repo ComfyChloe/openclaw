@@ -48,6 +48,7 @@ export async function runEmbeddedFallbackCandidate(
     notifyUserAboutCompaction: boolean;
     messageToolDeliveryState: MessageToolDeliveryState;
     githubPublicationAvailable: boolean;
+    onConfiguredDefault?: RunEmbeddedAgentInternalParams["onConfiguredDefault"];
     onCompactionFacts: (facts: {
       accounting?: CompactionAccountingFact;
       postCompactionModelAttempted: boolean;
@@ -233,6 +234,7 @@ export async function runEmbeddedFallbackCandidate(
         abortSignal: params.runAbortSignal,
         replyOperation: turn.replyOperation,
         deferTerminalLifecycle: true,
+        onConfiguredDefault: params.onConfiguredDefault,
         onCompactionAccounting: (fact) => {
           compactionAccounting = fact;
         },

@@ -33,31 +33,10 @@ import { dedupeByKey } from "../../shared/dedupe-by-key.js";
 import { DEFAULT_CONTEXT_TOKENS } from "../defaults.js";
 import { buildInlineProviderModels, type InlineModelEntry } from "./model.inline-provider.js";
 import type { BundledStaticCatalogState } from "./model.static-catalog.types.js";
-import {
-  createStaticModelIdMatcher,
-  staticModelIdMatches,
-  type StaticModelIdMatcher,
-} from "./model.static-id.js";
+import { findStaticModel } from "./model.static-id.js";
 
 export { resolveManifestModelCatalogProviderAliasMetadata } from "./model.manifest-alias.js";
 export type { ManifestModelCatalogProviderAliasMetadata } from "./model.manifest-alias.js";
-
-/**
- * Resolves bundled plugin static model-catalog rows into runtime model records.
- */
-function rowMatchesModel(params: {
-  row: NormalizedModelCatalogRow;
-  provider: string;
-  modelId: string;
-  matchesStaticModelId: StaticModelIdMatcher;
-}): boolean {
-  return params.matchesStaticModelId({
-    candidateId: params.row.id,
-    provider: params.provider,
-    modelId: params.modelId,
-    rowProvider: params.row.provider,
-  });
-}
 
 function normalizeStaticCatalogInput(
   input: readonly unknown[] | undefined,
@@ -198,7 +177,7 @@ function resolveBundledStaticCatalogState(
   }
   const state = {
     plugins: listBundledStaticCatalogPlugins(params, metadataSnapshot),
-    plans: new Map<string, ReturnType<typeof planEffectiveModelCatalogRows>>(),
+    models: new Map<string, ReadonlyMap<string, NormalizedModelCatalogRow>>(),
   };
   states.set(config, state);
   return state;
@@ -245,9 +224,6 @@ export function createBundledStaticCatalogModelResolver(params?: {
     ...(params?.metadataSnapshot ? { metadataSnapshot: params.metadataSnapshot } : {}),
     workspaceDir: params?.workspaceDir,
   };
-  const matchesStaticModelId = params?.metadataSnapshot
-    ? createStaticModelIdMatcher({ manifestPlugins: params.metadataSnapshot })
-    : staticModelIdMatches;
   return (lookup) => {
     const provider = normalizeProviderId(lookup.provider);
     if (!provider || !lookup.modelId.trim()) {
@@ -258,38 +234,38 @@ export function createBundledStaticCatalogModelResolver(params?: {
     if (state.plugins.length === 0) {
       return undefined;
     }
-    let plan = state.plans.get(provider);
-    if (!plan) {
-      plan = planEffectiveModelCatalogRows({
+    // Discovery modes share metadata ownership, never a filtered row index.
+    const key = `${provider}\0${params?.includeRuntimeDiscovery === true}`;
+    let models = state.models.get(key);
+    if (!models) {
+      const plan = planEffectiveModelCatalogRows({
         registry: { plugins: state.plugins },
         config: params?.cfg ?? {},
         providerFilter: provider,
       });
-      state.plans.set(provider, plan);
-    }
-    for (const entry of plan.entries) {
-      if (
-        entry.discovery !== "static" &&
-        !(
-          params?.includeRuntimeDiscovery &&
-          (entry.discovery === "runtime" || entry.discovery === "refreshable")
-        )
-      ) {
-        continue;
+      const indexed = new Map<string, NormalizedModelCatalogRow>();
+      const admittedRows = new Set(plan.rows);
+      for (const entry of plan.entries) {
+        if (
+          entry.discovery !== "static" &&
+          !(
+            params?.includeRuntimeDiscovery &&
+            (entry.discovery === "runtime" || entry.discovery === "refreshable")
+          )
+        ) {
+          continue;
+        }
+        for (const row of entry.rows) {
+          if (admittedRows.has(row) && normalizeProviderId(row.provider) === provider) {
+            indexed.set(row.id, row);
+          }
+        }
       }
-      const row = entry.rows.find((candidate: NormalizedModelCatalogRow) =>
-        rowMatchesModel({
-          row: candidate,
-          provider,
-          modelId: lookup.modelId,
-          matchesStaticModelId,
-        }),
-      );
-      if (row) {
-        return modelFromStaticCatalogRow(row);
-      }
+      state.models.set(key, indexed);
+      models = indexed;
     }
-    return undefined;
+    const row = models.get(lookup.modelId.trim());
+    return row ? modelFromStaticCatalogRow(row) : undefined;
   };
 }
 
@@ -531,9 +507,6 @@ function createScopedBundledProviderStaticCatalogModelResolver(
   scopedPluginIds?: string[],
 ) => Promise<ProviderRuntimeModel | undefined> {
   const env = params.env ?? process.env;
-  const matchesStaticModelId = params.metadataSnapshot
-    ? createStaticModelIdMatcher({ manifestPlugins: params.metadataSnapshot })
-    : staticModelIdMatches;
   const pluginCatalogs = new Map<string, Promise<Map<string, ProviderRuntimeModel[]>>>();
   const providerPluginIds = new Map<string, string[]>();
   return async (lookup, scopedPluginIds) => {
@@ -578,13 +551,7 @@ function createScopedBundledProviderStaticCatalogModelResolver(
       });
       pluginCatalogs.set(catalogKey, catalog);
     }
-    return ((await catalog).get(provider) ?? []).find((candidate) =>
-      matchesStaticModelId({
-        candidateId: candidate.id,
-        provider,
-        modelId: lookup.modelId,
-      }),
-    );
+    return findStaticModel((await catalog).get(provider) ?? [], provider, lookup.modelId);
   };
 }
 

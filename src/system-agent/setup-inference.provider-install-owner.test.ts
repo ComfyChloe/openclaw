@@ -39,9 +39,14 @@ afterEach(() => {
   resetPluginLoaderTestStateForTest();
 });
 
-it.each([false, true])(
-  "binds a newly installed provider to its real artifact (replace during probe: %s)",
-  async (replaceDuringProbe) => {
+it.each([
+  { replaceDuringProbe: false, normalizeStarter: false },
+  { replaceDuringProbe: true, normalizeStarter: false },
+  { replaceDuringProbe: false, normalizeStarter: true },
+  { replaceDuringProbe: true, normalizeStarter: true },
+])(
+  "binds installed artifacts (replace=$replaceDuringProbe, normalize=$normalizeStarter)",
+  async ({ replaceDuringProbe, normalizeStarter }) => {
     await withOpenClawTestState(
       {
         label: "provider-install-owner",
@@ -51,8 +56,9 @@ it.each([false, true])(
         const source: OpenClawConfig = {
           gateway: { mode: "local" },
           agents: {
-            defaults: { workspace: state.workspaceDir },
-            entries: { main: { default: true, workspace: state.workspaceDir } },
+            ownership: "explicit",
+            defaults: { workspace: state.workspaceDir, systemAgent: { agentId: "main" } },
+            entries: { main: { workspace: state.workspaceDir } },
           },
           plugins: { entries: {} },
         };
@@ -71,6 +77,10 @@ it.each([false, true])(
         const projectRoot = state.statePath("npm", "projects", "fixture-provider");
         const pluginRoot = path.join(projectRoot, "node_modules", "@fixture", "provider");
         const pluginEntry = path.join(pluginRoot, "index.cjs");
+        const selectedModel = normalizeStarter ? "Middle" : "fixture-model";
+        const normalizeModelId = vi.fn(({ modelId }: { modelId: string }) =>
+          modelId === "latest" ? "Middle" : modelId === "Middle" ? "Wrong" : modelId,
+        );
         const pluginSource = `module.exports = {
         id: "fixture-provider", register(api) {
           api.registerProvider({ id: "fixture-provider", label: "Fixture", auth: [] });
@@ -112,6 +122,34 @@ it.each([false, true])(
               id: "fixture-provider",
               providers: ["fixture-provider"],
               configSchema: { type: "object", properties: {}, additionalProperties: false },
+              ...(normalizeStarter
+                ? {
+                    modelIdNormalization: {
+                      providers: {
+                        "fixture-provider": { aliases: { latest: "Middle", middle: "Wrong" } },
+                      },
+                    },
+                    modelCatalog: {
+                      providers: {
+                        "fixture-provider": {
+                          api: "openai-completions",
+                          baseUrl: "https://provider.example/v1",
+                          models: ["Middle", "Wrong"].map((id) => ({
+                            id,
+                            name: id,
+                            api: "openai-completions",
+                            input: ["text"],
+                            reasoning: false,
+                            contextWindow: 8192,
+                            maxTokens: 256,
+                            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+                          })),
+                        },
+                      },
+                      discovery: { "fixture-provider": "static" },
+                    },
+                  }
+                : {}),
             }),
           );
           await fs.writeFile(pluginEntry, pluginSource);
@@ -148,11 +186,16 @@ it.each([false, true])(
           };
           return {
             config,
-            agentModelOverride: "fixture-provider/fixture-model",
+            agentModelOverride: `fixture-provider/${normalizeStarter ? "latest" : selectedModel}`,
             authProfiles: [],
             pendingPluginInstalls: { "fixture-provider": trustedRecord },
             persistAuthProfiles: async () => {},
-            provider: { id: "fixture-provider", label: "Fixture", auth: [] },
+            provider: {
+              id: "fixture-provider",
+              label: "Fixture",
+              auth: [],
+              ...(normalizeStarter ? { normalizeModelId } : {}),
+            },
           };
         });
         const capture = vi.fn(captureSystemAgentOwnerPluginArtifacts);
@@ -162,7 +205,7 @@ it.each([false, true])(
             params.onSuccessfulAuthBinding?.({
               authFingerprint,
               agentHarnessId: "openclaw",
-              modelId: "fixture-model",
+              modelId: selectedModel,
               modelApi: "openai-completions",
             });
             if (replaceDuringProbe) {
@@ -174,7 +217,7 @@ it.each([false, true])(
                 finalAssistantVisibleText: "OK",
                 executionTrace: {
                   winnerProvider: "fixture-provider",
-                  winnerModel: "fixture-model",
+                  winnerModel: selectedModel,
                 },
               },
             };
@@ -217,6 +260,19 @@ it.each([false, true])(
             });
             expect(onPreparationComplete).toHaveBeenCalledOnce();
             expect(runEmbeddedAgent).toHaveBeenCalledOnce();
+            expect(runEmbeddedAgent).toHaveBeenCalledWith(
+              expect.objectContaining({
+                model: selectedModel,
+                requestedRouteResolution: "resolved",
+              }),
+            );
+            if (normalizeStarter) {
+              expect(normalizeModelId).toHaveBeenCalledOnce();
+              expect(normalizeModelId).toHaveBeenCalledWith({
+                provider: "fixture-provider",
+                modelId: "latest",
+              });
+            }
             expect(capture).toHaveBeenCalledOnce();
             const staged = capture.mock.results[0]?.value;
             expect(staged?.ownerPluginIds).toEqual(["fixture-provider"]);
@@ -243,7 +299,7 @@ it.each([false, true])(
             } else {
               expect(result).toMatchObject({
                 ok: true,
-                modelRef: "fixture-provider/fixture-model",
+                modelRef: `fixture-provider/${selectedModel}`,
               });
               // The running generation intentionally retains its pre-install cache.
               const records = await withPluginLifecycleLease({}, () =>
@@ -261,6 +317,170 @@ it.each([false, true])(
             expect(runningMetadata.byPluginId.has("fixture-provider")).toBe(false);
           },
         );
+      },
+    );
+  },
+);
+
+it.each([
+  { primary: "Middle", requested: "Middle", outcome: "success" },
+  { primary: "fast", requested: "fast", outcome: "success" },
+  { primary: "latest", requested: "latest", outcome: "success" },
+  { primary: "Middle", requested: "Wrong", outcome: "requested-drift" },
+  { primary: "latest", requested: "latest", outcome: "config-drift" },
+] as const)(
+  "activates existing $primary selection with $outcome",
+  async ({ primary, requested, outcome }) => {
+    await withOpenClawTestState(
+      { label: "existing-setup-selection", env: { OPENCLAW_DISABLE_BUNDLED_PLUGINS: "1" } },
+      async (state) => {
+        const pluginRoot = state.statePath("extensions", "fixture-existing");
+        await fs.mkdir(pluginRoot, { recursive: true });
+        await fs.writeFile(
+          path.join(pluginRoot, "package.json"),
+          JSON.stringify({
+            name: "@fixture/existing",
+            version: "1.0.0",
+            openclaw: { extensions: ["./index.cjs"] },
+          }),
+        );
+        await fs.writeFile(
+          path.join(pluginRoot, "index.cjs"),
+          'module.exports={id:"fixture-existing",register(api){api.registerProvider({id:"fixture-provider",label:"Fixture",auth:[]});}};',
+        );
+        await fs.writeFile(
+          path.join(pluginRoot, "openclaw.plugin.json"),
+          JSON.stringify({
+            id: "fixture-existing",
+            providers: ["fixture-provider"],
+            configSchema: { type: "object", properties: {}, additionalProperties: false },
+            modelIdNormalization: {
+              providers: { "fixture-provider": { aliases: { latest: "Middle", middle: "Wrong" } } },
+            },
+            modelCatalog: {
+              providers: {
+                "fixture-provider": {
+                  api: "openai-completions",
+                  baseUrl: "https://provider.example/v1",
+                  models: ["Middle", "Wrong"].map((id) => ({
+                    id,
+                    name: id,
+                    api: "openai-completions",
+                    input: ["text"],
+                    reasoning: false,
+                    contextWindow: 8192,
+                    maxTokens: 256,
+                    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+                  })),
+                },
+              },
+              discovery: { "fixture-provider": "static" },
+            },
+          }),
+        );
+        const source: OpenClawConfig = {
+          agents: {
+            ownership: "explicit",
+            defaults: {
+              systemAgent: { agentId: "main" },
+              workspace: state.workspaceDir,
+              model: primary === "fast" ? primary : `fixture-provider/${primary}`,
+              models: {
+                "fixture-provider/Middle": { alias: "fast", agentRuntime: { id: "openclaw" } },
+              },
+            },
+            entries: { main: { workspace: state.workspaceDir } },
+          },
+          models: {
+            providers: {
+              "fixture-provider": {
+                baseUrl: "https://provider.example/v1",
+                api: "openai-completions",
+                apiKey: "synthetic-existing-key",
+                models: [],
+              },
+            },
+          },
+          plugins: {
+            allow: ["fixture-existing"],
+            load: { paths: [pluginRoot] },
+            slots: { memory: "none" },
+            entries: { "fixture-existing": { enabled: true } },
+          },
+        };
+        await state.writeConfig(source);
+        expect((await readConfigFileSnapshot()).valid).toBe(true);
+        const originalBytes = await fs.readFile(state.configPath, "utf8");
+        const resolvedAuth = {
+          apiKey: "synthetic-existing-key",
+          source: "config",
+          mode: "api-key" as const,
+        };
+        const authFingerprint = fingerprintResolvedProviderAuth(resolvedAuth);
+        if (!authFingerprint) {
+          throw new Error("Synthetic credential has no fingerprint");
+        }
+        const runEmbeddedAgent = vi.fn<NonNullable<ActivateSetupInferenceDeps["runEmbeddedAgent"]>>(
+          async (params) => {
+            params.onSuccessfulAuthBinding?.({
+              authFingerprint,
+              agentHarnessId: "openclaw",
+              modelId: "Middle",
+              modelApi: "openai-completions",
+            });
+            if (outcome === "config-drift") {
+              await state.writeConfig({
+                ...source,
+                agents: {
+                  ...source.agents,
+                  defaults: { ...source.agents?.defaults, model: "fixture-provider/Wrong" },
+                },
+              });
+            }
+            return {
+              meta: {
+                durationMs: 1,
+                finalAssistantVisibleText: "OK",
+                executionTrace: { winnerProvider: "fixture-provider", winnerModel: "Middle" },
+              },
+            };
+          },
+        );
+        const result = await activateSetupInference({
+          kind: "existing-model",
+          modelRef: requested === "fast" ? requested : `fixture-provider/${requested}`,
+          agentId: "main",
+          workspace: state.workspaceDir,
+          surface: "cli",
+          runtime: createNonExitingRuntime(),
+          deps: { resolveApiKeyForProvider: async () => resolvedAuth, runEmbeddedAgent },
+        });
+        if (outcome === "success") {
+          expect(result).toMatchObject({ ok: true, modelRef: "fixture-provider/Middle" });
+        } else {
+          expect(result).toMatchObject({
+            ok: false,
+            status: outcome === "requested-drift" ? "unavailable" : "unknown",
+            error: expect.stringContaining(
+              outcome === "requested-drift"
+                ? "configured default model changed"
+                : "route changed during its live test",
+            ),
+          });
+        }
+        expect(runEmbeddedAgent).toHaveBeenCalledTimes(outcome === "requested-drift" ? 0 : 1);
+        if (outcome !== "requested-drift") {
+          expect(runEmbeddedAgent).toHaveBeenCalledWith(
+            expect.objectContaining({
+              provider: "fixture-provider",
+              model: "Middle",
+              requestedRouteResolution: "resolved",
+            }),
+          );
+        }
+        if (outcome !== "config-drift") {
+          expect(await fs.readFile(state.configPath, "utf8")).toBe(originalBytes);
+        }
       },
     );
   },

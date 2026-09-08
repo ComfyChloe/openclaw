@@ -430,10 +430,7 @@ function isGatewayModelExplicitlyConfiguredTextOnly(params: {
   const configuredModel = findNormalizedProviderValue(
     params.snapshot.config.models?.providers,
     params.provider,
-  )?.models?.find(
-    (model) =>
-      normalizeLowercaseStringOrEmpty(model.id) === normalizeLowercaseStringOrEmpty(params.model),
-  );
+  )?.models?.find((model) => model.id.trim() === params.model.trim());
   return configuredModel?.input !== undefined && !configuredModel.input.includes("image");
 }
 
@@ -474,9 +471,9 @@ function resolveGatewayProviderStaticModel(params: {
     params.snapshot.config.models?.providers,
     params.provider,
   );
-  const normalizedModelId = normalizeLowercaseStringOrEmpty(params.model);
+  const normalizedModelId = params.model.trim();
   const configuredModel = configuredProvider?.models?.find(
-    (model) => normalizeLowercaseStringOrEmpty(model.id) === normalizedModelId,
+    (model) => model.id.trim() === normalizedModelId,
   );
   const configuredApi = configuredModel?.api ?? configuredProvider?.api;
   if (configuredApi && configuredApi !== staticEntry.api) {

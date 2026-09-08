@@ -6,6 +6,7 @@ import {
   createPluginManifestRecordFixture,
   createPluginMetadataSnapshotFixture,
 } from "../plugins/plugin-metadata.test-support.js";
+import { makeModel } from "./embedded-agent-runner/model.test-harness.js";
 import { resolveOAuthApiKeyMarker } from "./model-auth-markers.js";
 import {
   buildPreparedModelCatalogSnapshot,
@@ -15,6 +16,8 @@ import {
   modelSupportsVision,
 } from "./model-catalog.js";
 import type { ModelCatalogEntry, ModelCatalogSnapshot } from "./model-catalog.types.js";
+import { buildConfiguredModelCatalog } from "./model-selection-shared.js";
+import { prepareConfiguredRuntimeFacts } from "./prepared-model-runtime.configured-catalog.js";
 import type { ModelRegistry } from "./sessions/index.js";
 
 type AugmentModelCatalogWithProviderPlugins =
@@ -39,11 +42,19 @@ function providerManifestSnapshot(params: {
   discovery: "static" | "refreshable" | "runtime";
   modelIds: string[];
   aliases?: string[];
+  modelAliases?: Record<string, string>;
 }): PluginMetadataSnapshot {
   const plugin = createPluginManifestRecordFixture({
     id: params.provider,
     origin: "bundled",
     providers: [params.provider],
+    ...(params.modelAliases
+      ? {
+          modelIdNormalization: {
+            providers: { [params.provider]: { aliases: params.modelAliases } },
+          },
+        }
+      : {}),
     modelCatalog: {
       aliases: Object.fromEntries(
         (params.aliases ?? []).map((alias) => [alias, { provider: params.provider }]),
@@ -113,6 +124,129 @@ describe("prepared model catalog builder", () => {
       expect(snapshot.entries).toMatchObject(entries);
       expect(snapshot.routeVariants).toMatchObject(entries);
       expect(snapshot.authoritative).toBe(status === "ready");
+    },
+  );
+
+  const aliasChainSnapshot = createPluginMetadataSnapshotFixture({
+    plugins: [
+      {
+        id: "identity-normalizer",
+        modelIdNormalization: {
+          providers: { custom: { aliases: { latest: "middle", middle: "final" } } },
+        },
+      },
+    ],
+  });
+
+  it.each([false, true])(
+    "keeps exact configured capabilities within normalized catalog membership (reversed=%s)",
+    (reverse) => {
+      const models = [
+        makeModel("latest"),
+        { ...makeModel("middle"), input: ["text", "image"] },
+        makeModel("final"),
+      ] satisfies ModelDefinitionConfig[];
+      const catalog = buildConfiguredModelCatalog({
+        cfg: {
+          models: {
+            providers: {
+              custom: {
+                baseUrl: "https://models.example.test",
+                models: reverse ? models.toReversed() : models,
+              },
+            },
+          },
+        },
+        manifestPlugins: aliasChainSnapshot,
+      });
+      expect(catalog.find((row) => row.id === "middle")?.input).toEqual(["text", "image"]);
+      expect(catalog.find((row) => row.id === "final")?.input).toEqual(["text"]);
+      expect(catalog.map((row) => row.id).toSorted()).toEqual(["final", "middle"]);
+    },
+  );
+
+  it("keeps alias-only configured catalog membership canonical", () => {
+    const catalog = buildConfiguredModelCatalog({
+      cfg: {
+        models: {
+          providers: {
+            custom: {
+              baseUrl: "https://models.example.test",
+              models: [{ ...makeModel("latest"), input: ["text", "image"] }],
+            },
+          },
+        },
+      },
+      manifestPlugins: aliasChainSnapshot,
+    });
+    expect(catalog).toMatchObject([{ id: "middle", input: ["text", "image"] }]);
+    expect(catalog).toHaveLength(1);
+  });
+
+  it("preserves executable registry identities that are also input aliases", async () => {
+    const snapshot = await build({
+      entries: [{ provider: "custom", id: "middle", name: "Middle", input: ["text", "image"] }],
+      metadataSnapshot: aliasChainSnapshot,
+    });
+    expect(snapshot.entries).toMatchObject([{ id: "middle", input: ["text", "image"] }]);
+    expect(snapshot.entries).toHaveLength(1);
+  });
+
+  it("keeps runtime catalog entitlement attached to emitted identities", async () => {
+    mocks.augmentModelCatalogWithProviderPlugins.mockResolvedValueOnce([
+      { provider: "custom", id: "latest", name: "Enriched middle", contextWindow: 64000 },
+      { provider: "custom", id: "denied", name: "Unobserved model", contextWindow: 128000 },
+    ]);
+    const snapshot = await build({
+      entries: [{ provider: "custom", id: "middle", name: "Middle", contextWindow: 32000 }],
+      metadataSnapshot: providerManifestSnapshot({
+        provider: "custom",
+        discovery: "runtime",
+        modelIds: ["middle", "final", "denied"],
+        modelAliases: { latest: "middle", middle: "final" },
+      }),
+      readOnly: false,
+    });
+    expect(snapshot.entries).toMatchObject([{ id: "middle", contextWindow: 64000 }]);
+    expect(snapshot.entries).toHaveLength(1);
+  });
+
+  it.each([
+    { configured: false, reverse: false },
+    { configured: false, reverse: true },
+    { configured: true, reverse: false },
+    { configured: true, reverse: true },
+  ])(
+    "keeps case-distinct catalog capabilities separate (configured=$configured, reversed=$reverse)",
+    async ({ configured, reverse }) => {
+      const models = [
+        makeModel("Model"),
+        { ...makeModel("model"), input: ["text", "image"] },
+      ] satisfies ModelDefinitionConfig[];
+      const rows = reverse ? models.toReversed() : models;
+      const entries = rows.map((row) => ({ ...row, provider: "custom" }));
+      const snapshot = configured
+        ? prepareConfiguredRuntimeFacts({
+            agentFacts: { configuredModelRefs: [] },
+            workspaceFacts: { configuredCatalogEntries: entries, inlineProviderModels: [] },
+            templateModelRegistry: registry([]),
+            configuredRuntimeModels: [],
+          }).modelCatalog
+        : await build({
+            config: {
+              models: {
+                providers: { custom: { baseUrl: "https://models.example.test", models: rows } },
+              },
+            },
+            entries,
+          });
+      expect(snapshot.entries).toHaveLength(2);
+      expect(
+        findModelCatalogEntry(snapshot.entries, { provider: "CUSTOM", modelId: "Model" })?.input,
+      ).toEqual(["text"]);
+      expect(
+        findModelCatalogEntry(snapshot.entries, { provider: "CUSTOM", modelId: "model" })?.input,
+      ).toEqual(["text", "image"]);
     },
   );
 

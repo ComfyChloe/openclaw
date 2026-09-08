@@ -240,6 +240,86 @@ describe("runEmbeddedAgentViaCliBackendIfEligible gate", () => {
   const runGate = (overrides: Partial<CliDispatchParams> = {}) =>
     runEmbeddedAgentViaCliBackendIfEligible(baseRunParams(overrides));
 
+  it.each([
+    {
+      provider: undefined,
+      model: "claude-cli/opus",
+      requestedRouteResolution: "raw",
+      expectedModel: "opus",
+    },
+    { provider: undefined, model: "fast", requestedRouteResolution: "raw", expectedModel: "opus" },
+    {
+      provider: "claude-cli",
+      model: "fast",
+      requestedRouteResolution: "raw",
+      expectedModel: "fast",
+    },
+    {
+      provider: "claude-cli",
+      model: undefined,
+      requestedRouteResolution: "raw",
+      expectedModel: undefined,
+    },
+    {
+      provider: "anthropic",
+      model: "opus",
+      requestedRouteResolution: "raw",
+      expectedModel: "claude-opus-5",
+    },
+    {
+      provider: "anthropic",
+      model: "opus",
+      requestedRouteResolution: undefined,
+      expectedModel: "claude-opus-5",
+    },
+    {
+      provider: "anthropic",
+      model: "opus",
+      requestedRouteResolution: "resolved",
+      expectedModel: "opus",
+    },
+    {
+      provider: "claude-cli",
+      model: "claude-cli/opus",
+      requestedRouteResolution: "resolved",
+      expectedModel: "claude-cli/opus",
+    },
+  ] as const)(
+    "keeps $requestedRouteResolution model $model on its CLI owner",
+    async ({ expectedModel, ...selection }) => {
+      if (selection.provider === "anthropic") {
+        resolveCliRuntimeExecutionProvider.mockReturnValue("claude-cli");
+      }
+      await expect(
+        runGate({
+          ...selection,
+          ...(selection.model === "fast"
+            ? {
+                config: {
+                  agents: {
+                    entries: { main: { models: { "claude-cli/opus": { alias: "fast" } } } },
+                  },
+                },
+              }
+            : {}),
+        }),
+      ).resolves.toBeDefined();
+      expect(runCliAgent).toHaveBeenCalledWith(
+        expect.objectContaining({ provider: "claude-cli", model: expectedModel }),
+      );
+    },
+  );
+
+  it("retains the caller's raw pair when credential mode keeps the embedded path", async () => {
+    resolveCliRuntimeExecutionProvider.mockReturnValue("claude-cli");
+    resolveModelAuthMode.mockReturnValue("api-key");
+    const params = Object.freeze(baseRunParams({ provider: "anthropic", model: "opus" }));
+
+    expect(await runEmbeddedAgentViaCliBackendIfEligible(params)).toBeUndefined();
+    expect(params).toMatchObject({ provider: "anthropic", model: "opus" });
+    expect(runCliAgent).not.toHaveBeenCalled();
+  });
+
   it("returns undefined without the opt-in", async () => {
     expect(await runGate({ cliBackendDispatch: undefined })).toBeUndefined();
     expect(resolveModelAuthMode).not.toHaveBeenCalled();

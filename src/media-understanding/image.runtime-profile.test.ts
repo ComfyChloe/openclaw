@@ -568,11 +568,11 @@ describe("describeImageWithModelCore", () => {
       expect.objectContaining({
         workspaceDir: "/tmp/openclaw-workspace",
         loadRuntimePlugins: true,
-        runtimePluginSelections: [
-          { provider: "google", modelId: "gemini-2.5-flash", agentId: "vision-agent" },
-        ],
       }),
-      { catalogMode: "static", abortSignal: expect.any(AbortSignal) },
+      expect.objectContaining({
+        catalogMode: "static",
+        abortSignal: expect.any(AbortSignal),
+      }),
     );
     expect(resolveModelAsyncMock).toHaveBeenCalledWith(
       "google",
@@ -599,6 +599,7 @@ describe("describeImageWithModelCore", () => {
         config: committedCfg,
         workspaceDir: "/tmp/committed-workspace",
         metadataSnapshot,
+        modelCatalog: { entries: [] },
         createStores: () => ({
           authStorage: preparedAuthStorage,
           modelRegistry: {},
@@ -656,6 +657,7 @@ describe("describeImageWithModelCore", () => {
       agentDir: "/tmp/committed-agent",
       workspaceDir: "/tmp/committed-workspace",
       wrapProviderStream: true,
+      capability: "image",
     });
     expect(resolveProviderRuntimePluginHandleMock).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -690,6 +692,7 @@ describe("describeImageWithModelCore", () => {
       config: cfg,
       workspaceDir: "/tmp/parent-workspace",
       metadataSnapshot: createEmptyPluginMetadataSnapshot("/tmp/parent-workspace"),
+      modelCatalog: { entries: [] },
       configuredRuntimeModels: [],
       inlineProviderModels: [],
       createStores: () => ({ authStorage: preparedAuthStorage, modelRegistry: {} }),

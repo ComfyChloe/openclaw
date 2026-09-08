@@ -1,4 +1,5 @@
 import type { AgentInternalEvent } from "../../agents/internal-events.js";
+import type { ModelFallbackRouteResolution } from "../../agents/model-fallback.types.js";
 import type { InputProvenance } from "../../sessions/input-provenance.js";
 
 export type AgentRunRequest = {
@@ -6,6 +7,7 @@ export type AgentRunRequest = {
   agentId?: string;
   provider?: string;
   model?: string;
+  requestedRouteResolution?: ModelFallbackRouteResolution;
   to?: string;
   replyTo?: string;
   sessionId?: string;

@@ -53,11 +53,15 @@ export function resolveAllowedModelRefCore(
   | {
       error: string;
     } {
+  const normalization = {
+    manifestPlugins: params.manifestPlugins,
+    resolvedModelCatalog: params.resolvedModelCatalog ?? params.catalog,
+  };
   const aliasIndex = buildModelAliasIndex({
     cfg: params.cfg,
     defaultProvider: params.defaultProvider,
     agentId: params.agentId,
-    manifestPlugins: params.manifestPlugins,
+    ...normalization,
   });
   return resolveAllowedModelRefFromAliasIndex({
     cfg: params.cfg,
@@ -65,7 +69,7 @@ export function resolveAllowedModelRefCore(
     defaultProvider: params.defaultProvider,
     agentId: params.agentId,
     aliasIndex,
-    manifestPlugins: params.manifestPlugins,
+    ...normalization,
     getStatus: (ref) =>
       getModelRefStatus({
         cfg: params.cfg,
@@ -74,7 +78,7 @@ export function resolveAllowedModelRefCore(
         defaultProvider: params.defaultProvider,
         defaultModel: params.defaultModel,
         agentId: params.agentId,
-        manifestPlugins: params.manifestPlugins,
+        ...normalization,
       }),
   });
 }

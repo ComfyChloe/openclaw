@@ -11,6 +11,10 @@ import {
 } from "../../media-understanding/defaults.js";
 import { matchesMediaEntryCapability } from "../../media-understanding/entry-capabilities.js";
 import {
+  describeImageWithResolvedModel,
+  describeImagesWithResolvedModel,
+} from "../../media-understanding/image-runtime.js";
+import {
   buildMediaUnderstandingRegistry as buildProviderRegistry,
   getMediaUnderstandingProvider,
 } from "../../media-understanding/provider-registry.js";
@@ -24,11 +28,7 @@ import type {
   ImageCompressionPolicy,
   WebMediaResult,
 } from "../../media/web-media.js";
-import {
-  describeImageWithModel,
-  describeImagesWithModel,
-  type MediaUnderstandingProvider,
-} from "../../plugin-sdk/media-understanding.js";
+import type { MediaUnderstandingProvider } from "../../plugin-sdk/media-understanding.js";
 import { resolvePluginCapabilityProvider } from "../../plugins/capability-provider-runtime.js";
 import type { ProviderRuntimeModel } from "../../plugins/provider-runtime-model.types.js";
 import { resolveUserPath } from "../../utils.js";
@@ -127,8 +127,8 @@ function resolveRegisteredMediaUnderstandingProvider(params: {
 const imageToolProviderDeps = {
   buildProviderRegistry,
   getMediaUnderstandingProvider,
-  describeImageWithModel,
-  describeImagesWithModel,
+  describeImageWithResolvedModel,
+  describeImagesWithResolvedModel,
   resolveAutoMediaKeyProviders,
   resolveDefaultMediaModel,
   resolveModelAsync: resolveModelAsyncDefault,
@@ -190,8 +190,8 @@ const testing = {
   setProviderDepsForTest(overrides?: {
     buildProviderRegistry?: typeof buildProviderRegistry;
     getMediaUnderstandingProvider?: typeof getMediaUnderstandingProvider;
-    describeImageWithModel?: typeof describeImageWithModel;
-    describeImagesWithModel?: typeof describeImagesWithModel;
+    describeImageWithResolvedModel?: typeof describeImageWithResolvedModel;
+    describeImagesWithResolvedModel?: typeof describeImagesWithResolvedModel;
     resolveAutoMediaKeyProviders?: typeof resolveAutoMediaKeyProviders;
     resolveDefaultMediaModel?: typeof resolveDefaultMediaModel;
     resolveModelAsync?: ResolveModelAsync;
@@ -203,10 +203,10 @@ const testing = {
       overrides?.buildProviderRegistry ?? buildProviderRegistry;
     imageToolProviderDeps.getMediaUnderstandingProvider =
       overrides?.getMediaUnderstandingProvider ?? getMediaUnderstandingProvider;
-    imageToolProviderDeps.describeImageWithModel =
-      overrides?.describeImageWithModel ?? describeImageWithModel;
-    imageToolProviderDeps.describeImagesWithModel =
-      overrides?.describeImagesWithModel ?? describeImagesWithModel;
+    imageToolProviderDeps.describeImageWithResolvedModel =
+      overrides?.describeImageWithResolvedModel ?? describeImageWithResolvedModel;
+    imageToolProviderDeps.describeImagesWithResolvedModel =
+      overrides?.describeImagesWithResolvedModel ?? describeImagesWithResolvedModel;
     imageToolProviderDeps.resolveAutoMediaKeyProviders =
       overrides?.resolveAutoMediaKeyProviders ?? resolveAutoMediaKeyProviders;
     imageToolProviderDeps.resolveDefaultMediaModel =
@@ -550,14 +550,8 @@ function matchesImageTimeoutEntry(params: {
     return false;
   }
   const configuredModel = params.entry.model?.trim();
-  if (!configuredModel) {
-    return true;
-  }
-  const providerPrefix = `${selectedProvider}/`;
-  const normalizedConfiguredModel = configuredModel.startsWith(providerPrefix)
-    ? configuredModel.slice(providerPrefix.length)
-    : configuredModel;
-  return normalizedConfiguredModel === params.model;
+  // Structured entries already carry a provider; their model ID retains its namespace.
+  return !configuredModel || configuredModel === params.model;
 }
 
 function resolveImageToolTimeoutMs(params: {
@@ -607,7 +601,7 @@ async function runImagePrompt(params: {
 
   const result = await runWithImageModelFallback({
     cfg: effectiveCfg,
-    modelOverride: params.modelOverride,
+    modelOverride: resolveImageModelConfigForOverride(params)?.primary,
     abortSignal: params.signal,
     run: async (provider, modelId) => {
       // The fallback candidate owns runtime loading; an unrelated media plugin must not
@@ -637,12 +631,31 @@ async function runImagePrompt(params: {
         provider,
         providerRegistry,
       );
+      // Each dispatch copies the selected fallback's owner and request budget.
+      const request = {
+        provider,
+        model: modelId,
+        prompt: params.prompt,
+        maxTokens: resolveImageToolMaxTokens(undefined),
+        timeoutMs,
+        ...(params.signal ? { signal: params.signal } : {}),
+        cfg: providerCfg,
+        ...(params.agentId ? { agentId: params.agentId } : {}),
+        agentDir: params.agentDir,
+        authStore: params.authStore,
+        ...(params.workspaceDir ? { workspaceDir: params.workspaceDir } : {}),
+        ...(params.preparedModelRuntime
+          ? { preparedModelRuntime: params.preparedModelRuntime }
+          : {}),
+      };
       if (
         params.images.length > 1 &&
-        (imageProvider?.describeImages || !imageProvider?.describeImage)
+        (imageProvider?.describeImages ||
+          imageProvider?.capabilities?.includes("image") ||
+          !imageProvider?.describeImage)
       ) {
         const describeImages =
-          imageProvider?.describeImages ?? imageToolProviderDeps.describeImagesWithModel;
+          imageProvider?.describeImages ?? imageToolProviderDeps.describeImagesWithResolvedModel;
         // A run cancelled mid-dispatch must not buy another provider call.
         params.signal?.throwIfAborted();
         const described = await describeImages({
@@ -651,25 +664,12 @@ async function runImagePrompt(params: {
             fileName: `image-${index + 1}`,
             mime: image.mimeType,
           })),
-          provider,
-          model: modelId,
-          prompt: params.prompt,
-          maxTokens: resolveImageToolMaxTokens(undefined),
-          timeoutMs,
-          ...(params.signal ? { signal: params.signal } : {}),
-          cfg: providerCfg,
-          ...(params.agentId ? { agentId: params.agentId } : {}),
-          agentDir: params.agentDir,
-          authStore: params.authStore,
-          ...(params.workspaceDir ? { workspaceDir: params.workspaceDir } : {}),
-          ...(params.preparedModelRuntime
-            ? { preparedModelRuntime: params.preparedModelRuntime }
-            : {}),
+          ...request,
         });
         return { text: described.text, provider, model: described.model ?? modelId };
       }
       const describeImage =
-        imageProvider?.describeImage ?? imageToolProviderDeps.describeImageWithModel;
+        imageProvider?.describeImage ?? imageToolProviderDeps.describeImageWithResolvedModel;
       if (params.images.length === 1) {
         const image = params.images.at(0);
         if (!image) {
@@ -681,20 +681,7 @@ async function runImagePrompt(params: {
           buffer: image.buffer,
           fileName: "image-1",
           mime: image.mimeType,
-          provider,
-          model: modelId,
-          prompt: params.prompt,
-          maxTokens: resolveImageToolMaxTokens(undefined),
-          timeoutMs,
-          ...(params.signal ? { signal: params.signal } : {}),
-          cfg: providerCfg,
-          ...(params.agentId ? { agentId: params.agentId } : {}),
-          agentDir: params.agentDir,
-          authStore: params.authStore,
-          ...(params.workspaceDir ? { workspaceDir: params.workspaceDir } : {}),
-          ...(params.preparedModelRuntime
-            ? { preparedModelRuntime: params.preparedModelRuntime }
-            : {}),
+          ...request,
         });
         return { text: described.text, provider, model: described.model ?? modelId };
       }
@@ -707,20 +694,8 @@ async function runImagePrompt(params: {
           buffer: image.buffer,
           fileName: `image-${index + 1}`,
           mime: image.mimeType,
-          provider,
-          model: modelId,
+          ...request,
           prompt: `${params.prompt}\n\nDescribe image ${index + 1} of ${params.images.length}.`,
-          maxTokens: resolveImageToolMaxTokens(undefined),
-          timeoutMs,
-          ...(params.signal ? { signal: params.signal } : {}),
-          cfg: providerCfg,
-          ...(params.agentId ? { agentId: params.agentId } : {}),
-          agentDir: params.agentDir,
-          authStore: params.authStore,
-          ...(params.workspaceDir ? { workspaceDir: params.workspaceDir } : {}),
-          ...(params.preparedModelRuntime
-            ? { preparedModelRuntime: params.preparedModelRuntime }
-            : {}),
         });
         parts.push(`Image ${index + 1}:\n${described.text.trim()}`);
       }

@@ -1688,6 +1688,7 @@ describe("compactEmbeddedAgentSessionDirect hooks", () => {
       config: { tools: { profile: "coding" } },
       workspaceDir: join(TEST_WORKSPACE_DIR, "workspace"),
       metadataSnapshot,
+      modelCatalog: { entries: [], routeVariants: [] },
       configuredRuntimeModels: [],
       inlineProviderModels: [],
       createStores: () => ({ authStorage: {}, modelRegistry: {} }),

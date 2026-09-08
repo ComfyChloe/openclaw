@@ -22,6 +22,7 @@ import { isToolResultError } from "../tool-result-error.js";
 import { resolveEmbeddedCliBackendDispatchEligibility } from "./cli-backend-dispatch-eligibility.js";
 import { createCliDispatchTranscriptRecorder } from "./cli-backend-dispatch-transcript.js";
 import type { RunEmbeddedAgentParams } from "./run/params.js";
+import { resolveInitialEmbeddedRunModel } from "./run/runtime-resolution.js";
 import type { EmbeddedAgentRunResult } from "./types.js";
 
 const log = createSubsystemLogger("agents/embedded-cli-dispatch");
@@ -44,14 +45,6 @@ type EmbeddedCliBackendDispatch = {
 export async function runEmbeddedAgentViaCliBackendIfEligible(
   params: CliBackendDispatchParams,
 ): Promise<EmbeddedAgentRunResult | undefined> {
-  const dispatch = resolveEmbeddedCliBackendDispatch(params);
-  return dispatch ? await runEmbeddedAgentViaCliBackend(params, dispatch) : undefined;
-}
-
-/** Applies the opt-in and transcript-path gates on top of shared eligibility. */
-function resolveEmbeddedCliBackendDispatch(
-  params: RunEmbeddedAgentParams,
-): EmbeddedCliBackendDispatch | undefined {
   if (params.cliBackendDispatch !== "subscription-auth") {
     return undefined;
   }
@@ -70,8 +63,24 @@ function resolveEmbeddedCliBackendDispatch(
   if (!toolsAllow) {
     return undefined;
   }
-  const eligibility = resolveEmbeddedCliBackendDispatchEligibility(params);
-  return eligibility ? { provider: eligibility.provider, sessionFile, toolsAllow } : undefined;
+  let runParams = params;
+  if (
+    params.requestedRouteResolution !== "resolved" &&
+    (!params.provider?.trim() || params.model?.trim())
+  ) {
+    // Resolve raw models before eligibility; provider-only CLI requests keep
+    // their backend default, and native fallback retains the original params.
+    const selected = resolveInitialEmbeddedRunModel({
+      ...params,
+      config: params.config,
+      agentId: params.agentId ?? params.sessionTarget.agentId,
+    });
+    runParams = { ...params, provider: selected.provider, model: selected.modelId };
+  }
+  const eligibility = resolveEmbeddedCliBackendDispatchEligibility(runParams);
+  return eligibility
+    ? await runEmbeddedAgentViaCliBackend(runParams, { ...eligibility, sessionFile, toolsAllow })
+    : undefined;
 }
 
 /**
@@ -145,9 +154,6 @@ async function runEmbeddedAgentViaCliBackend(
   // names; strip and normalize so observers and transcript records see the
   // same tool names and soft-error signal the native embedded path reports.
   const unsubscribe = onAgentEventForRun(params.runId, (evt) => {
-    if (evt.runId !== params.runId) {
-      return;
-    }
     if (evt.stream === "assistant" && typeof evt.data.text === "string") {
       transcript?.noteAssistantText(evt.data.text);
       return;

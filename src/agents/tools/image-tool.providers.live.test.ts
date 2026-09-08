@@ -7,12 +7,12 @@ import { coerceErrorMessage as formatLiveError, expectDefined } from "@openclaw/
 import { afterEach, describe, expect, it } from "vitest";
 import type { ModelApi } from "../../config/types.models.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import { describeImageWithResolvedModel } from "../../media-understanding/image-runtime.js";
 import { resizeToJpeg } from "../../media/media-services.js";
 import { encodePngRgba, fillPixel } from "../../media/png-encode.js";
-import {
-  describeImageWithModel,
-  type ImageDescriptionRequest,
-  type MediaUnderstandingProvider,
+import type {
+  ImageDescriptionRequest,
+  MediaUnderstandingProvider,
 } from "../../plugin-sdk/media-understanding.js";
 import {
   isBillingErrorMessage,
@@ -209,7 +209,7 @@ async function runLiveDownscaleCase(testCase: LiveProviderCase) {
       _id: string,
       _registry: Map<string, MediaUnderstandingProvider>,
     ) => undefined,
-    describeImageWithModel: async (params: ImageDescriptionRequest) => {
+    describeImageWithResolvedModel: async (params: ImageDescriptionRequest) => {
       expect(params.provider).toBe(testCase.provider);
       expect(params.model).toBe(testCase.model);
       expect(params.mime).toBe("image/jpeg");
@@ -217,7 +217,7 @@ async function runLiveDownscaleCase(testCase: LiveProviderCase) {
       expect(Math.max(observedDimensions.width, observedDimensions.height)).toBeLessThanOrEqual(
         MODEL_SIDE_LIMIT,
       );
-      return await describeImageWithModel(params);
+      return await describeImageWithResolvedModel(params);
     },
   });
 

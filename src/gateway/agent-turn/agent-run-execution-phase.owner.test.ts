@@ -45,7 +45,16 @@ function createExecution(options: { aborted?: boolean; assertContextCurrent?: ()
         effectiveAllowModelOverride: false,
         lifecycleStorePath: "",
         operationalRunInstance: {},
-        preparedModelRuntimeLease: { release: runtimeRelease, snapshot: {} },
+        preparedModelRuntimeLease: {
+          release: runtimeRelease,
+          pluginGeneration: "generation-A",
+          snapshot: {
+            config: { runtime: "A" },
+            agentDir: "/agent/A",
+            workspaceDir: "/workspace/A",
+            modelCatalog: { entries: [] },
+          },
+        },
         replyDispatchRuntime: {
           config: { runtime: "A" },
           pluginGeneration: "generation-A",
@@ -128,10 +137,9 @@ describe("startAgentRunExecution Gateway ownership", () => {
     );
     expect(dispatchedSnapshot).toBe(execution.params.prepared.preparedModelRuntimeLease.snapshot);
     const dispatch = dispatchAgentRunFromGateway.mock.calls[0]?.[0];
-    expect(dispatch?.commandRuntimeContext).toEqual({
-      config: { runtime: "A" },
-      pluginGeneration: "generation-A",
-    });
+    expect(dispatch?.commandRuntimeContext).toBe(
+      execution.params.prepared.preparedModelRuntimeLease,
+    );
     expect(dispatch?.ingressOpts.workspaceDir).toBe("/workspace/A");
     expect(execution.runtimeRelease).not.toHaveBeenCalled();
 

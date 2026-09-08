@@ -7,7 +7,6 @@ import { ensureAuthProfileStore, resolveAuthProfileOrder } from "../auth-profile
 import { createSelectedAuthProfileUnavailableError } from "../auth-profiles/selection-error.js";
 import type { AuthProfileCredential } from "../auth-profiles/types.js";
 import { resolveAgentHarnessPolicy } from "../harness/policy.js";
-import { normalizeStaticProviderModelId } from "../model-ref-shared.js";
 import { normalizeProviderId } from "../model-selection.js";
 import {
   buildSuppressedBuiltInModelError,
@@ -109,6 +108,7 @@ export function resolveExplicitModelWithRegistry(params: {
           provider,
           discoveredModel: {
             ...mergeStaticCatalogInlineModel(staticCatalogModel, inlineMatch as Model),
+            id: modelId,
             cost: catalogCost,
           },
           providerConfig,
@@ -365,32 +365,6 @@ export function shouldCompareProviderRuntimeResolvedModel(params: {
   );
 }
 
-export function normalizeProviderModelRef(params: {
-  provider: string;
-  modelId: string;
-  cfg?: OpenClawConfig;
-  workspaceDir?: string;
-}): {
-  provider: string;
-  model: string;
-  manifestAlias: ManifestModelCatalogProviderAliasMetadata;
-} {
-  const manifestAlias = resolveManifestModelCatalogProviderAliasMetadata({
-    provider: params.provider,
-    modelId: params.modelId,
-    cfg: params.cfg,
-    workspaceDir: params.workspaceDir,
-  });
-  return {
-    provider: manifestAlias.provider,
-    model: normalizeStaticProviderModelId(
-      normalizeProviderId(manifestAlias.provider),
-      params.modelId,
-    ),
-    manifestAlias,
-  };
-}
-
 type ResolveModelWithRegistryParams = {
   provider: string;
   modelId: string;
@@ -452,19 +426,25 @@ export function resolveModelWithPreparedRegistry(
       });
 }
 
+/** Materializes a selected model ID, including provider-owned dynamic catalog misses. */
 export function resolveModelWithRegistry(
   params: ResolveModelWithRegistryParams,
 ): Model | undefined {
   const workspaceDir = params.workspaceDir ?? params.cfg?.agents?.defaults?.workspace;
-  const normalizedRef = normalizeProviderModelRef({ ...params, workspaceDir });
+  const manifestAlias = resolveManifestModelCatalogProviderAliasMetadata({
+    provider: params.provider,
+    modelId: params.modelId,
+    cfg: params.cfg,
+    workspaceDir,
+  });
   let staticCatalogResolved = false;
   let staticCatalogModel: StaticCatalogFallbackModel | undefined;
   const getStaticCatalogModel = () => {
     if (!staticCatalogResolved) {
       staticCatalogResolved = true;
       staticCatalogModel = resolveBundledStaticCatalogModel({
-        provider: normalizedRef.provider,
-        modelId: normalizedRef.model,
+        provider: manifestAlias.provider,
+        modelId: params.modelId,
         cfg: params.cfg,
         workspaceDir,
         includeRuntimeDiscovery: true,
@@ -474,9 +454,8 @@ export function resolveModelWithRegistry(
   };
   return resolveModelWithPreparedRegistry({
     ...params,
-    provider: normalizedRef.provider,
-    modelId: normalizedRef.model,
-    manifestAlias: normalizedRef.manifestAlias,
+    provider: manifestAlias.provider,
+    manifestAlias,
     getStaticCatalogModel,
     ...(workspaceDir !== undefined ? { workspaceDir } : {}),
   });

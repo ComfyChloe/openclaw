@@ -150,6 +150,32 @@ describe("Code Mode source retention", () => {
 });
 
 describe("Code Mode master switch resolution", () => {
+  it("keeps model namespace switches separate while accepting provider-owned config aliases", () => {
+    const cfg = {
+      tools: { codeMode: true },
+      agents: {
+        defaults: {
+          models: {
+            "custom/model": { codeMode: true },
+            "custom/custom/model": { codeMode: false },
+            "openrouter/auto": { codeMode: false },
+          },
+        },
+      },
+    };
+    expect(
+      resolveCodeModeConfig(cfg, undefined, { provider: "custom", modelId: "model" }).enabled,
+    ).toBe(true);
+    expect(
+      resolveCodeModeConfig(cfg, undefined, { provider: "custom", modelId: "custom/model" })
+        .enabled,
+    ).toBe(false);
+    expect(
+      resolveCodeModeConfig(cfg, undefined, { provider: "openrouter", modelId: "openrouter/auto" })
+        .enabled,
+    ).toBe(false);
+  });
+
   it.each([
     { name: "boolean shorthand true", codeMode: true, enabled: true },
     { name: "boolean shorthand false", codeMode: false, enabled: false },

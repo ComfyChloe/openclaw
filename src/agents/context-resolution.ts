@@ -3,8 +3,11 @@ import {
   resolveClaudeSonnet5ModelIdentity,
   supportsClaude1MContext,
 } from "@openclaw/llm-core";
-import { stripSelfProviderModelPrefix } from "@openclaw/model-catalog-core/provider-model-id-normalization";
 import { normalizeLowercaseStringOrEmpty } from "@openclaw/normalization-core/string-coerce";
+import {
+  findProviderModelConfig,
+  resolveMergedModelProviderConfig,
+} from "../config/model-provider-config.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import {
   lookupCachedContextTokens,
@@ -69,31 +72,8 @@ function resolveConfiguredProviderModel(
   provider: string,
   model: string,
 ): ConfigModelEntry | undefined {
-  const providers = (cfg?.models as ModelsConfig | undefined)?.providers;
-  const requestedProvider = provider.trim();
-  const normalizedProvider = normalizeProviderId(provider);
-  const providerEntries = Object.entries(providers ?? {});
-  const providerConfig =
-    providerEntries.find(([providerId]) => providerId.trim() === requestedProvider)?.[1] ??
-    providerEntries.find(
-      ([providerId]) => normalizeProviderId(providerId) === normalizedProvider,
-    )?.[1];
-  const bareModel = stripSelfProviderModelPrefix(normalizedProvider, model);
-  const spellings = bareModel === model ? [model] : [model, bareModel];
-  for (const spelling of spellings) {
-    const match = providerConfig?.models?.find((entry) => {
-      const entryId = entry.id?.trim();
-      return (
-        entryId === spelling ||
-        (entryId !== undefined &&
-          stripSelfProviderModelPrefix(normalizedProvider, entryId) === spelling)
-      );
-    });
-    if (match) {
-      return match;
-    }
-  }
-  return undefined;
+  const providerConfig = resolveMergedModelProviderConfig(cfg ?? undefined, provider);
+  return findProviderModelConfig(providerConfig?.models, provider, model);
 }
 
 function resolveConfiguredRuntimeModel(

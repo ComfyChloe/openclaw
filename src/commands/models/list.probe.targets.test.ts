@@ -2,6 +2,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AuthProfileStore } from "../../agents/auth-profiles.js";
 import type { ModelCatalogEntry } from "../../agents/model-catalog.js";
+import type { ModelFallbackRouteResolution } from "../../agents/model-fallback.types.js";
 import type { OpenClawConfig } from "../../config/config.js";
 import { resolveConfigForRead } from "../../config/io.read-helpers.js";
 import { setConfigResolutionFacts } from "../../config/resolution-facts.js";
@@ -11,6 +12,12 @@ let mockStore: AuthProfileStore;
 let mockAgentStore: AuthProfileStore | undefined;
 let mockAllowedProfiles: string[];
 const loadModelCatalogMock = vi.fn<() => Promise<ModelCatalogEntry[]>>(async () => []);
+
+const expectedProbeModel = (
+  provider: string,
+  model: string,
+  requestedRouteResolution: ModelFallbackRouteResolution,
+) => ({ provider, model, requestedRouteResolution });
 
 const resolveAuthProfileOrderMock = vi.fn(() => mockAllowedProfiles);
 const resolveAuthProfileEligibilityMock = vi.fn<
@@ -345,7 +352,7 @@ describe("buildProbeTargets reason codes", () => {
         {
           label: "models.json",
           mode: "api_key",
-          model: { provider: "anthropic", model: "claude-sonnet-4-6" },
+          model: expectedProbeModel("anthropic", "claude-sonnet-4-6", "raw"),
           provider: "anthropic",
           source: "models.json",
         },
@@ -640,7 +647,7 @@ describe("buildProbeTargets reason codes", () => {
     expect(plan.targets).toStrictEqual([
       {
         provider: "anthropic",
-        model: { provider: "anthropic", model: "claude-sonnet-4-6" },
+        model: expectedProbeModel("anthropic", "claude-sonnet-4-6", "raw"),
         profileId: ref,
         label: ref,
         source: "profile",
@@ -778,7 +785,7 @@ describe("buildProbeTargets reason codes", () => {
       {
         label: "byteplus:plan",
         mode: "api_key",
-        model: { provider: "byteplus-plan", model: "ark-code-latest" },
+        model: expectedProbeModel("byteplus-plan", "ark-code-latest", "resolved"),
         profileId: "byteplus:plan",
         provider: "byteplus-plan",
         source: "profile",
@@ -900,7 +907,7 @@ describe("buildProbeTargets reason codes", () => {
         {
           label: "models.json",
           mode: "api_key",
-          model: { provider: "zai", model: "glm-4.7" },
+          model: expectedProbeModel("zai", "glm-4.7", "resolved"),
           provider: "zai",
           source: "models.json",
         },
@@ -953,7 +960,7 @@ describe("buildProbeTargets reason codes", () => {
       {
         label: "models.json",
         mode: "api_key",
-        model: { provider: "anthropic", model: "claude-haiku-4-5-20251001" },
+        model: expectedProbeModel("anthropic", "claude-haiku-4-5-20251001", "resolved"),
         provider: "anthropic",
         source: "models.json",
       },
@@ -997,7 +1004,7 @@ describe("buildProbeTargets reason codes", () => {
       {
         label: "env",
         mode: "api_key",
-        model: { provider: "workspace-cloud", model: "workspace-model" },
+        model: expectedProbeModel("workspace-cloud", "workspace-model", "resolved"),
         provider: "workspace-cloud",
         source: "env",
       },
@@ -1052,7 +1059,7 @@ describe("buildProbeTargets reason codes", () => {
       {
         label: "anthropic:coder",
         mode: "api_key",
-        model: { provider: "anthropic", model: "claude-sonnet-4-6" },
+        model: expectedProbeModel("anthropic", "claude-sonnet-4-6", "raw"),
         profileId: "anthropic:coder",
         provider: "anthropic",
         source: "profile",

@@ -100,28 +100,10 @@ function canonicalizeRuntimeAliasProvider(
   );
 }
 
-function normalizeRuntimeModelRefForComparison(
-  raw: string,
-  options: RuntimeAliasComparisonOptions = {},
-): string {
-  const trimmed = raw.trim();
-  const parsed = parseModelCatalogRef(trimmed);
-  if (!parsed) {
-    return normalizeProviderId(canonicalizeRuntimeAliasProvider(trimmed, options));
-  }
-  const canonicalProvider = normalizeProviderId(
-    canonicalizeRuntimeAliasProvider(parsed.provider, options),
+function parseRuntimeModelRefForComparison(raw: string) {
+  return (
+    parseModelCatalogRef(raw) ?? { provider: normalizeProviderId(raw.trim()), modelId: undefined }
   );
-  return `${canonicalProvider}/${parsed.modelId}`;
-}
-
-function normalizeRuntimeModelRefWithoutAlias(raw: string): string {
-  const trimmed = raw.trim();
-  const parsed = parseModelCatalogRef(trimmed);
-  if (!parsed) {
-    return normalizeProviderId(trimmed);
-  }
-  return `${parsed.provider}/${parsed.modelId}`;
 }
 
 export function areRuntimeModelRefsEquivalent(
@@ -129,12 +111,17 @@ export function areRuntimeModelRefsEquivalent(
   right: string,
   options: RuntimeAliasComparisonOptions = {},
 ): boolean {
-  if (normalizeRuntimeModelRefWithoutAlias(left) === normalizeRuntimeModelRefWithoutAlias(right)) {
-    return true;
+  const leftRef = parseRuntimeModelRefForComparison(left);
+  const rightRef = parseRuntimeModelRefForComparison(right);
+  // CLI aliases change the provider, never the model ID. Different models
+  // cannot be equivalent and must not discover the setup registry on status reads.
+  if (leftRef.modelId !== rightRef.modelId) {
+    return false;
   }
   return (
-    normalizeRuntimeModelRefForComparison(left, options) ===
-    normalizeRuntimeModelRefForComparison(right, options)
+    leftRef.provider === rightRef.provider ||
+    normalizeProviderId(canonicalizeRuntimeAliasProvider(leftRef.provider, options)) ===
+      normalizeProviderId(canonicalizeRuntimeAliasProvider(rightRef.provider, options))
   );
 }
 

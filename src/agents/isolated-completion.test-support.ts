@@ -161,17 +161,23 @@ export const nativeAuthPlan = {
 
 export function resetIsolatedCompletionTestState(): void {
   vi.clearAllMocks();
-  preparedModelRuntime = {
+  const snapshot = {
     config: {},
+    agentId: "main",
     agentDir: "/tmp/agent",
     metadataSnapshot: createEmptyPluginMetadataSnapshot("/tmp/workspace"),
     pluginRegistry: createEmptyPluginRegistry(),
     workspaceDir: "/tmp/workspace",
     createStores: () => ({ modelRegistry: {} }),
   };
+  preparedModelRuntime = snapshot;
   releaseRuntimeLease = vi.fn();
   isolatedCompletionMocks.acquireAgentRunPreparedModelRuntime.mockResolvedValue({
-    snapshot: preparedModelRuntime,
+    snapshot,
+    pluginGeneration: {
+      pluginMetadataSnapshot: snapshot.metadataSnapshot,
+      pluginRegistry: snapshot.pluginRegistry,
+    },
     release: releaseRuntimeLease,
   });
   isolatedCompletionMocks.isCliRuntimeAliasForProvider.mockReturnValue(false);

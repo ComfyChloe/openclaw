@@ -137,24 +137,49 @@ describe("models set + fallbacks", () => {
     expect(mocks.writtenConfig).toBeUndefined();
   });
 
-  it.each([
-    ["text", modelsSetCommand],
-    ["image", modelsSetImageCommand],
-  ])("warns but saves an unknown %s model for a known provider", async (_kind, command) => {
-    mockConfigSnapshot({});
-    const runtime = makeRuntime();
+  it.each(
+    [
+      { kind: "text", command: modelsSetCommand },
+      { kind: "image", command: modelsSetImageCommand },
+    ].flatMap(({ kind, command }) => [
+      { kind, command, ref: "openai/not-in-the-local-catalog", custom: false, warns: true },
+      { kind, command, ref: "case-proof/alpha", custom: true, warns: true },
+      { kind, command, ref: "case-proof/Alpha", custom: true, warns: false },
+    ]),
+  )(
+    "saves exact $kind ref $ref with its catalog warning",
+    async ({ kind, command, ref, custom, warns }) => {
+      mockConfigSnapshot(
+        custom
+          ? {
+              models: {
+                providers: {
+                  "case-proof": {
+                    baseUrl: "https://case.invalid/v1",
+                    models: [{ id: "Alpha", name: "Exact configured model" }],
+                  },
+                },
+              },
+            }
+          : {},
+      );
+      const runtime = makeRuntime();
 
-    await command("openai/not-in-the-local-catalog", runtime);
+      await command(ref, runtime);
 
-    expect(runtime.error).toHaveBeenCalledWith(
-      expect.stringContaining(
-        'Model "openai/not-in-the-local-catalog" is not in the local model catalog',
-      ),
-    );
-    expect(getWrittenConfig().agents?.defaults?.models).toHaveProperty(
-      "openai/not-in-the-local-catalog",
-    );
-  });
+      if (warns) {
+        expect(runtime.error).toHaveBeenCalledWith(
+          expect.stringContaining(`Model "${ref}" is not in the local model catalog`),
+        );
+      } else {
+        expect(runtime.error).not.toHaveBeenCalled();
+      }
+      expect(getWrittenConfig().agents?.defaults?.models).toHaveProperty(ref);
+      expect(
+        getWrittenConfig().agents?.defaults?.[kind === "text" ? "model" : "imageModel"],
+      ).toEqual({ primary: ref });
+    },
+  );
 
   it("recognizes a provider declared by a disabled installed plugin", async () => {
     mockConfigSnapshot({ plugins: { entries: { ollama: { enabled: false } } } });
@@ -313,7 +338,7 @@ describe("models set + fallbacks", () => {
 
     await modelsSetCommand("openrouter/hunter-alpha", runtime);
 
-    expectWrittenPrimaryModel("openrouter/hunter-alpha");
+    expectWrittenPrimaryModel("openrouter/openrouter/hunter-alpha");
   });
 
   it("normalizes retired Google Gemini preview ids in models set", async () => {
@@ -325,12 +350,12 @@ describe("models set + fallbacks", () => {
     expectWrittenPrimaryModel("google/gemini-3.1-pro-preview");
   });
 
-  it("migrates legacy duplicated OpenRouter keys on write", async () => {
+  it("preserves short OpenRouter input settings when writing its canonical model ref", async () => {
     mockConfigSnapshot({
       agents: {
         defaults: {
           models: {
-            "openrouter/openrouter/hunter-alpha": {
+            "openrouter/hunter-alpha": {
               params: { thinking: "high" },
             },
           },
@@ -344,13 +369,36 @@ describe("models set + fallbacks", () => {
     const written = getWrittenConfig();
     expect(written.agents).toEqual({
       defaults: {
-        model: { primary: "openrouter/hunter-alpha" },
+        model: { primary: "openrouter/openrouter/hunter-alpha" },
         models: {
-          "openrouter/hunter-alpha": {
+          "openrouter/openrouter/hunter-alpha": {
             params: { thinking: "high" },
           },
         },
       },
+    });
+  });
+
+  it("keeps another model's namespaced settings when setting a bare model", async () => {
+    mockConfigSnapshot({
+      models: {
+        providers: {
+          custom: {
+            api: "openai-completions",
+            baseUrl: "https://example.invalid/v1",
+            models: [
+              { id: "model", name: "Model" },
+              { id: "custom/model", name: "Namespaced model" },
+            ],
+          },
+        },
+      },
+      agents: { defaults: { models: { "custom/custom/model": { params: { thinking: "high" } } } } },
+    });
+    await modelsSetCommand("custom/model", makeRuntime());
+    expect(getWrittenConfig().agents?.defaults?.models).toEqual({
+      "custom/model": {},
+      "custom/custom/model": { params: { thinking: "high" } },
     });
   });
 

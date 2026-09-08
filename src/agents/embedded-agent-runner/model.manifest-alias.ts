@@ -1,5 +1,6 @@
 import type { ModelCatalogAlias } from "@openclaw/model-catalog-core/model-catalog-types";
 import { normalizeProviderId } from "@openclaw/model-catalog-core/provider-id";
+import { findProviderModelConfig } from "../../config/model-provider-config.js";
 import type { ModelProviderConfig } from "../../config/types.models.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { planManifestModelCatalogSuppressions } from "../../model-catalog/manifest-planner.js";
@@ -14,7 +15,7 @@ import {
   loadPluginManifestRegistryCore,
   type PluginManifestRecord,
 } from "../../plugins/manifest-registry.js";
-import { staticModelIdMatches } from "./model.static-id.js";
+import { findStaticModel } from "./model.static-id.js";
 
 function hasModelCatalogAliasTransportOverride(alias: ModelCatalogAlias): boolean {
   return Boolean(alias.api?.trim() || alias.baseUrl?.trim());
@@ -57,15 +58,7 @@ function hasConfiguredModelCatalogProviderEndpointSurface(params: {
   if (!modelId || !Array.isArray(config?.models)) {
     return false;
   }
-  return config.models.some(
-    (model) =>
-      Boolean(model.baseUrl?.trim()) &&
-      staticModelIdMatches({
-        candidateId: model.id,
-        provider,
-        modelId,
-      }),
-  );
+  return Boolean(findProviderModelConfig(config.models, provider, modelId)?.baseUrl?.trim());
 }
 
 function resolveConfiguredModelCatalogProviderApi(params: {
@@ -78,9 +71,7 @@ function resolveConfiguredModelCatalogProviderApi(params: {
   const modelId = params.modelId?.trim();
   const model =
     provider && modelId && Array.isArray(config?.models)
-      ? config.models.find((candidate) =>
-          staticModelIdMatches({ candidateId: candidate.id, provider, modelId }),
-        )
+      ? findProviderModelConfig(config.models, provider, modelId)
       : undefined;
   return model?.api ?? config?.api;
 }
@@ -175,13 +166,7 @@ function resolveManifestAliasTargetApi(params: {
   }
   const modelId = params.modelId?.trim();
   const model = modelId
-    ? providerCatalog.models.find((candidate) =>
-        staticModelIdMatches({
-          candidateId: candidate.id,
-          provider: params.provider,
-          modelId,
-        }),
-      )
+    ? findStaticModel(providerCatalog.models, params.provider, modelId)
     : undefined;
   return model?.api ?? providerCatalog.api;
 }

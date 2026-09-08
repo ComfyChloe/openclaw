@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { makeModel } from "../agents/embedded-agent-runner/model.test-harness.js";
 import type { ModelApi } from "../config/types.models.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import type { ProviderResolveModelRoutesContext } from "../plugin-sdk/provider-model-types.js";
@@ -9,6 +10,102 @@ import {
 } from "./provider-model-routes.js";
 
 describe("provider model route adapter", () => {
+  it.each([
+    {
+      name: "alias-empty before exact-custom",
+      rows: [
+        ["gpt-5.4-codex", {}],
+        ["gpt-5.4", { "x-route": "custom" }],
+      ],
+      expected: "present",
+    },
+    {
+      name: "exact-custom before alias-empty",
+      rows: [
+        ["gpt-5.4", { "x-route": "custom" }],
+        ["gpt-5.4-codex", {}],
+      ],
+      expected: "present",
+    },
+    {
+      name: "alias-custom before exact-empty",
+      rows: [
+        ["gpt-5.4-codex", { "x-route": "alias" }],
+        ["gpt-5.4", {}],
+      ],
+      expected: "none",
+    },
+    {
+      name: "exact-empty before alias-custom",
+      rows: [
+        ["gpt-5.4", {}],
+        ["gpt-5.4-codex", { "x-route": "alias" }],
+      ],
+      expected: "none",
+    },
+    {
+      name: "exact-custom alone",
+      rows: [["gpt-5.4", { "x-route": "custom" }]],
+      expected: "present",
+    },
+    { name: "alias-empty alone", rows: [["gpt-5.4-codex", {}]], expected: "none" },
+    {
+      name: "alias-custom alone",
+      rows: [["gpt-5.4-codex", { "x-route": "alias" }]],
+      expected: "present",
+    },
+    {
+      name: "alias fills omitted exact headers",
+      rows: [
+        ["gpt-5.4-codex", { "x-route": "alias" }],
+        ["gpt-5.4", undefined],
+      ],
+      expected: "present",
+    },
+    {
+      name: "exact omissions inherit later alias headers",
+      rows: [
+        ["gpt-5.4", undefined],
+        ["gpt-5.4-codex", { "x-route": "alias" }],
+      ],
+      expected: "present",
+    },
+  ] satisfies Array<{
+    name: string;
+    rows: Array<[string, Record<string, string> | undefined]>;
+    expected: "none" | "present";
+  }>)("keeps exact request overrides authoritative for $name", ({ rows, expected }) => {
+    const config: OpenClawConfig = {
+      models: {
+        providers: {
+          openai: {
+            api: "openai-responses",
+            baseUrl: "https://api.openai.com/v1",
+            models: rows.map(([id, headers]) => ({
+              ...makeModel(id),
+              ...(headers === undefined ? {} : { headers }),
+            })),
+          },
+        },
+      },
+    };
+    const resolution = createProviderModelRoutesResolver({ provider: "openai", config, env: {} })({
+      modelId: "gpt-5.4",
+    });
+    expect(resolution).toMatchObject({
+      kind: "routes",
+      defaultRuntimeId: expected === "present" ? "openclaw" : "codex",
+      routes: [
+        {
+          requestTransportOverrides: expected,
+          runtimePolicy: {
+            compatibleIds: expected === "present" ? ["openclaw"] : ["openclaw", "codex"],
+          },
+        },
+      ],
+    });
+  });
+
   it("does not invent an observed transport from a model id alone", () => {
     const resolveModelRoutes = vi.fn((_context: ProviderResolveModelRoutesContext) => ({
       kind: "indeterminate" as const,

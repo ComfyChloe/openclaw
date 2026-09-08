@@ -1,11 +1,10 @@
-// Runtime helpers for building status summaries.
-// Kept behind a lazy surface because status summary imports model/session/runtime metadata helpers.
-
 import {
   normalizeLowercaseStringOrEmpty,
   normalizeOptionalString,
   normalizeOptionalLowercaseString,
 } from "@openclaw/normalization-core/string-coerce";
+// Runtime helpers for building status summaries.
+// Kept behind a lazy surface because status summary imports model/session/runtime metadata helpers.
 import {
   readAcpSessionMetaForEntry,
   resolveSessionStorePathForAcp,
@@ -21,6 +20,7 @@ import { waitForContextWindowCacheLoad } from "../agents/context.js";
 import { DEFAULT_MODEL, DEFAULT_PROVIDER } from "../agents/defaults.js";
 import { parseModelRef, resolvePersistedSelectedModelRef } from "../agents/model-selection.js";
 import { resolveAgentModelPrimaryValue } from "../config/model-input.js";
+import { resolveSessionModelOverrideRouteResolution } from "../config/sessions/model-override-provenance.js";
 import type { SessionEntry } from "../config/sessions/types.js";
 import type { OpenClawConfig } from "../config/types.js";
 import { resolveStoredSessionKeyForAgentStore } from "../gateway/session-store-key.js";
@@ -192,6 +192,7 @@ function resolveSessionModelRef(
       runtimeModel: entry?.model,
       overrideProvider: entry?.providerOverride,
       overrideModel: entry?.modelOverride,
+      overrideRouteResolution: resolveSessionModelOverrideRouteResolution(entry),
       allowManifestNormalization: false,
       allowPluginNormalization: false,
     }) ?? resolved

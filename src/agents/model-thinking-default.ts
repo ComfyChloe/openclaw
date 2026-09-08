@@ -7,20 +7,8 @@ import type { ThinkLevel } from "../auto-reply/thinking.shared.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import type { ModelCatalogEntry } from "./model-catalog.types.js";
 import { buildConfiguredModelCatalog } from "./model-selection-shared.js";
-import {
-  resolveConfiguredThinkingDefaultCore,
-  resolveThinkingDefaultCore,
-} from "./model-thinking-default-core.js";
-
-/** Resolves configured thinking without consulting model capability metadata. */
-export function resolveConfiguredThinkingDefault(params: {
-  cfg: OpenClawConfig;
-  provider: string;
-  model: string;
-  agentId?: string;
-}): ThinkLevel | undefined {
-  return resolveConfiguredThinkingDefaultCore(params);
-}
+import { resolveThinkingDefaultCore } from "./model-thinking-default-core.js";
+export { resolveConfiguredThinkingDefaultCore as resolveConfiguredThinkingDefault } from "./model-thinking-default-core.js";
 
 /** Resolves the default thinking level for a provider/model pair. */
 export function resolveThinkingDefault(params: {
@@ -41,6 +29,7 @@ export async function resolveThinkingDefaultWithRuntimeCatalogCore(params: {
   model: string;
   loadRuntimeCatalog: () => Promise<ModelCatalogEntry[]>;
   agentRuntime?: string | null;
+  agentId?: string;
 }): Promise<ThinkLevel> {
   const configuredCatalog = buildConfiguredModelCatalog({ cfg: params.cfg });
   const configuredSelectedEntry = configuredCatalog.find(
@@ -60,6 +49,7 @@ export async function resolveThinkingDefaultWithRuntimeCatalogCore(params: {
       : configuredCatalog;
   return resolveThinkingDefault({
     cfg: params.cfg,
+    agentId: params.agentId,
     provider: params.provider,
     model: params.model,
     catalog,

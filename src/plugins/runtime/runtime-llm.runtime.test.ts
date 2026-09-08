@@ -19,7 +19,40 @@ const hoisted = vi.hoisted(() => ({
 }));
 
 vi.mock("../../agents/simple-completion-runtime.js", () => ({
-  acquireSimpleCompletionModelForAgent: hoisted.acquireSimpleCompletionModelForAgent,
+  acquireSimpleCompletionModelForAgent: async (
+    params: Parameters<
+      typeof import("../../agents/simple-completion-runtime.js").acquireSimpleCompletionModelForAgent
+    >[0],
+    validateSelection: Parameters<
+      typeof import("../../agents/simple-completion-runtime.js").acquireSimpleCompletionModelForAgent
+    >[1],
+  ) => {
+    const selection = hoisted.resolveSimpleCompletionSelectionForAgent(params);
+    if (!selection) {
+      return { error: `No model configured for agent ${params.agentId}.` };
+    }
+    validateSelection?.({ selection, config: params.cfg });
+    const prepared = await hoisted.acquireSimpleCompletionModelForAgent(params);
+    return "error" in prepared
+      ? prepared
+      : {
+          ...prepared,
+          config: params.cfg,
+          assertCurrent: () => params.abortSignal?.throwIfAborted(),
+        };
+  },
+  withPreparedSimpleCompletionSelection: async (
+    params: { cfg: OpenClawConfig; agentId: string; modelRef?: string; abortSignal?: AbortSignal },
+    run: (selection: unknown, context: object) => Promise<unknown>,
+  ) => {
+    const selection = hoisted.resolveSimpleCompletionSelectionForAgent(params);
+    const runtime = { config: params.cfg, agentDir: selection?.agentDir };
+    return await run(selection, {
+      preparedModelRuntime: runtime,
+      assertCurrent: () => params.abortSignal?.throwIfAborted(),
+      borrowPreparedRuntime: () => runtime,
+    });
+  },
   completeWithPreparedSimpleCompletionModel: hoisted.completeWithPreparedSimpleCompletionModel,
   resolveSimpleCompletionSelectionForAgent: hoisted.resolveSimpleCompletionSelectionForAgent,
 }));
@@ -40,6 +73,8 @@ function createPreparedModel(
 > {
   return {
     release: vi.fn(),
+    config: cfg,
+    assertCurrent: () => {},
     selection: {
       provider: "openai",
       modelId,
@@ -402,7 +437,7 @@ describe("runtime.llm.complete", () => {
     expect(hoisted.acquireSimpleCompletionModelForAgent).not.toHaveBeenCalled();
   });
 
-  it("matches allowlist entries for provider-qualified model ids without doubling the provider prefix", async () => {
+  it("matches provider-owned shorthand allowlist entries against resolved model ids", async () => {
     const runtimeContext = resolveContextEngineCapabilities({
       config: {
         ...cfg,
@@ -445,7 +480,7 @@ describe("runtime.llm.complete", () => {
     });
   });
 
-  it("reports denials for provider-qualified model ids without doubling the provider prefix", async () => {
+  it("reports the exact resolved model ref when a plugin model override is denied", async () => {
     const runtimeContext = resolveContextEngineCapabilities({
       config: {
         ...cfg,
@@ -483,8 +518,7 @@ describe("runtime.llm.complete", () => {
       caught = error;
     }
     const message = caught instanceof Error ? caught.message : String(caught);
-    expect(message).toContain('"openrouter/gpt-5.5"');
-    expect(message).not.toContain("openrouter/openrouter/");
+    expect(message).toContain('"openrouter/openrouter/gpt-5.5"');
     expect(hoisted.acquireSimpleCompletionModelForAgent).not.toHaveBeenCalled();
   });
 
@@ -803,6 +837,8 @@ describe("runtime.llm.complete", () => {
         }),
       ),
     ).rejects.toThrow("cannot override the target agent");
+    expect(hoisted.resolveSimpleCompletionSelectionForAgent).not.toHaveBeenCalled();
+    expect(hoisted.acquireSimpleCompletionModelForAgent).not.toHaveBeenCalled();
 
     const allowed = createRuntimeLlm({
       getConfig: () => ({

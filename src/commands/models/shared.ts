@@ -7,7 +7,6 @@ import { listAgentIds, resolveAgentDir, resolveSoleAgentId } from "../../agents/
 import { DEFAULT_MODEL, DEFAULT_PROVIDER } from "../../agents/defaults.js";
 import {
   buildModelAliasIndex,
-  legacyModelKey,
   modelKey,
   resolveModelRefFromString,
   type ModelRef,
@@ -24,6 +23,7 @@ import { formatConfigIssueLines } from "../../config/issue-format.js";
 import {
   mergeAgentModelEntryForConfig,
   normalizeAgentModelRefForConfig,
+  resolveAgentModelConfigKeys,
   toAgentModelListLike,
 } from "../../config/model-input.js";
 import { resolveIncludeRoots } from "../../config/paths.js";
@@ -264,41 +264,30 @@ export function resolveModelsTargetAgent(
 /** Normalized primary/fallback config shape used by text and image defaults. */
 type PrimaryFallbackConfig = { primary?: string; fallbacks?: string[] };
 
-/** Upserts the canonical model entry and folds legacy key metadata into it. */
+/** Upserts the canonical entry using prepared ownership or provider-owned config aliases. */
 export function upsertCanonicalModelConfigEntry(
   models: Record<string, AgentModelEntryConfig>,
   params: { provider: string; model: string },
   options: ModelEntryMergeOptions = {},
 ) {
-  const key = modelKey(params.provider, params.model);
+  const [key, ...aliasKeys] = resolveAgentModelConfigKeys(params.provider, params.model);
   const { canonicalModelKeys } = options;
-  // Prepared ownership facts replace legacy guesses, including an empty selection.
+  // Prepared ownership facts replace static aliases, including an empty selection.
   const sourceKeys = canonicalModelKeys
     ? Object.keys(models).filter((sourceKey) => canonicalModelKeys.get(sourceKey) === key)
-    : [legacyModelKey(params.provider, params.model), `${params.provider}/${key}`];
-  const legacyKeys = new Set(
-    sourceKeys.filter(
-      (legacyKey): legacyKey is string =>
-        typeof legacyKey === "string" && legacyKey.length > 0 && legacyKey !== key,
-    ),
-  );
-  let legacyEntry: AgentModelEntryConfig | undefined;
-  for (const legacyKey of legacyKeys) {
-    const entry = models[legacyKey];
-    if (!entry) {
-      continue;
+    : aliasKeys;
+  // Canonical fields win; reverse folding preserves later legacy rows over earlier ones.
+  for (const sourceKey of sourceKeys.filter((candidateKey) => candidateKey !== key).toReversed()) {
+    const entry = models[sourceKey];
+    if (entry) {
+      models[key] = mergeAgentModelEntryForConfig(
+        options.restoreSourceEntry ? options.restoreSourceEntry(sourceKey, key, entry) : entry,
+        models[key] ?? {},
+      );
     }
-    legacyEntry = mergeAgentModelEntryForConfig(
-      legacyEntry,
-      options.restoreSourceEntry ? options.restoreSourceEntry(legacyKey, key, entry) : entry,
-    );
+    delete models[sourceKey];
   }
-
-  // Canonical values override migrated fields while omitted settings survive.
-  models[key] = mergeAgentModelEntryForConfig(legacyEntry, models[key] ?? {});
-  for (const legacyKey of legacyKeys) {
-    delete models[legacyKey];
-  }
+  models[key] ??= {};
   return key;
 }
 

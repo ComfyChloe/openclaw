@@ -44,6 +44,7 @@ async function observeScenario(scenario: Scenario, json: boolean) {
   let managedDispatches = 0;
   let onboardingDispatches = 0;
   let faultReached = 0;
+  let probeCompleted = false;
   const marker = `dependency-${scenario}-reason-140392`;
   const cause = `${marker}; OPENAI_API_KEY=${syntheticToken}; {"access_token":"${syntheticStructuredValue}"}; ${syntheticCustomValue}`;
   const fault = json ? new Error(cause) : cause;
@@ -89,8 +90,8 @@ async function observeScenario(scenario: Scenario, json: boolean) {
             throw new Error("fixture has no artifact fingerprint dependency");
           }
           runtimeLoader.mockReset().mockImplementation(() => {
-            phases.push("runtime-load");
-            if (scenario === "revalidate") {
+            phases.push(probeCompleted ? "runtime-load" : "runtime-prepare");
+            if (scenario === "revalidate" && probeCompleted) {
               faultReached += 1;
               // oxlint-disable-next-line typescript/only-throw-error -- Exercise non-Error failures at the verifier boundary.
               throw fault;
@@ -132,6 +133,7 @@ async function observeScenario(scenario: Scenario, json: boolean) {
               if (scenario === "drift") {
                 changedArtifact = true;
               }
+              probeCompleted = true;
               return {
                 meta: {
                   durationMs: 0,
@@ -191,7 +193,7 @@ async function observeScenario(scenario: Scenario, json: boolean) {
       await expect(fs.stat(dir)).rejects.toMatchObject({ code: "ENOENT" });
     }
     if (scenario === "success") {
-      expect(phases).toEqual(["capture", "probe", "runtime-load", "callback"]);
+      expect(phases).toEqual(["runtime-prepare", "capture", "probe", "runtime-load", "callback"]);
       expect(callbackAttempts).toBe(1);
       expect(managedDispatches).toBe(1);
       expect(exits).toEqual([]);
@@ -204,10 +206,10 @@ async function observeScenario(scenario: Scenario, json: boolean) {
     expect(callbackAttempts).toBe(scenario === "callback" ? 1 : 0);
     expect(phases).toEqual(
       scenario === "capture"
-        ? ["capture"]
+        ? ["runtime-prepare", "capture"]
         : scenario === "callback"
-          ? ["capture", "probe", "runtime-load", "callback"]
-          : ["capture", "probe", "runtime-load"],
+          ? ["runtime-prepare", "capture", "probe", "runtime-load", "callback"]
+          : ["runtime-prepare", "capture", "probe", "runtime-load"],
     );
     let message: string;
     if (json) {

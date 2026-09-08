@@ -329,6 +329,7 @@ export async function accountAgentTurn(context: AgentTurnAccountingContext) {
       agentId: followupRun.run.agentId,
       providerUsed: sessionModel.provider,
       modelUsed: sessionModel.model,
+      configuredDefault: execution.configuredDefault,
     });
   }
 

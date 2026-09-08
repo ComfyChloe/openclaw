@@ -45,8 +45,13 @@ title: "Thinking levels"
 1. Inline directive on the message (applies only to that message).
 2. Session override (set by sending a directive-only message).
 3. Per-agent default (`agents.entries.*.thinkingDefault` in config).
-4. Global default (`agents.defaults.thinkingDefault` in config).
-5. Fallback: provider-declared default when available; otherwise reasoning-capable models resolve to `medium` or the nearest supported non-`off` level for that model, and non-reasoning models stay `off`.
+4. Per-agent model setting (`agents.entries.*.models["provider/model"].params.thinking`).
+5. Shared model setting (`agents.defaults.models["provider/model"].params.thinking`).
+6. Global default (`agents.defaults.thinkingDefault` in config).
+7. Fallback: provider-declared default when available; otherwise reasoning-capable models resolve to `medium` or the nearest supported non-`off` level for that model, and non-reasoning models stay `off`.
+
+Model-specific `thinking` values `false`, `"disabled"`, and `"none"` mean `off`.
+Status replies and the Telegram thinking menu use these same configured defaults.
 
 ## Setting a session default
 

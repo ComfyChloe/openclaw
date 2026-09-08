@@ -4,7 +4,6 @@ import {
   collectManifestModelIdNormalizationPolicies,
   normalizeConfiguredProviderCatalogModelId,
   normalizeStaticProviderModelIdWithPolicies,
-  stripSelfProviderModelPrefix,
 } from "./provider-model-id-normalization.js";
 
 describe("provider model id policy normalization", () => {
@@ -110,19 +109,6 @@ describe("provider model id policy normalization", () => {
   it("preserves the global xAI flagship alias without manifest metadata", () => {
     expect(normalizeStaticProviderModelIdWithPolicies("xai", "grok-latest")).toBe("grok-latest");
     expect(normalizeStaticProviderModelIdWithPolicies("xai", "grok-4.5-latest")).toBe("grok-4.5");
-  });
-
-  it("strips self provider model prefixes before runtime provider calls", () => {
-    expect(stripSelfProviderModelPrefix("google", "google/gemini-2.0-flash")).toBe(
-      "gemini-2.0-flash",
-    );
-    expect(stripSelfProviderModelPrefix("xai", "xai/grok-4-fast-reasoning")).toBe(
-      "grok-4-fast-reasoning",
-    );
-    expect(stripSelfProviderModelPrefix("openai", "openai/gpt-5.4")).toBe("gpt-5.4");
-    expect(stripSelfProviderModelPrefix("vercel-ai-gateway", "vercel-ai-gateway/opus-4.6")).toBe(
-      "opus-4.6",
-    );
   });
 });
 

@@ -10,9 +10,15 @@ vi.mock("../agents/harness/runtime-plugin.js", () => ({
   ensureSelectedAgentHarnessPlugin: agentHarnessPluginMocks.ensureSelectedAgentHarnessPlugin,
 }));
 
-vi.mock("../agents/runtime-plugins.js", () => ({
-  withAgentPluginRegistry: ({ run }: { run: () => unknown }) => run(),
-}));
+vi.mock("../agents/runtime-plugins.js", async () => {
+  const { getActivePluginRegistry } = await import("../plugins/runtime.js");
+  const { createEmptyPluginRegistry } = await import("../plugins/registry-empty.js");
+  return {
+    withAgentPluginRegistry: ({ run }: { run: () => unknown }) => run(),
+    loadAgentRuntimePluginRegistryHandle: () =>
+      getActivePluginRegistry() ?? createEmptyPluginRegistry(),
+  };
+});
 
 vi.mock("../logging/subsystem.js", () => {
   const createMockLogger = () => ({
@@ -75,7 +81,9 @@ vi.mock("../agents/prepared-model-catalog.js", () => ({
   })),
 }));
 
-vi.mock("../agents/model-selection.js", () => {
+vi.mock("../agents/model-selection.js", async () => {
+  const { normalizeBuiltInProviderModelId } =
+    await import("@openclaw/model-catalog-core/provider-model-id-normalization");
   type ConfigWithModels = {
     meta?: { migrations?: { modelPolicyAllowlist?: boolean } };
     agents?: {
@@ -99,10 +107,16 @@ vi.mock("../agents/model-selection.js", () => {
     if (slash >= 0) {
       return {
         provider: value.slice(0, slash).trim(),
-        model: value.slice(slash + 1).trim(),
+        model: normalizeBuiltInProviderModelId(
+          value.slice(0, slash).trim(),
+          value.slice(slash + 1).trim(),
+        ),
       };
     }
-    return { provider: defaultProvider, model: value };
+    return {
+      provider: defaultProvider,
+      model: normalizeBuiltInProviderModelId(defaultProvider, value),
+    };
   };
   const parseModelRef = vi.fn(parseModelRefImpl);
   const normalizeProviderId = (provider: string) => provider.trim().toLowerCase();
@@ -228,6 +242,7 @@ vi.mock("../agents/model-selection.js", () => {
     ),
     buildConfiguredModelCatalog: vi.fn(() => []),
     buildModelAliasIndex: vi.fn(() => new Map()),
+    resolveModelAliasFromPair: vi.fn(() => null),
     isModelKeyAllowedBySet,
     isCliProvider: vi.fn(() => false),
     modelKey,

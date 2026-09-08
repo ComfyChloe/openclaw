@@ -93,6 +93,8 @@ export function buildSubagentLaunchRequest(params: {
     idempotencyKey: params.childIdem,
     deliver: params.completionMode === "thread-direct",
     lane: AGENT_LANE_SUBAGENT,
+    // Preserve the captured choice through both WS dispatch and persisted queue replay.
+    ...(params.launchAuthorization ? { requestedRouteResolution: "resolved" } : {}),
     disableMessageTool: true,
     swarmCollector: collect,
     swarmOutputSchema: params.outputSchema,

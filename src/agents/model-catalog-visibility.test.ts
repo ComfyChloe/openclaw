@@ -46,6 +46,37 @@ describe("resolveLogicalVisibleModelCatalog", () => {
       routePolicy: openAIModelCatalogRoutePolicy,
     });
 
+  it.each(["all", "default", "configured"] as const)(
+    "keeps case-distinct provider models separate in %s",
+    async (view) => {
+      const catalog: ModelCatalogEntry[] = [
+        { provider: "custom", id: "Alpha", name: "Upper", contextWindow: 32000 },
+        { provider: "custom", id: "alpha", name: "Lower", contextWindow: 64000 },
+      ];
+      const cfg = {
+        agents: { defaults: { modelPolicy: { allow: ["custom/Alpha", "custom/alpha"] } } },
+      };
+      const policy = createModelVisibilityPolicy({
+        cfg,
+        catalog,
+        defaultProvider: "custom",
+        allowManifestNormalization: false,
+        allowPluginNormalization: false,
+      });
+      const result = await resolveLogicalVisibleModelCatalog({
+        cfg,
+        catalog,
+        defaultProvider: "custom",
+        view,
+        policy,
+        routePolicy: openAIModelCatalogRoutePolicy,
+        evaluateEntry: evaluateAvailableEntry,
+      });
+      expect(result).toEqual(expect.arrayContaining(catalog));
+      expect(result).toHaveLength(2);
+    },
+  );
+
   it.each(["default", "configured"] as const)(
     "hides deprecated and disabled rows from the %s picker view",
     async (view) => {

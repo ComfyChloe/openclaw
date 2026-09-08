@@ -54,7 +54,6 @@ export function resolvePluginSubagentOverridePolicies(
     const allowlist = compileModelAllowlist({
       configured: entry.subagent?.hasAllowedModelsConfig === true,
       values: entry.subagent?.allowedModels,
-      formatKey: (provider, model) => `${provider}/${model}`,
     });
     if (
       !allowModelOverride &&

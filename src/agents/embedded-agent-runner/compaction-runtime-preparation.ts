@@ -72,6 +72,7 @@ export function resolveCompactionRuntimeSelection(params: {
   selectedHarnessRuntime?: string;
   allowPluginNormalization?: boolean;
   manifestPlugins?: ModelManifestNormalizationContext["manifestPlugins"];
+  resolvedModelCatalog?: ModelManifestNormalizationContext["resolvedModelCatalog"];
 }) {
   const runtimePolicySessionKey = params.sandboxSessionKey ?? params.sessionKey ?? undefined;
   const runtimePolicyAgentId =
@@ -89,6 +90,7 @@ export function resolveCompactionRuntimeSelection(params: {
     defaultModel: DEFAULT_MODEL,
     allowPluginNormalization: params.allowPluginNormalization,
     manifestPlugins: params.manifestPlugins,
+    resolvedModelCatalog: params.resolvedModelCatalog,
   });
   const policyProvider = policyTarget.provider ?? DEFAULT_PROVIDER;
   const policyModelId = policyTarget.model ?? DEFAULT_MODEL;

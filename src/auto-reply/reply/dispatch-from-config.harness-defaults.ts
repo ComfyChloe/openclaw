@@ -7,6 +7,7 @@ import {
   resolveModelRefFromString,
   type ModelAliasIndex,
 } from "../../agents/model-selection.js";
+import { getAvailablePreparedModelCatalogSnapshot } from "../../agents/prepared-model-catalog.js";
 import { resolveSessionRuntimeOverrideForProvider } from "../../agents/session-runtime-compat.js";
 import { resolveChannelModelOverride } from "../../channels/model-overrides.js";
 import type { SessionEntry } from "../../config/sessions/types.js";
@@ -14,7 +15,7 @@ import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { logVerbose } from "../../globals.js";
 import { formatErrorMessage } from "../../infra/errors.js";
 import { resolveSessionPinnedHarnessId } from "../../sessions/agent-harness-session-key.js";
-import { resolveStoredModelOverride } from "../../sessions/stored-model-overrides.js";
+import { readStoredModelOverride } from "../../sessions/stored-model-overrides.js";
 import {
   sessionDeliveryChannel,
   sessionDeliveryOrigin,
@@ -27,6 +28,11 @@ import {
   resolveSessionStorePathCore,
 } from "./dispatch-from-config.runtime.js";
 import type { ReplyRunVerbosity } from "./get-reply.types.js";
+import {
+  resolveRuntimeNormalization,
+  type RuntimeModelNormalization,
+} from "./model-runtime-normalization.js";
+import { resolveStoredRuntimeModelSelection } from "./stored-model-override.js";
 
 type HarnessSourceVisibleRepliesDefault = "automatic" | "message_tool";
 
@@ -111,14 +117,12 @@ export function resolveTurnModelOverride(
   return normalizeOptionalString(replyOptions.heartbeatModelOverride);
 }
 
-function resolveChannelModelCandidate(params: {
-  aliasIndex: ModelAliasIndex;
+function resolveHarnessChannelModelInput(params: {
   cfg: OpenClawConfig;
   ctx: FinalizedMsgContext;
-  defaultProvider: string;
   entry?: SessionEntry;
   parentSessionKey?: string;
-}): HarnessDefaultCandidate | undefined {
+}): string | undefined {
   if (!params.cfg.channels?.modelByChannel) {
     return undefined;
   }
@@ -144,19 +148,13 @@ function resolveChannelModelCandidate(params: {
       params.ctx.SenderId,
     ],
   });
-  if (!channelModelOverride) {
-    return undefined;
-  }
-
-  return resolveModelRefFromString({
-    raw: channelModelOverride.model,
-    defaultProvider: params.defaultProvider,
-    aliasIndex: params.aliasIndex,
-  })?.ref;
+  return channelModelOverride?.model;
 }
 
 function resolveStoredModelCandidate(params: {
   cfg: OpenClawConfig;
+  aliasIndex: ModelAliasIndex;
+  normalization: RuntimeModelNormalization;
   defaultProvider: string;
   entry?: SessionEntry;
   parentSessionKey?: string;
@@ -164,7 +162,7 @@ function resolveStoredModelCandidate(params: {
   sessionKey?: string;
   sessionStore?: Record<string, SessionEntry>;
 }): HarnessDefaultCandidate | undefined {
-  const storedModelRef = resolveStoredModelOverride({
+  const storedModelRef = readStoredModelOverride({
     loadSessionEntry: (sessionKey) => {
       const agentId = resolveSessionAgentId({
         sessionKey,
@@ -184,30 +182,19 @@ function resolveStoredModelCandidate(params: {
     sessionStore: params.sessionStore,
     sessionKey: params.sessionKey,
     parentSessionKey: params.parentSessionKey,
-    defaultProvider: params.defaultProvider,
   });
   if (!storedModelRef) {
     return undefined;
   }
-  return {
-    provider: storedModelRef.provider ?? params.defaultProvider,
-    model: storedModelRef.model,
-  };
-}
-
-function resolveModelOverrideCandidate(params: {
-  aliasIndex: ModelAliasIndex;
-  defaultProvider: string;
-  modelOverride?: string;
-}): HarnessDefaultCandidate | undefined {
-  if (!params.modelOverride) {
-    return undefined;
-  }
-  return resolveModelRefFromString({
-    raw: params.modelOverride,
+  return resolveStoredRuntimeModelSelection({
+    cfg: params.cfg,
+    sessionEntry: params.entry,
+    storedOverride: storedModelRef,
     defaultProvider: params.defaultProvider,
+    catalog: params.normalization.resolvedModelCatalog ?? [],
     aliasIndex: params.aliasIndex,
-  })?.ref;
+    normalization: params.normalization,
+  });
 }
 
 /**
@@ -263,26 +250,45 @@ function resolveHarnessSourceVisibleRepliesDefault(params: {
     return undefined;
   }
   try {
+    const catalog = getAvailablePreparedModelCatalogSnapshot({
+      config: params.cfg,
+      agentId: params.sessionAgentId,
+    })?.entries;
+    const normalization = resolveRuntimeNormalization(params.cfg, catalog);
     const defaultModelRef = resolveDefaultModelForAgent({
       cfg: params.cfg,
       agentId: params.sessionAgentId,
+      ...normalization,
     });
     const aliasIndex = buildModelAliasIndex({
       cfg: params.cfg,
       agentId: params.sessionAgentId,
       defaultProvider: defaultModelRef.provider,
+      ...normalization,
     });
+    const resolveRawModelCandidate = (raw: string | undefined) =>
+      raw
+        ? resolveModelRefFromString({
+            cfg: params.cfg,
+            raw,
+            defaultProvider: defaultModelRef.provider,
+            aliasIndex,
+            ...normalization,
+          })?.ref
+        : undefined;
     const parentSessionKey = resolveHarnessDefaultParentSessionKey(params);
-    const channelModelCandidate = resolveChannelModelCandidate({
-      aliasIndex,
-      cfg: params.cfg,
-      ctx: params.ctx,
-      defaultProvider: defaultModelRef.provider,
-      entry: params.entry,
-      parentSessionKey,
-    });
+    const channelModelCandidate = resolveRawModelCandidate(
+      resolveHarnessChannelModelInput({
+        cfg: params.cfg,
+        ctx: params.ctx,
+        entry: params.entry,
+        parentSessionKey,
+      }),
+    );
     const storedModelCandidate = resolveStoredModelCandidate({
       cfg: params.cfg,
+      aliasIndex,
+      normalization,
       defaultProvider: defaultModelRef.provider,
       entry: params.entry,
       parentSessionKey,
@@ -290,11 +296,7 @@ function resolveHarnessSourceVisibleRepliesDefault(params: {
       sessionKey: params.sessionKey,
       sessionStore: params.sessionStore,
     });
-    const turnModelCandidate = resolveModelOverrideCandidate({
-      aliasIndex,
-      defaultProvider: defaultModelRef.provider,
-      modelOverride: params.turnModelOverride,
-    });
+    const turnModelCandidate = resolveRawModelCandidate(params.turnModelOverride);
     const resolveCandidateDefault = (candidate: { provider: string; model?: string }) => {
       const agentHarnessRuntimeOverride = resolveSessionRuntimeOverrideForProvider({
         provider: candidate.provider,

@@ -452,8 +452,10 @@ export async function buildPreparedModelCatalogSnapshot(
     logStage("suppress-resolver-ready");
 
     for (const entry of entries) {
-      const rawId = normalizeOptionalString(entry?.id) ?? "";
-      if (!rawId) {
+      // Registry IDs name executable models. Reinterpreting them as input
+      // aliases would move their capabilities onto another model.
+      const id = normalizeOptionalString(entry?.id) ?? "";
+      if (!id) {
         continue;
       }
       const rawProvider = normalizeOptionalString(entry?.provider) ?? "";
@@ -461,7 +463,6 @@ export async function buildPreparedModelCatalogSnapshot(
         continue;
       }
       const provider = normalizeProvider(rawProvider);
-      const id = normalizeModelId(provider, rawId);
       const baseUrl = normalizeOptionalString(entry?.baseUrl);
       if (shouldSuppressBuiltInModel({ provider, id, baseUrl })) {
         continue;
@@ -578,14 +579,9 @@ export async function buildPreparedModelCatalogSnapshot(
       });
       if (supplemental.length > 0) {
         // Explicitly configured rows are user-authorized even when live
-        // discovery omits them; normalize both sets to preserve their routes.
+        // discovery omits them; compare emitted identities to preserve their routes.
         const accountVisibleModelKeys = new Set(
-          [...models, ...configuredModels].map((entry) =>
-            resolveModelCatalogIdentityKey({
-              provider: entry.provider,
-              id: normalizeModelId(entry.provider, entry.id),
-            }),
-          ),
+          [...models, ...configuredModels].map(resolveModelCatalogIdentityKey),
         );
         const normalizedSupplemental: ModelCatalogEntry[] = [];
         for (const entry of supplemental) {

@@ -2,7 +2,6 @@ import { expectDefined } from "@openclaw/normalization-core";
 import { uniqueStrings } from "@openclaw/normalization-core/string-normalization";
 import { readAcpSessionMetaBatch } from "../acp/runtime/session-meta.js";
 import { readSessionRuntimeOwnership } from "../agents/harness/session-runtime-ownership.js";
-import { normalizeStoredOverrideModel } from "../agents/model-selection.js";
 import {
   resolveSessionModelIdentityRef,
   resolveSessionModelRef,
@@ -10,6 +9,7 @@ import {
 import { buildSubagentSessionListReadIndex } from "../agents/subagents/registry/subagent-registry-read.js";
 import { resolveSessionStorePathCore, type SessionEntry } from "../config/sessions.js";
 import type { GatewayStoredSessionTargets } from "../config/sessions/combined-store-gateway.js";
+import { resolveSessionModelOverrideRouteResolution } from "../config/sessions/model-override-provenance.js";
 import { resolveConcreteSessionStorePath } from "../config/sessions/session-accessor.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { normalizeAgentId } from "../routing/session-key.js";
@@ -75,10 +75,6 @@ export function resolveSessionSelectedModelRef(params: {
   if (ownership?.modelRef) {
     return ownership.modelRef;
   }
-  const override = normalizeStoredOverrideModel({
-    providerOverride: params.entry?.providerOverride,
-    modelOverride: params.entry?.modelOverride,
-  });
   if (!params.rowContext) {
     return resolveSessionModelRef(params.cfg, params.entry, params.agentId, {
       allowPluginNormalization: params.allowPluginNormalization,
@@ -86,8 +82,9 @@ export function resolveSessionSelectedModelRef(params: {
   }
   const key = [
     normalizeAgentId(params.agentId),
-    override.providerOverride ?? "",
-    override.modelOverride ?? "",
+    params.entry?.providerOverride ?? "",
+    params.entry?.modelOverride ?? "",
+    resolveSessionModelOverrideRouteResolution(params.entry),
   ].join("\0");
   const cached = params.rowContext.selectedModelByOverrideRef.get(key);
   if (cached) {

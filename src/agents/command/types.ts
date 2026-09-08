@@ -23,6 +23,7 @@ import type { CliSessionBindingFacts } from "../cli-runner/types.js";
 import type { CronCreatorAuthorityCapability } from "../cron-creator-authority-context.js";
 import type { RuntimeContextFragment } from "../internal-runtime-context.js";
 import type { MainSessionRecoveryOwnerLease } from "../main-session-recovery/main-session-recovery-store.js";
+import type { ModelFallbackRouteResolution } from "../model-fallback.types.js";
 import type { ScheduledToolPolicyContext } from "../scheduled-tool-policy.js";
 import type { TrustedSubagentCompletionHandoff } from "../subagents/announce/subagent-announce-handoff.js";
 import type { AgentStreamParams, ClientToolDefinition } from "./shared-types.js";
@@ -77,6 +78,8 @@ export type AgentCommandOpts = {
   provider?: string;
   /** Per-run model override. */
   model?: string;
+  /** Raw input by default; resolved preserves a complete selected provider/model tuple. */
+  requestedRouteResolution?: ModelFallbackRouteResolution;
   /** Explicit ordered fallback chain for this run. Undefined uses normal selection policy. */
   modelFallbacksOverride?: string[];
   to?: string;

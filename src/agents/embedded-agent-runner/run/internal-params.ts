@@ -34,6 +34,8 @@ export type CompactionAccountingFact = Readonly<
 
 export type RunEmbeddedAgentInternalParams = RunEmbeddedAgentParams & {
   onCompactionRequestBudget?: (budget: CompactionRequestBudget | undefined) => void;
+  /** Host-only default identity captured from this runtime's admitted catalog. */
+  onConfiguredDefault?: (ref: { provider: string; model: string }) => void;
   onCompactionAccounting?: (fact: CompactionAccountingFact | undefined) => void;
   /** Attempt-local context observer, installed by the host loop before dispatch. */
   onContextAccountingEvent?: (event: EmbeddedContextAccountingEvent) => void;

@@ -19,6 +19,16 @@ import { buildContextEngineCompactionSessionTarget } from "./run/session-bootstr
 
 const compactionTempDirs = useAutoCleanupTempDirTracker(afterEach);
 
+function resolveOpenAITarget(params: Parameters<typeof resolveEmbeddedCompactionTarget>[0]) {
+  return resolveEmbeddedCompactionTarget({
+    provider: "openai",
+    modelId: "gpt-5.5",
+    defaultProvider: "openai",
+    defaultModel: "gpt-5.5",
+    ...params,
+  });
+}
+
 describe("resolveCompactionContextTokenBudget", () => {
   const cfg = {} as OpenClawConfig;
   const modelWithWindow = (contextWindow: number) =>
@@ -441,11 +451,9 @@ describe("buildEmbeddedCompactionRuntimeContext", () => {
   });
 
   it("keeps configured OpenAI provider with legacy Codex auth profiles (#86373)", () => {
-    const result = resolveEmbeddedCompactionTarget({
-      provider: "openai",
+    const result = resolveOpenAITarget({
       modelId: "gpt-5.4",
       authProfileId: "openai:default",
-      defaultProvider: "openai",
       defaultModel: "gpt-5.4",
     });
     expect(result.provider).toBe("openai");
@@ -456,14 +464,10 @@ describe("buildEmbeddedCompactionRuntimeContext", () => {
   });
 
   it("keeps openai auth order with Codex profile on canonical OpenAI", () => {
-    const result = resolveEmbeddedCompactionTarget({
+    const result = resolveOpenAITarget({
       config: {
         auth: { order: { openai: ["openai:default"] } },
       } as unknown as OpenClawConfig,
-      provider: "openai",
-      modelId: "gpt-5.5",
-      defaultProvider: "openai",
-      defaultModel: "gpt-5.5",
     });
     expect(result.provider).toBe("openai");
     expect(result.runtimeProvider).toBeUndefined();
@@ -473,7 +477,7 @@ describe("buildEmbeddedCompactionRuntimeContext", () => {
   });
 
   it("keeps Codex-runtime OpenAI compaction on the canonical OpenAI provider", () => {
-    const result = resolveEmbeddedCompactionTarget({
+    const result = resolveOpenAITarget({
       config: {
         models: {
           providers: {
@@ -481,11 +485,7 @@ describe("buildEmbeddedCompactionRuntimeContext", () => {
           },
         },
       } as unknown as OpenClawConfig,
-      provider: "openai",
-      modelId: "gpt-5.5",
       harnessRuntime: "codex",
-      defaultProvider: "openai",
-      defaultModel: "gpt-5.5",
     });
     expect(result.provider).toBe("openai");
     expect(result.runtimeProvider).toBeUndefined();
@@ -595,7 +595,7 @@ describe("buildEmbeddedCompactionRuntimeContext", () => {
   });
 
   it("preserves direct OpenAI compaction for the OpenClaw runtime", () => {
-    const result = resolveEmbeddedCompactionTarget({
+    const result = resolveOpenAITarget({
       config: {
         models: {
           providers: {
@@ -603,11 +603,7 @@ describe("buildEmbeddedCompactionRuntimeContext", () => {
           },
         },
       } as unknown as OpenClawConfig,
-      provider: "openai",
-      modelId: "gpt-5.5",
       harnessRuntime: "openclaw",
-      defaultProvider: "openai",
-      defaultModel: "gpt-5.5",
     });
     expect(result.provider).toBe("openai");
     expect(result.runtimeProvider).toBeUndefined();
@@ -621,7 +617,7 @@ describe("buildEmbeddedCompactionRuntimeContext", () => {
     { selection: "bound OpenClaw", harnessRuntime: "openclaw", nativeCompaction: undefined },
     { selection: "bound Codex", harnessRuntime: "codex", nativeCompaction: true },
   ])("keeps $selection ownership for custom OpenAI Responses compaction", (fixture) => {
-    const result = resolveEmbeddedCompactionTarget({
+    const result = resolveOpenAITarget({
       config: {
         models: {
           providers: {
@@ -633,11 +629,7 @@ describe("buildEmbeddedCompactionRuntimeContext", () => {
           },
         },
       } as unknown as OpenClawConfig,
-      provider: "openai",
-      modelId: "gpt-5.5",
       harnessRuntime: fixture.harnessRuntime,
-      defaultProvider: "openai",
-      defaultModel: "gpt-5.5",
     });
     expect(result.provider).toBe("openai");
     expect(result.runtimeProvider).toBeUndefined();
@@ -648,7 +640,7 @@ describe("buildEmbeddedCompactionRuntimeContext", () => {
   });
 
   it("keeps a locked Codex harness authoritative over a custom OpenAI base URL", () => {
-    const result = resolveEmbeddedCompactionTarget({
+    const result = resolveOpenAITarget({
       config: {
         models: {
           providers: {
@@ -659,12 +651,8 @@ describe("buildEmbeddedCompactionRuntimeContext", () => {
           },
         },
       } as unknown as OpenClawConfig,
-      provider: "openai",
-      modelId: "gpt-5.5",
       harnessRuntime: "codex",
       modelSelectionLocked: true,
-      defaultProvider: "openai",
-      defaultModel: "gpt-5.5",
     });
     expect(result.provider).toBe("openai");
     expect(result.runtimeProvider).toBeUndefined();
@@ -673,34 +661,15 @@ describe("buildEmbeddedCompactionRuntimeContext", () => {
     expect(result.model).toBe("gpt-5.5");
   });
 
-  it("keeps model-only compaction overrides with legacy Codex auth on OpenAI", () => {
-    const result = resolveEmbeddedCompactionTarget({
+  it.each([
+    { label: "model-only", model: "gpt-5.4" },
+    { label: "openai", model: "openai/gpt-5.4" },
+  ])("keeps $label compaction overrides with legacy Codex auth on OpenAI", ({ model }) => {
+    const result = resolveOpenAITarget({
       config: {
-        agents: { defaults: { compaction: { model: "gpt-5.4" } } },
+        agents: { defaults: { compaction: { model } } },
       } as unknown as OpenClawConfig,
-      provider: "openai",
-      modelId: "gpt-5.5",
       authProfileId: "openai:default",
-      defaultProvider: "openai",
-      defaultModel: "gpt-5.5",
-    });
-    expect(result.provider).toBe("openai");
-    expect(result.runtimeProvider).toBeUndefined();
-    expect(result.contextProvider).toBeUndefined();
-    expect(result.model).toBe("gpt-5.4");
-    expect(result.authProfileId).toBe("openai:default");
-  });
-
-  it("keeps openai compaction overrides with legacy Codex auth on OpenAI", () => {
-    const result = resolveEmbeddedCompactionTarget({
-      config: {
-        agents: { defaults: { compaction: { model: "openai/gpt-5.4" } } },
-      } as unknown as OpenClawConfig,
-      provider: "openai",
-      modelId: "gpt-5.5",
-      authProfileId: "openai:default",
-      defaultProvider: "openai",
-      defaultModel: "gpt-5.5",
     });
     expect(result.provider).toBe("openai");
     expect(result.runtimeProvider).toBeUndefined();
@@ -710,7 +679,7 @@ describe("buildEmbeddedCompactionRuntimeContext", () => {
   });
 
   it("keeps OpenAI compaction model overrides on canonical OpenAI with Codex runtime", () => {
-    const result = resolveEmbeddedCompactionTarget({
+    const result = resolveOpenAITarget({
       config: {
         models: {
           providers: {
@@ -719,11 +688,7 @@ describe("buildEmbeddedCompactionRuntimeContext", () => {
         },
         agents: { defaults: { compaction: { model: "openai/gpt-5.4-mini" } } },
       } as unknown as OpenClawConfig,
-      provider: "openai",
-      modelId: "gpt-5.5",
       harnessRuntime: "codex",
-      defaultProvider: "openai",
-      defaultModel: "gpt-5.5",
     });
     expect(result.provider).toBe("openai");
     expect(result.runtimeProvider).toBeUndefined();
@@ -734,7 +699,7 @@ describe("buildEmbeddedCompactionRuntimeContext", () => {
   });
 
   it("resolves a mixed-case compaction model alias with a trailing profile on its provider", () => {
-    const result = resolveEmbeddedCompactionTarget({
+    const result = resolveOpenAITarget({
       config: {
         agents: {
           defaults: {
@@ -748,11 +713,7 @@ describe("buildEmbeddedCompactionRuntimeContext", () => {
           },
         },
       } as unknown as OpenClawConfig,
-      provider: "openai",
-      modelId: "gpt-5.5",
       authProfileId: "openai:default",
-      defaultProvider: "openai",
-      defaultModel: "gpt-5.5",
     });
     expect(result.provider).toBe("openai");
     expect(result.model).toBe("gpt-5.4-mini");
@@ -760,7 +721,7 @@ describe("buildEmbeddedCompactionRuntimeContext", () => {
   });
 
   it("resolves compaction.model alias to canonical model ref on different provider", () => {
-    const result = resolveEmbeddedCompactionTarget({
+    const result = resolveOpenAITarget({
       config: {
         agents: {
           defaults: {
@@ -773,11 +734,7 @@ describe("buildEmbeddedCompactionRuntimeContext", () => {
           },
         },
       } as unknown as OpenClawConfig,
-      provider: "openai",
-      modelId: "gpt-5.5",
       authProfileId: "openai:default",
-      defaultProvider: "openai",
-      defaultModel: "gpt-5.5",
     });
     expect(result.provider).toBe("anthropic");
     expect(result.model).toBe("claude-opus-4-6");
@@ -786,7 +743,7 @@ describe("buildEmbeddedCompactionRuntimeContext", () => {
   });
 
   it("preserves the full literal model and profile when no configured alias matches", () => {
-    const result = resolveEmbeddedCompactionTarget({
+    const result = resolveOpenAITarget({
       config: {
         agents: {
           defaults: {
@@ -799,11 +756,7 @@ describe("buildEmbeddedCompactionRuntimeContext", () => {
           },
         },
       } as unknown as OpenClawConfig,
-      provider: "openai",
-      modelId: "gpt-5.5",
       authProfileId: "openai:default",
-      defaultProvider: "openai",
-      defaultModel: "gpt-5.5",
     });
     expect(result.provider).toBe("openai");
     expect(result.model).toBe("nonexistent-alias@work");
@@ -834,7 +787,7 @@ describe("buildEmbeddedCompactionRuntimeContext", () => {
   });
 
   it("prefers literal configured model ids over alias collisions (#90340)", () => {
-    const result = resolveEmbeddedCompactionTarget({
+    const result = resolveOpenAITarget({
       config: {
         agents: {
           defaults: {
@@ -848,11 +801,7 @@ describe("buildEmbeddedCompactionRuntimeContext", () => {
           },
         },
       } as unknown as OpenClawConfig,
-      provider: "openai",
-      modelId: "gpt-5.5",
       authProfileId: "openai:default",
-      defaultProvider: "openai",
-      defaultModel: "gpt-5.5",
     });
     expect(result.provider).toBe("openai");
     expect(result.model).toBe("gpt54mini");
@@ -860,7 +809,7 @@ describe("buildEmbeddedCompactionRuntimeContext", () => {
   });
 
   it("keeps current-provider configured model ids over cross-provider alias collisions (#90340)", () => {
-    const result = resolveEmbeddedCompactionTarget({
+    const result = resolveOpenAITarget({
       config: {
         agents: {
           defaults: {
@@ -878,11 +827,7 @@ describe("buildEmbeddedCompactionRuntimeContext", () => {
           },
         },
       } as unknown as OpenClawConfig,
-      provider: "openai",
-      modelId: "gpt-5.5",
       authProfileId: "openai:default",
-      defaultProvider: "openai",
-      defaultModel: "gpt-5.5",
     });
     expect(result.provider).toBe("openai");
     expect(result.model).toBe("gpt-5.4-mini");
@@ -922,6 +867,39 @@ describe("buildEmbeddedCompactionRuntimeContext", () => {
       expectedProvider: "google",
       expectedModel: "shared-model",
       expectedAuthProfileId: "google:default",
+    },
+    {
+      name: "prefers an exact bare model on another provider over the current provider's folded row",
+      config: {
+        models: {
+          providers: {
+            current: { models: [{ id: "Alpha" }] },
+            other: { models: [{ id: "alpha" }] },
+          },
+        },
+        agents: { defaults: { compaction: { model: "alpha" } } },
+      },
+      provider: "current",
+      authProfileId: "current:default",
+      expectedProvider: "other",
+      expectedModel: "alpha",
+      expectedAuthProfileId: undefined,
+    },
+    {
+      name: "prefers an exact bare settings key over the current provider's folded settings key",
+      config: {
+        agents: {
+          defaults: {
+            compaction: { model: "alpha" },
+            models: { "current/Alpha": {}, "other/alpha": {} },
+          },
+        },
+      },
+      provider: "current",
+      authProfileId: "current:default",
+      expectedProvider: "other",
+      expectedModel: "alpha",
+      expectedAuthProfileId: undefined,
     },
     {
       name: "preserves a multi-segment model id and trailing profile suffix",
@@ -991,5 +969,91 @@ describe("buildContextEngineCompactionSessionTarget", () => {
         sessionId,
       }),
     ).toEqual({ agentId: "main", sessionId, storePath });
+  });
+});
+
+describe("admitted compaction model identity", () => {
+  const manifestPlugins = [
+    {
+      modelIdNormalization: {
+        providers: { "compaction-fixture": { aliases: { latest: "middle", middle: "final" } } },
+      },
+    },
+  ];
+  it.each([
+    { override: "compaction-fixture/latest", expected: "middle" },
+    { override: "latest", expected: "middle" },
+    { override: "summary", expected: "middle", alias: true },
+    { override: undefined, expected: "middle" },
+    { override: "compaction-fixture/latest", expected: "middle", locked: true },
+    { override: "compaction-fixture/middle", expected: "middle", captured: "middle" },
+    { override: "latest", expected: "middle", configured: true },
+    { override: "latest", expected: "middle", configured: true, currentProvider: "other" },
+    { override: "latest", expected: "latest", configured: true, captured: "latest" },
+  ])(
+    "resolves raw override $override once and preserves selected $expected",
+    ({ override, expected, alias, locked, captured, configured, currentProvider }) => {
+      const result = resolveEmbeddedCompactionTarget({
+        config: {
+          ...(configured
+            ? {
+                models: {
+                  providers: {
+                    "compaction-fixture": {
+                      baseUrl: "https://example.test",
+                      models: [
+                        {
+                          id: "latest",
+                          name: "Latest",
+                          reasoning: false,
+                          input: ["text"] as Array<"text">,
+                          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+                          maxTokens: 1024,
+                        },
+                      ],
+                    },
+                  },
+                },
+              }
+            : {}),
+          agents: {
+            defaults: {
+              ...(override ? { compaction: { model: override } } : {}),
+              ...(alias ? { models: { "compaction-fixture/latest": { alias: "summary" } } } : {}),
+            },
+          },
+        },
+        provider: currentProvider ?? "compaction-fixture",
+        modelId: "middle",
+        authProfileId: "profile",
+        modelSelectionLocked: locked,
+        manifestPlugins,
+        allowPluginNormalization: false,
+        resolvedModelCatalog: [{ provider: "compaction-fixture", id: captured ?? "middle" }],
+      });
+      expect(result).toMatchObject({
+        provider: "compaction-fixture",
+        model: expected,
+        authProfileId: currentProvider ? undefined : "profile",
+      });
+    },
+  );
+
+  it("carries an executing compaction target instead of reselecting the configured input", () => {
+    const result = buildEmbeddedCompactionRuntimeContext(
+      {
+        workspaceDir: "/tmp/workspace",
+        provider: "compaction-fixture",
+        modelId: "middle",
+        authProfileId: "profile",
+        config: { agents: { defaults: { compaction: { model: "compaction-fixture/latest" } } } },
+      },
+      { provider: "compaction-fixture", model: "middle", authProfileId: "profile" },
+    );
+    expect(result).toMatchObject({
+      provider: "compaction-fixture",
+      model: "middle",
+      authProfileId: "profile",
+    });
   });
 });

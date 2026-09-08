@@ -2,11 +2,14 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { createPluginMetadataSnapshotFixture } from "../plugins/plugin-metadata.test-support.js";
+import { applyPrimaryModel } from "../plugins/provider-model-primary.js";
+import { parseJsonWithJson5Fallback } from "../utils/parse-json-compat.js";
 import {
   buildAllowedModelSet,
   buildConfiguredModelCatalog,
   buildModelAliasIndex,
   resolveConfiguredModelRef,
+  resolveModelRefFromString,
 } from "./model-selection-shared.js";
 
 const loadManifestMetadataSnapshotMock = vi.hoisted(() => vi.fn());
@@ -54,6 +57,149 @@ describe("configured model manifest workspace scope", () => {
         ],
       }),
     );
+  });
+
+  it.each([undefined, "openai-completions"] as const)(
+    "keeps a catalog selection after saving and resolving with provider API %s",
+    (api) => {
+      const snapshot = createPluginMetadataSnapshotFixture({
+        plugins: [
+          {
+            id: "input-owner",
+            modelIdNormalization: {
+              providers: {
+                custom: { aliases: { latest: "middle", middle: "final" } },
+              },
+            },
+          },
+        ],
+      });
+      const cfg = {
+        models: {
+          providers: {
+            custom: {
+              api,
+              models: [{ id: "latest" }, { id: "middle" }, { id: "final" }],
+            },
+          },
+        },
+      } as unknown as OpenClawConfig;
+      expect(
+        buildConfiguredModelCatalog({ cfg, manifestPlugins: snapshot }).map((row) => row.id),
+      ).toEqual(["middle", "final"]);
+      const saved = applyPrimaryModel(cfg, "custom/middle");
+      const reloaded = parseJsonWithJson5Fallback(JSON.stringify(saved)) as OpenClawConfig;
+      getCurrentPluginMetadataSnapshotMock.mockReturnValue(snapshot);
+      expect(
+        resolveConfiguredModelRef({
+          cfg: reloaded,
+          defaultProvider: "openai",
+          defaultModel: "default",
+        }),
+      ).toEqual({ provider: "custom", model: "middle" });
+      expect(
+        resolveModelRefFromString({
+          cfg: reloaded,
+          raw: "custom/middle@work",
+          defaultProvider: "openai",
+          manifestPlugins: snapshot,
+        })?.ref,
+      ).toEqual({ provider: "custom", model: "middle" });
+    },
+  );
+
+  it.each([
+    { provider: "custom", raw: "middle", expected: "final" },
+    { provider: "google", raw: "gemini-3-pro-preview", expected: "gemini-3.1-pro-preview" },
+    { provider: "together", raw: "moonshotai/Kimi-K2.5", expected: "moonshotai/Kimi-K2.6" },
+  ])("keeps alias-only input migration for $provider/$raw", ({ provider, raw, expected }) => {
+    const manifestPlugins = [
+      {
+        modelIdNormalization: {
+          providers: {
+            custom: { aliases: { middle: "final" } },
+          },
+        },
+      },
+    ];
+    const cfg = {
+      agents: { defaults: { model: `${provider}/${raw}` } },
+      models: { providers: { [provider]: { models: [{ id: raw }] } } },
+    } as unknown as OpenClawConfig;
+    expect(
+      resolveConfiguredModelRef({
+        cfg,
+        defaultProvider: provider,
+        defaultModel: "default",
+        manifestPlugins,
+      }),
+    ).toEqual({ provider, model: expected });
+    expect(
+      resolveConfiguredModelRef({
+        cfg: applyPrimaryModel(cfg, `${provider}/${raw}`),
+        defaultProvider: provider,
+        defaultModel: "default",
+        manifestPlugins,
+      }),
+    ).toEqual({ provider, model: expected });
+  });
+
+  it("uses the captured catalog generation and preserves operator aliases and profiles", () => {
+    const manifestPlugins = [
+      {
+        modelIdNormalization: {
+          providers: {
+            custom: { aliases: { latest: "middle", middle: "final" } },
+          },
+        },
+      },
+    ];
+    getCurrentPluginMetadataSnapshotMock.mockReturnValue(
+      createPluginMetadataSnapshotFixture({
+        plugins: [
+          {
+            id: "replacement",
+            modelIdNormalization: {
+              providers: {
+                custom: { aliases: { latest: "changed", middle: "different" } },
+              },
+            },
+          },
+        ],
+      }),
+    );
+    const cfg = {
+      agents: { defaults: { models: { "custom/other": { alias: "custom/middle" } } } },
+      models: { providers: { custom: { models: [{ id: "latest" }, { id: "middle" }] } } },
+    } as unknown as OpenClawConfig;
+    expect(
+      resolveModelRefFromString({
+        cfg,
+        raw: "custom/middle",
+        defaultProvider: "custom",
+        manifestPlugins,
+      })?.ref,
+    ).toEqual({ provider: "custom", model: "middle" });
+    const aliasIndex = buildModelAliasIndex({ cfg, defaultProvider: "custom", manifestPlugins });
+    expect(
+      resolveModelRefFromString({
+        cfg,
+        raw: "custom/middle@work",
+        defaultProvider: "custom",
+        manifestPlugins,
+        aliasIndex,
+      })?.ref,
+    ).toEqual({ provider: "custom", model: "other" });
+    expect(
+      resolveConfiguredModelRef({
+        cfg: applyPrimaryModel(cfg, "custom/middle@work"),
+        defaultProvider: "custom",
+        defaultModel: "default",
+        manifestPlugins,
+      }),
+    ).toEqual({ provider: "custom", model: "other" });
+    expect(getCurrentPluginMetadataSnapshotMock).not.toHaveBeenCalled();
+    expect(loadManifestMetadataSnapshotMock).not.toHaveBeenCalled();
   });
 
   it("does not reuse workspace manifest policies without a workspace context", () => {

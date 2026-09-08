@@ -1,7 +1,5 @@
 // Deepinfra provider module implements model/runtime integration.
 import {
-  describeImageWithModel,
-  describeImagesWithModel,
   transcribeOpenAiCompatibleAudio,
   type AudioTranscriptionRequest,
   type MediaUnderstandingProvider,
@@ -47,8 +45,6 @@ export function buildDeepInfraMediaUnderstandingProvider(options?: {
       audio: 45,
     },
     transcribeAudio: transcribeDeepInfraAudio,
-    describeImage: describeImageWithModel,
-    describeImages: describeImagesWithModel,
   };
 }
 

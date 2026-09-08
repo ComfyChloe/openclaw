@@ -116,6 +116,26 @@ vi.mock("./model-catalog.js", () => ({
     compactionTestState.loadManifestModelCatalogMock(params),
 }));
 
+vi.mock("./prepared-model-runtime.js", async () => {
+  const { createPluginMetadataSnapshotFixture } =
+    await import("../plugins/plugin-metadata.test-support.js");
+  return {
+    preparedModelRuntimeConfigsMatch: (left: unknown, right: unknown) => left === right,
+    acquireAgentRunPreparedModelRuntime: async (
+      input: import("./prepared-model-runtime.types.js").PreparedModelRuntimeInput,
+      options: { abortSignal?: AbortSignal },
+    ) => {
+      options.abortSignal?.throwIfAborted();
+      const metadataSnapshot = createPluginMetadataSnapshotFixture();
+      return {
+        snapshot: { ...input, metadataSnapshot, modelCatalog: { entries: [], routeVariants: [] } },
+        pluginGeneration: { pluginMetadataSnapshot: metadataSnapshot },
+        release() {},
+      };
+    },
+  };
+});
+
 vi.mock("./model-catalog.runtime.js", () => ({
   loadProviderScopedThinkingCatalog: vi.fn(async () => []),
   loadPreparedModelCatalogSnapshot: vi.fn(async () => ({

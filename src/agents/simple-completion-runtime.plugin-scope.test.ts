@@ -20,6 +20,7 @@ import {
   type PreparedModelRuntimeSnapshot,
 } from "./prepared-model-runtime.js";
 import { resetPreparedModelRuntimeSnapshotsForTest } from "./prepared-model-runtime.test-support.js";
+import { resolveProviderIdForAuth } from "./provider-auth-aliases.js";
 import { getModelProviderLocalServiceReconciler } from "./provider-local-service-reconcile.js";
 import { getModelProviderLocalService } from "./provider-local-service.js";
 import { AuthStorage, ModelRegistry } from "./sessions/index.js";
@@ -144,6 +145,7 @@ describe("simple completion prepared plugin scope", () => {
         pluginId: "selected-provider-plugin",
         providerId: "selected-provider",
         manifest: {
+          providerAuthAliases: { "shared-auth": "selected-provider" },
           modelCatalog: {
             providers: {
               "selected-provider": {
@@ -158,6 +160,7 @@ describe("simple completion prepared plugin scope", () => {
         rootDir: unrelatedRoot,
         pluginId: "unrelated-provider-plugin",
         providerId: "unrelated-provider",
+        manifest: { providerAuthAliases: { "shared-auth": "unrelated-provider" } },
         runtimeMessage: "unrelated provider runtime must remain cold",
       });
       fs.writeFileSync(
@@ -190,6 +193,9 @@ module.exports = {
       const modelResolver: typeof resolveModelAsync = vi.fn(
         async (provider, modelId, _agentDir, _cfg, options) => {
           preparedRuntime = options?.preparedModelRuntime;
+          expect(resolveProviderIdForAuth("shared-auth", { config: _cfg })).toBe(
+            "selected-provider",
+          );
           return {
             error: `stop after selected resolver ${provider}/${modelId}`,
             authStorage: options?.authStorage ?? AuthStorage.inMemory({}),

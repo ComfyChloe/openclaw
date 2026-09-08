@@ -114,13 +114,34 @@ describe("manifest model suppression", () => {
     });
   });
 
+  it("matches suppression keys case-insensitively while preserving requested model spelling", () => {
+    mocks.loadPluginMetadataSnapshot.mockReturnValue(
+      createMetadataSnapshot([
+        {
+          id: "custom",
+          providers: ["custom"],
+          modelCatalog: {
+            suppressions: [{ provider: "custom", model: "Alpha", reason: "Retired Alpha." }],
+          },
+        },
+      ]),
+    );
+    const resolver = buildManifestBuiltInModelSuppressionResolver({ env: process.env });
+    for (const id of ["Alpha", "alpha"]) {
+      expect(resolver({ provider: "CUSTOM", id })).toMatchObject({
+        suppress: true,
+        errorMessage: `Unknown model: custom/${id}. Retired Alpha.`,
+      });
+    }
+  });
+
   it("resolves manifest suppressions for declared provider aliases", () => {
     const resolver = buildManifestBuiltInModelSuppressionResolver({ env: process.env });
 
     expect(
       resolver({
         provider: "azure-openai-responses",
-        id: "GPT-5.3-Codex-Spark",
+        id: "gpt-5.3-codex-spark",
       }),
     ).toEqual({
       suppress: true,

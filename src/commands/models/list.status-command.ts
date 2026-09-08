@@ -1,6 +1,5 @@
 /** Implementation of `openclaw models status`. */
 import path from "node:path";
-import { stripSelfProviderModelPrefix } from "@openclaw/model-catalog-core/provider-model-id-normalization";
 import {
   parseStrictFiniteNumber,
   parseStrictPositiveInteger,
@@ -594,11 +593,13 @@ export async function modelsStatusCommand(
       >();
       const resolveStatusRouteIdentityKey = (entry: { provider: string; id: string }) => {
         const provider = normalizeProviderId(entry.provider);
+        const id = entry.id.trim();
+        const prefix = `${provider}/`;
         // Physical catalog rows may repeat their provider in the model id.
         // Collapse only that prefix; the remaining model id stays case-sensitive.
         return resolveModelCatalogIdentityKey({
           provider,
-          id: stripSelfProviderModelPrefix(provider, modelKey(provider, entry.id)),
+          id: id.toLowerCase().startsWith(prefix) ? id.slice(prefix.length) : id,
         });
       };
       for (const entry of catalog.routeVariants) {

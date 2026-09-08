@@ -1,4 +1,5 @@
 // Coverage for forward-compatible model fallback errors and provider overrides.
+import { setCurrentManifestModelIdNormalizationPolicies } from "@openclaw/model-catalog-core/provider-model-id-normalization";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ModelProviderConfig, OpenClawConfig } from "../../config/config.js";
 import {
@@ -9,6 +10,7 @@ import type { ModelDefinitionConfig } from "../../config/types.models.js";
 import { discoverModels } from "../agent-model-discovery.js";
 import type { PreparedModelRuntimeSnapshot } from "../prepared-model-runtime.js";
 import { buildConfiguredFallbackModel } from "./model.configured-fallback.js";
+import { applyConfiguredProviderOverrides } from "./model.configured-overrides.js";
 import { buildInlineProviderModels } from "./model.inline-provider.js";
 import { createProviderRuntimeTestMock } from "./model.provider-runtime.test-support.js";
 
@@ -204,6 +206,72 @@ async function resolveAnthropicModelWithProviderOverrides(overrides: Partial<Mod
 }
 
 describe("resolveModel forward-compat errors and overrides", () => {
+  it.each([
+    { sourceModelIds: ["vendor/model"], requestedModelId: "vendor/model" },
+    { sourceModelIds: ["vendor/vendor/model"], requestedModelId: "vendor/model" },
+    { sourceModelIds: ["vendor/model"], requestedModelId: "logical-alias" },
+    { sourceModelIds: ["vendor/vendor/model"], requestedModelId: "logical-alias" },
+    { sourceModelIds: ["vendor/model", "vendor/vendor/model"], requestedModelId: "vendor/model" },
+    { sourceModelIds: ["vendor/vendor/model", "vendor/model"], requestedModelId: "vendor/model" },
+  ])(
+    "keeps resolved pricing identity for $requestedModelId from source rows $sourceModelIds",
+    ({ sourceModelIds, requestedModelId }) => {
+      const provider = "pricing-fixture";
+      const modelId = "vendor/model";
+      const model = {
+        ...makeModel(modelId),
+        cost: { input: 99, output: 99, cacheRead: 0, cacheWrite: 0 },
+      };
+      const cost = { input: 7, output: 22, cacheRead: 3, cacheWrite: 4 };
+      const providerConfig = { baseUrl: "https://models.example/v1", models: [model] };
+      const runtime: OpenClawConfig = {
+        models: {
+          providers: { [provider]: providerConfig },
+        },
+      };
+      const source: OpenClawConfig = {
+        models: {
+          providers: {
+            [provider]: {
+              baseUrl: "https://models.example/v1",
+              models: sourceModelIds.map((id) => ({
+                ...model,
+                id,
+                cost: id === "vendor/model" || sourceModelIds.length === 1 ? cost : model.cost,
+              })),
+            },
+          },
+        },
+      };
+      setRuntimeConfigSnapshot(runtime, source);
+      setCurrentManifestModelIdNormalizationPolicies(
+        new Map([[provider, { stripPrefixes: ["vendor/"] }]]),
+      );
+      try {
+        expect(
+          applyConfiguredProviderOverrides({
+            provider,
+            modelId: requestedModelId,
+            cfg: runtime,
+            providerConfig,
+            manifestAlias: { provider },
+            discoveredModel: {
+              ...model,
+              provider,
+              api: "openai-completions",
+              input: ["text"],
+              contextWindow: 1,
+              baseUrl: providerConfig.baseUrl,
+              cost,
+            },
+          }).cost,
+        ).toEqual(cost);
+      } finally {
+        setCurrentManifestModelIdNormalizationPolicies(undefined);
+      }
+    },
+  );
+
   const catalogCost = {
     input: 11,
     output: 22,
@@ -268,15 +336,18 @@ describe("resolveModel forward-compat errors and overrides", () => {
           providers: {
             " Pricing-Fixture ": {
               ...providerConfig,
-              models: missingSource
-                ? []
-                : [
-                    {
-                      id: " priced-model ",
-                      contextWindow: 8192,
-                      ...(cost === undefined ? {} : { cost }),
-                    },
-                  ],
+              models: [
+                { id: "pricing-fixture/priced-model", cost: { input: 333, output: 555 } },
+                ...(missingSource
+                  ? []
+                  : [
+                      {
+                        id: " priced-model ",
+                        contextWindow: 8192,
+                        ...(cost === undefined ? {} : { cost }),
+                      },
+                    ]),
+              ],
             },
           },
         },

@@ -1179,8 +1179,8 @@ describe("active-memory plugin", () => {
     expect(lastEmbeddedRunParams()).toMatchObject({
       workspaceDir: "/tmp/live-personal-workspace",
       agentDir: "/tmp/live-personal-agent",
-      provider: "openai",
-      model: "gpt-5.5",
+      model: "openai/gpt-5.5",
+      requestedRouteResolution: "raw",
     });
     expect(embeddedRunConfig()).toMatchObject({
       agents: {
@@ -1985,8 +1985,9 @@ describe("active-memory plugin", () => {
     expect(prependContext).toContain("Context:");
     expect(prependContext).toContain("lemon pepper wings");
     const params = lastEmbeddedRunParams();
-    expect(params.provider).toBe("github-copilot");
-    expect(params.model).toBe("gpt-5.4-mini");
+    expect(params.provider).toBeUndefined();
+    expect(params.model).toBe("github-copilot/gpt-5.4-mini");
+    expect(params.requestedRouteResolution).toBe("raw");
     expect(params.messageProvider).toBe("webchat");
     expect(params.sessionKey).toMatch(/^agent:main:main:active-memory:[a-f0-9]{12}$/);
     expect(params.cleanupBundleMcpOnRunEnd).toBe(true);
@@ -2408,6 +2409,7 @@ describe("active-memory plugin", () => {
 
     expect(lastEmbeddedRunParams().provider).toBe("qwen");
     expect(lastEmbeddedRunParams().model).toBe("glm-5");
+    expect(lastEmbeddedRunParams().requestedRouteResolution).toBe("resolved");
   });
 
   it("infers the configured provider for bare active-memory default models", async () => {
@@ -2440,8 +2442,9 @@ describe("active-memory plugin", () => {
 
     await runPromptBuild({ prompt: "what wings should i order? bare model default" });
 
-    expect(lastEmbeddedRunParams().provider).toBe("openai");
+    expect(lastEmbeddedRunParams().provider).toBeUndefined();
     expect(lastEmbeddedRunParams().model).toBe("gpt-5.5");
+    expect(lastEmbeddedRunParams().requestedRouteResolution).toBe("raw");
   });
 
   it("skips recall when no model or explicit fallback resolves", async () => {
@@ -2473,8 +2476,9 @@ describe("active-memory plugin", () => {
       },
     );
 
-    expect(lastEmbeddedRunParams().provider).toBe("google");
-    expect(lastEmbeddedRunParams().model).toBe("gemini-3-flash-preview");
+    expect(lastEmbeddedRunParams().provider).toBeUndefined();
+    expect(lastEmbeddedRunParams().model).toBe("google/gemini-3-flash");
+    expect(lastEmbeddedRunParams().requestedRouteResolution).toBe("raw");
     expect(hasWarnLine("config.modelFallbackPolicy is deprecated")).toBe(true);
     // #74587: deprecation warning must spell out the chain-resolution
     // semantics so operators don't read it as a promise of runtime failover.

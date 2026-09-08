@@ -135,12 +135,10 @@ export type ProviderPlugin = {
    */
   staticCatalog?: ProviderPluginCatalog;
   /**
-   * Show catalog row labels as the literal `<provider>/<entry.id>`
-   * composition instead of the canonical (deduped) key.
-   *
-   * `modelKey` strips a duplicate `<provider>/` prefix so storage and
-   * lookups stay stable. This flag only changes the picker label — the
-   * option value and persisted config remain canonical.
+   * Preserve the literal `<provider>/<entry.id>` composition in labels
+   * when an auth choice supplies a shorthand model ref. Canonical catalog
+   * keys already preserve the provider-local namespace. This flag changes
+   * display only; the supplied selection value remains unchanged.
    *
    * Set when the leading `<provider>/` segment in the native model id is
    * a meaningful vendor namespace (e.g. NVIDIA's `nvidia/nemotron-...`

@@ -4,6 +4,7 @@
 import { normalizeProviderId } from "@openclaw/model-catalog-core/provider-id";
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import { resolveCollapsedSessionAuthPinSource } from "../config/sessions/auth-profile-override-provenance.js";
+import { resolveSessionModelOverrideRouteResolution } from "../config/sessions/model-override-provenance.js";
 import { resolveSessionStorePathCore } from "../config/sessions/paths.js";
 import {
   loadSessionEntryReadOnly,
@@ -12,9 +13,8 @@ import {
 import type { SessionEntry } from "../config/sessions/types.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { resolveSessionAgentId } from "./agent-scope.js";
-import { DEFAULT_MODEL, DEFAULT_PROVIDER } from "./defaults.js";
+import type { ModelManifestNormalizationContext, ModelRef } from "./model-ref-shared.js";
 import {
-  normalizeStoredOverrideModel,
   resolveDefaultModelForAgent,
   resolvePersistedSelectedModelRef,
 } from "./model-selection.js";
@@ -28,9 +28,6 @@ export type LiveSessionModelSelection = {
   authProfileIdSource?: "auto" | "user";
 };
 
-const OPENAI_PROVIDER_ID = "openai";
-const OPENAI_CODEX_PROVIDER_ID = "openai";
-
 /**
  * Entry-snapshot variant of the selection resolver, so atomic patch callbacks
  * can evaluate the persisted selection against the exact row they may rewrite.
@@ -38,34 +35,21 @@ const OPENAI_CODEX_PROVIDER_ID = "openai";
 function resolveSelectionFromSessionEntry(params: {
   cfg: OpenClawConfig;
   entry: SessionEntry | undefined;
-  agentId?: string;
   defaultProvider: string;
   defaultModel: string;
 }): LiveSessionModelSelection {
   const { cfg, entry } = params;
-  const agentId = normalizeOptionalString(params.agentId);
-  const defaultModelRef = agentId
-    ? resolveDefaultModelForAgent({
-        cfg,
-        agentId,
-      })
-    : { provider: params.defaultProvider, model: params.defaultModel };
-  const normalizedSelection = normalizeStoredOverrideModel({
-    providerOverride: entry?.providerOverride,
-    modelOverride: entry?.modelOverride,
-  });
+  const defaultModelRef = { provider: params.defaultProvider, model: params.defaultModel };
   const persisted = resolvePersistedSelectedModelRef({
     defaultProvider: defaultModelRef.provider,
     runtimeProvider: entry?.modelProvider,
     runtimeModel: entry?.model,
-    overrideProvider: normalizedSelection.providerOverride,
-    overrideModel: normalizedSelection.modelOverride,
+    overrideProvider: entry?.providerOverride,
+    overrideModel: entry?.modelOverride,
+    overrideRouteResolution: resolveSessionModelOverrideRouteResolution(entry),
   });
   const provider =
-    persisted?.provider ??
-    normalizedSelection.providerOverride ??
-    entry?.providerOverride?.trim() ??
-    defaultModelRef.provider;
+    persisted?.provider ?? entry?.providerOverride?.trim() ?? defaultModelRef.provider;
   const model = persisted?.model ?? defaultModelRef.model;
   const agentRuntimeOverride = resolveSessionRuntimeOverrideForProvider({
     provider,
@@ -82,15 +66,12 @@ function resolveSelectionFromSessionEntry(params: {
   };
 }
 
-function isAlreadyAppliedOpenAICodexRuntimePromotion(
+function modelSelectionsMatch(
   current: { provider: string; model: string },
   next: LiveSessionModelSelection,
 ): boolean {
-  // The embedded Codex runtime reports openai after applying a canonical
-  // openai selection. Other runtime aliases remain real live-switch targets.
   return (
-    normalizeProviderId(current.provider) === OPENAI_CODEX_PROVIDER_ID &&
-    normalizeProviderId(next.provider) === OPENAI_PROVIDER_ID &&
+    normalizeProviderId(current.provider) === normalizeProviderId(next.provider) &&
     current.model === next.model
   );
 }
@@ -105,11 +86,8 @@ function hasDifferentLiveSessionModelSelection(
   },
   next: LiveSessionModelSelection,
 ): boolean {
-  const modelSelectionDiffers =
-    (current.provider !== next.provider || current.model !== next.model) &&
-    !isAlreadyAppliedOpenAICodexRuntimePromotion(current, next);
   return (
-    modelSelectionDiffers ||
+    !modelSelectionsMatch(current, next) ||
     normalizeOptionalString(current.agentRuntimeOverride) !== next.agentRuntimeOverride ||
     normalizeOptionalString(current.authProfileId) !== next.authProfileId ||
     (normalizeOptionalString(current.authProfileId) ? current.authProfileIdSource : undefined) !==
@@ -145,6 +123,7 @@ export function shouldSwitchToLiveModel(params: {
   sessionPersistence?: "durable" | "detached";
   defaultProvider: string;
   defaultModel: string;
+  modelManifestContext?: ModelManifestNormalizationContext;
   currentProvider: string;
   currentModel: string;
   currentAgentRuntimeOverride?: string;
@@ -170,12 +149,19 @@ export function shouldSwitchToLiveModel(params: {
   if (!entry?.liveModelSwitchPending) {
     return undefined;
   }
+  const defaults = params.agentId
+    ? resolveDefaultModelForAgent({
+        cfg,
+        agentId: params.agentId,
+        allowPluginNormalization: true,
+        ...params.modelManifestContext,
+      })
+    : { provider: params.defaultProvider, model: params.defaultModel };
   const persisted = resolveSelectionFromSessionEntry({
     cfg,
     entry,
-    agentId: params.agentId,
-    defaultProvider: params.defaultProvider,
-    defaultModel: params.defaultModel,
+    defaultProvider: defaults.provider,
+    defaultModel: defaults.model,
   });
   if (
     !hasDifferentLiveSessionModelSelection(
@@ -221,6 +207,7 @@ export async function consolidateLiveModelSwitchAfterRun(params: {
   agentId?: string;
   providerUsed?: string;
   modelUsed?: string;
+  configuredDefault?: ModelRef;
 }): Promise<void> {
   const sessionKey = normalizeOptionalString(params.sessionKey);
   const cfg = params.cfg;
@@ -242,6 +229,8 @@ export async function consolidateLiveModelSwitchAfterRun(params: {
   if (!storePath) {
     return;
   }
+  // Normalize input before the synchronous store update; the callback compares exact identities.
+  const defaults = params.configuredDefault ?? resolveDefaultModelForAgent({ cfg, agentId });
   await patchSessionEntryCore(
     { storePath, sessionKey },
     (entry) => {
@@ -251,16 +240,13 @@ export async function consolidateLiveModelSwitchAfterRun(params: {
       const persisted = resolveSelectionFromSessionEntry({
         cfg,
         entry,
-        agentId,
-        defaultProvider: DEFAULT_PROVIDER,
-        defaultModel: DEFAULT_MODEL,
+        defaultProvider: defaults.provider,
+        defaultModel: defaults.model,
       });
-      const selectionApplied =
-        (providerUsed === persisted.provider && modelUsed === persisted.model) ||
-        isAlreadyAppliedOpenAICodexRuntimePromotion(
-          { provider: providerUsed, model: modelUsed },
-          persisted,
-        );
+      const selectionApplied = modelSelectionsMatch(
+        { provider: providerUsed, model: modelUsed },
+        persisted,
+      );
       if (!selectionApplied) {
         return null;
       }

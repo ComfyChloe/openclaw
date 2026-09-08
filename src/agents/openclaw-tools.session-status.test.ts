@@ -52,6 +52,7 @@ const listSessionStateEventsSinceMock = vi.hoisted(() =>
     historyGap: false,
   })),
 );
+const workspaceCatalogReasoning = vi.hoisted(() => new Map<string, boolean>());
 const emptyPluginMetadataSnapshot = {
   configFingerprint: "session-status-test-empty-plugin-metadata",
   ...createPluginMetadataSnapshotFixture(),
@@ -211,7 +212,7 @@ function createModelCatalogModuleMock() {
     loadPreparedModelCatalog: async () => {
       throw new Error("prepared model catalog owner config was replaced during the read (/tmp)");
     },
-    loadPublishedPreparedModelCatalog: async () => [
+    loadPublishedPreparedModelCatalog: async (params?: { workspaceDir?: string }) => [
       {
         provider: "anthropic",
         id: "claude-sonnet-4-6",
@@ -222,7 +223,7 @@ function createModelCatalogModuleMock() {
         provider: "openai",
         id: "gpt-5.4",
         name: "GPT-5.4",
-        reasoning: true,
+        reasoning: workspaceCatalogReasoning.get(params?.workspaceDir ?? "") ?? true,
         contextWindow: 400000,
       },
     ],
@@ -2048,93 +2049,119 @@ describe("session_status tool", () => {
     }
   });
 
-  it("uses the implicit model thinking default when no config default is set", async () => {
-    resetSessionStore({
-      "agent:kira:main": {
-        sessionId: "agent-thinking-implicit",
-        updatedAt: 10,
-      },
-    });
-    const savedConfig = mockConfig;
-    try {
-      mockConfig = {
-        session: { mainKey: "main", scope: "per-sender" },
-        agents: {
-          defaults: {
-            model: { primary: "openai/gpt-5.4" },
-            models: {},
-          },
-          list: [
-            {
-              id: "kira",
-              model: "openai/gpt-5.4",
+  it.each([
+    { thinking: undefined, expected: "medium" },
+    { thinking: "high", expected: "high" },
+    { thinking: false, expected: "off" },
+  ] as const)(
+    "uses the scoped model thinking default ($thinking)",
+    async ({ thinking, expected }) => {
+      resetSessionStore({
+        "agent:kira:main": {
+          sessionId: "agent-thinking-implicit",
+          updatedAt: 10,
+        },
+      });
+      const savedConfig = mockConfig;
+      try {
+        mockConfig = {
+          session: { mainKey: "main", scope: "per-sender" },
+          agents: {
+            defaults: {
+              model: { primary: "openai/gpt-5.4" },
+              models: {},
             },
-          ],
-        },
-        tools: {
-          agentToAgent: { enabled: false },
-        },
-      };
-
-      const tool = getSessionStatusTool("agent:kira:main");
-
-      await tool.execute("call-agent-thinking-implicit", {});
-
-      const statusArg = mockCallArg(buildStatusMessageMock) as Record<string, unknown>;
-      expect(statusArg.agentId).toBe("kira");
-      expectRecordFields(statusArg.agent, { thinkingDefault: "medium" });
-    } finally {
-      mockConfig = savedConfig;
-    }
-  });
-
-  it("hydrates runtime catalog metadata for status when configured model metadata omits reasoning", async () => {
-    resetSessionStore({
-      "agent:kira:main": {
-        sessionId: "agent-thinking-runtime-hydration",
-        updatedAt: 10,
-      },
-    });
-    const savedConfig = mockConfig;
-    try {
-      mockConfig = {
-        session: { mainKey: "main", scope: "per-sender" },
-        agents: {
-          defaults: {
-            model: { primary: "openai/gpt-5.4" },
-            models: {},
-          },
-          list: [
-            {
-              id: "kira",
-              model: "openai/gpt-5.4",
-            },
-          ],
-        },
-        models: {
-          providers: {
-            openai: {
-              baseUrl: "https://api.openai.com/v1",
-              models: [{ id: "gpt-5.4", name: "GPT-5.4" }],
+            entries: {
+              main: {},
+              kira: {
+                model: "openai/gpt-5.4",
+                ...(thinking === undefined
+                  ? {}
+                  : { models: { "openai/gpt-5.4": { params: { thinking } } } }),
+              },
             },
           },
+          tools: {
+            agentToAgent: { enabled: false },
+          },
+        };
+
+        const tool = getSessionStatusTool("agent:kira:main");
+
+        await tool.execute("call-agent-thinking-implicit", {});
+
+        const statusArg = mockCallArg(buildStatusMessageMock) as Record<string, unknown>;
+        expect(statusArg.agentId).toBe("kira");
+        expectRecordFields(statusArg.agent, { thinkingDefault: expected });
+      } finally {
+        mockConfig = savedConfig;
+      }
+    },
+  );
+
+  it.each([
+    { workspaceDir: undefined, expected: "medium" },
+    { workspaceDir: "/tmp/openclaw-status-catalog-spawned", expected: "off" },
+  ])(
+    "uses captured catalog values when configured reasoning is absent ($workspaceDir)",
+    async ({ workspaceDir, expected }) => {
+      resetSessionStore({
+        "agent:kira:main": {
+          sessionId: "agent-thinking-runtime-hydration",
+          updatedAt: 10,
+          ...(workspaceDir ? { spawnedWorkspaceDir: workspaceDir } : {}),
         },
-        tools: {
-          agentToAgent: { enabled: false },
-        },
-      };
+      });
+      const savedConfig = mockConfig;
+      try {
+        if (workspaceDir) {
+          workspaceCatalogReasoning.set(workspaceDir, false);
+        }
+        mockConfig = {
+          session: { mainKey: "main", scope: "per-sender" },
+          agents: {
+            defaults: {
+              model: { primary: "openai/gpt-5.4" },
+              models: {},
+            },
+            ownership: "explicit",
+            entries: { kira: { model: "openai/gpt-5.4" } },
+          },
+          models: {
+            providers: {
+              openai: {
+                baseUrl: "https://api.openai.com/v1",
+                models: [{ id: "gpt-5.4", name: "GPT-5.4" }],
+              },
+            },
+          },
+          tools: {
+            agentToAgent: { enabled: false },
+          },
+        };
 
-      const tool = getSessionStatusTool("agent:kira:main");
+        const tool = getSessionStatusTool("agent:kira:main");
 
-      await tool.execute("call-agent-thinking-runtime-hydration", {});
+        await tool.execute("call-agent-thinking-runtime-hydration", {});
 
-      const statusArg = mockCallArg(buildStatusMessageMock) as Record<string, unknown>;
-      expect(statusArg.agentId).toBe("kira");
-      expectRecordFields(statusArg.agent, { thinkingDefault: "medium" });
-    } finally {
-      mockConfig = savedConfig;
-    }
-  });
+        const statusArg = mockCallArg(buildStatusMessageMock) as Record<string, unknown>;
+        expect(statusArg.agentId).toBe("kira");
+        expectRecordFields(statusArg.agent, { thinkingDefault: expected });
+        expect(statusArg.thinkingCatalog).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              provider: "openai",
+              id: "gpt-5.4",
+              reasoning: !workspaceDir,
+            }),
+          ]),
+        );
+      } finally {
+        workspaceCatalogReasoning.clear();
+        mockConfig = savedConfig;
+      }
+    },
+  );
 
   it("uses canonical delivery state when resolving queue settings", async () => {
     resetSessionStore({

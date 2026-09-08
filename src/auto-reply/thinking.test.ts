@@ -1,5 +1,6 @@
 /** Tests thinking, reasoning, verbosity, and usage directive normalization. */
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { ProviderThinkingRegistry } from "../plugins/provider-thinking.types.js";
 
 const providerRuntimeMocks = vi.hoisted(() => ({
   resolveProviderThinkingProfile: vi.fn(),
@@ -993,23 +994,45 @@ describe("resolveThinkingDefaultForModel", () => {
     ).toBe("low");
   });
 
-  it("keeps catalog reasoning context when remapping implicit reasoning defaults", () => {
+  it.each([
+    { source: "ordinary", expected: "medium" },
+    { source: "active", expected: "low" },
+    { source: "retained", expected: "high" },
+  ] as const)("keeps policy-owned reasoning defaults at $expected", ({ source, expected }) => {
+    const registry: ProviderThinkingRegistry = {
+      providers: [
+        {
+          provider: {
+            id: "demo-contextual",
+            resolveThinkingProfile: () => ({ levels: [{ id: "off" }, { id: "high" }] }),
+          },
+        },
+      ],
+    };
     providerRuntimeMocks.resolveProviderThinkingProfile.mockImplementation(
-      ({ provider, context }) =>
-        provider === "demo-contextual" && context.reasoning
-          ? { levels: [{ id: "off" }, { id: "low" }, { id: "medium" }] }
-          : provider === "demo-contextual"
-            ? { levels: [{ id: "off" }] }
-            : undefined,
+      ({ provider, context }, options) => {
+        if (provider !== "demo-contextual") {
+          return undefined;
+        }
+        if (!context.reasoning) {
+          return { levels: [{ id: "off" }] };
+        }
+        if (options?.registry === registry) {
+          return registry.providers[0]?.provider.resolveThinkingProfile?.(context);
+        }
+        const level = options?.allowPublicArtifactFallback === false ? "low" : "medium";
+        return { levels: [{ id: "off" }, { id: level }] };
+      },
     );
 
-    expect(
-      resolveThinkingDefaultForModel({
-        provider: "demo-contextual",
-        model: "demo-model",
-        catalog: [{ provider: "demo-contextual", id: "demo-model", reasoning: true }],
-      }),
-    ).toBe("medium");
+    const request = {
+      provider: "demo-contextual",
+      model: "demo-model",
+      catalog: [{ provider: "demo-contextual", id: "demo-model", reasoning: true }],
+      providerPolicySource:
+        source === "retained" ? registry : source === "active" ? source : undefined,
+    };
+    expect(resolveThinkingDefaultForModel(request)).toBe(expected);
   });
 
   it("defaults to off when no adaptive or reasoning hint is present", () => {

@@ -112,7 +112,9 @@ transport compatibility code only when the declared plugin API floor excludes
 Retained compatibility entrypoints keep their shipped caller names:
 `inbound-envelope` uses `resolveStorePath`, `provider-catalog-runtime` exports
 `resolvePluginProviders`, and `agent-runtime`'s
-`resolveThinkingDefaultWithRuntimeCatalog` accepts `loadModelCatalog`.
+`resolveThinkingDefaultWithRuntimeCatalog` accepts `loadModelCatalog`. Pass the
+optional `agentId` when resolving a known agent to include its per-model thinking
+settings; omitting it retains shared model and global defaults.
 
 `text-chunking` retains positional `CodeRegion` inputs with `start` and `end`
 offsets for `isInsideCode`. Regions returned by `findCodeRegions` additionally

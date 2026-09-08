@@ -202,6 +202,7 @@ async function runConfiguredSystemAgentText(params: {
           )({
             ...shared,
             preparedRunAdmission,
+            requestedRouteResolution: "resolved",
             toolsAllow: [],
             agentHarnessRuntimeOverride: route.agentHarnessRuntimeOverride,
             ...(expectedAgentHarnessRuntimeArtifact ? { expectedAgentHarnessRuntimeArtifact } : {}),

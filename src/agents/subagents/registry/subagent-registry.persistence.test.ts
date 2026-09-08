@@ -71,6 +71,12 @@ describe("subagent registry persistence", () => {
   const envSnapshot = captureEnv(["OPENCLAW_STATE_DIR"]);
   let tempStateDir: string | null = null;
 
+  const createStateDir = async () => {
+    const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-subagent-"));
+    setTestEnvValue("OPENCLAW_STATE_DIR", stateDir);
+    return stateDir;
+  };
+
   const resolveAgentIdFromSessionKey = (sessionKey: string) => {
     const match = sessionKey.match(/^agent:([^:]+):/i);
     return (match?.[1] ?? "main").trim().toLowerCase() || "main";
@@ -135,8 +141,7 @@ describe("subagent registry persistence", () => {
   ) => {
     // Each persisted-registry fixture gets its own state dir so session and
     // subagent SQLite stores use the same production paths.
-    tempStateDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-subagent-"));
-    setTestEnvValue("OPENCLAW_STATE_DIR", tempStateDir);
+    tempStateDir = await createStateDir();
     const runs = (persisted.runs ?? {}) as Record<string, SubagentRunRecord>;
     saveCanonicalRunFixtures(new Map(Object.entries(runs)));
     if (opts?.seedChildSessions !== false) {
@@ -268,8 +273,7 @@ describe("subagent registry persistence", () => {
   });
 
   it("persists completed subagent timing into the child session entry", async () => {
-    tempStateDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-subagent-"));
-    setTestEnvValue("OPENCLAW_STATE_DIR", tempStateDir);
+    tempStateDir = await createStateDir();
 
     const now = Date.now();
     const startedAt = now;
@@ -307,8 +311,7 @@ describe("subagent registry persistence", () => {
   });
 
   it("rejects a stale timing write after session ownership changes", async () => {
-    tempStateDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-subagent-"));
-    setTestEnvValue("OPENCLAW_STATE_DIR", tempStateDir);
+    tempStateDir = await createStateDir();
 
     const startedAt = Date.now();
     const storePath = await writeChildSessionEntry({
@@ -348,8 +351,7 @@ describe("subagent registry persistence", () => {
   });
 
   it("does not overwrite durable completion with a provisional killed status", async () => {
-    tempStateDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-subagent-"));
-    setTestEnvValue("OPENCLAW_STATE_DIR", tempStateDir);
+    tempStateDir = await createStateDir();
 
     const startedAt = Date.now();
     const completedAt = startedAt + 500;
@@ -396,8 +398,7 @@ describe("subagent registry persistence", () => {
   });
 
   it("skips cleanup when cleanupHandled was persisted", async () => {
-    tempStateDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-subagent-"));
-    setTestEnvValue("OPENCLAW_STATE_DIR", tempStateDir);
+    tempStateDir = await createStateDir();
 
     const persisted = {
       version: 2,
@@ -476,8 +477,7 @@ describe("subagent registry persistence", () => {
   });
 
   it("normalizes newly registered session keys to canonical trimmed values", async () => {
-    tempStateDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-subagent-"));
-    setTestEnvValue("OPENCLAW_STATE_DIR", tempStateDir);
+    tempStateDir = await createStateDir();
 
     vi.mocked(callGateway).mockResolvedValueOnce({
       status: "pending",
@@ -507,8 +507,7 @@ describe("subagent registry persistence", () => {
   });
 
   it("reloads waitable swarm collector completions after a gateway restart", async () => {
-    tempStateDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-subagent-"));
-    setTestEnvValue("OPENCLAW_STATE_DIR", tempStateDir);
+    tempStateDir = await createStateDir();
     const run: SubagentRunRecord = {
       runId: "run-swarm-restart",
       childSessionKey: "agent:worker:subagent:swarm-restart",
@@ -578,42 +577,47 @@ describe("subagent registry persistence", () => {
     });
   });
 
-  it("reloads queued launch and in-flight structured state", async () => {
-    tempStateDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-subagent-"));
-    setTestEnvValue("OPENCLAW_STATE_DIR", tempStateDir);
-    const run: SubagentRunRecord = {
-      runId: "run-swarm-in-flight",
-      childSessionKey: "agent:worker:subagent:swarm-in-flight",
-      requesterSessionKey: "agent:main:main",
-      requesterDisplayKey: "main",
-      task: "persist collector launch",
-      cleanup: "keep",
-      createdAt: 1,
-      collect: true,
-      swarmRequesterSessionKey: "agent:main:telegram:default:direct:456",
-      groupId: "logical-group",
-      outputSchema: { type: "object" },
-      execution: { status: "queued" },
-      structuredOutput: { invalidAttempts: 1, schemaError: "answer is required" },
-      queuedLaunch: {
-        request: { sessionKey: "agent:worker:subagent:swarm-in-flight" },
-        authorization: {
-          modelOverride: { provider: "openai", model: "gpt-5.4" },
+  it.each([undefined, "resolved"] as const)(
+    "reloads queued launch with route resolution %s and in-flight structured state",
+    async (requestedRouteResolution) => {
+      tempStateDir = await createStateDir();
+      const run: SubagentRunRecord = {
+        runId: "run-swarm-in-flight",
+        childSessionKey: "agent:worker:subagent:swarm-in-flight",
+        requesterSessionKey: "agent:main:main",
+        requesterDisplayKey: "main",
+        task: "persist collector launch",
+        cleanup: "keep",
+        createdAt: 1,
+        collect: true,
+        swarmRequesterSessionKey: "agent:main:telegram:default:direct:456",
+        groupId: "logical-group",
+        outputSchema: { type: "object" },
+        execution: { status: "queued" },
+        structuredOutput: { invalidAttempts: 1, schemaError: "answer is required" },
+        queuedLaunch: {
+          request: {
+            sessionKey: "agent:worker:subagent:swarm-in-flight",
+            ...(requestedRouteResolution ? { requestedRouteResolution } : {}),
+          },
+          authorization: {
+            modelOverride: { provider: "openai", model: "gpt-5.4" },
+          },
+          timeoutMs: 1_000,
+          schedulerGroupKey: '["agent:main:main","logical-group"]',
+          maxConcurrent: 8,
         },
-        timeoutMs: 1_000,
-        schedulerGroupKey: '["agent:main:main","logical-group"]',
-        maxConcurrent: 8,
-      },
-    };
-    saveCanonicalRunFixtures(new Map([[run.runId, run]]));
+      };
+      saveCanonicalRunFixtures(new Map([[run.runId, run]]));
 
-    closeOpenClawStateDatabaseForTest();
-    expect(loadSubagentRegistryFromSqlite().get(run.runId)).toMatchObject({
-      swarmRequesterSessionKey: run.swarmRequesterSessionKey,
-      structuredOutput: run.structuredOutput,
-      queuedLaunch: run.queuedLaunch,
-    });
-  });
+      closeOpenClawStateDatabaseForTest();
+      expect(loadSubagentRegistryFromSqlite().get(run.runId)).toMatchObject({
+        swarmRequesterSessionKey: run.swarmRequesterSessionKey,
+        structuredOutput: run.structuredOutput,
+        queuedLaunch: run.queuedLaunch,
+      });
+    },
+  );
 
   it.each([
     {
@@ -919,8 +923,7 @@ describe("subagent registry persistence", () => {
   });
 
   it("removes attachments when pruning orphaned restored runs", async () => {
-    tempStateDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-subagent-"));
-    setTestEnvValue("OPENCLAW_STATE_DIR", tempStateDir);
+    tempStateDir = await createStateDir();
     const attachmentsRootDir = path.join(tempStateDir, "attachments");
     const attachmentsDir = path.join(attachmentsRootDir, "ghost");
     await fs.mkdir(attachmentsDir, { recursive: true });
@@ -1047,8 +1050,7 @@ describe("subagent registry persistence", () => {
   });
 
   it("resume guard prunes orphan runs before announce retry", async () => {
-    tempStateDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-subagent-"));
-    setTestEnvValue("OPENCLAW_STATE_DIR", tempStateDir);
+    tempStateDir = await createStateDir();
     const runId = "run-orphan-resume-guard";
     const childSessionKey = "agent:main:subagent:ghost-resume";
     const now = Date.now();

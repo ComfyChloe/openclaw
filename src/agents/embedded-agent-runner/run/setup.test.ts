@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { SessionEntry } from "../../../config/sessions/types.js";
 import type { ModelDefinitionConfig } from "../../../config/types.models.js";
 import type { OpenClawConfig } from "../../../config/types.openclaw.js";
+import { createPluginMetadataSnapshotFixture } from "../../../plugins/plugin-metadata.test-support.js";
 import type { ProviderRuntimeModel } from "../../../plugins/provider-runtime-model.types.js";
 import { AGENT_HARNESS_SESSION_ID_LOCKED_MESSAGE } from "../../../sessions/agent-harness-session-key.js";
 import { resolveEmbeddedRunEffectiveModel } from "./model-harness.js";
@@ -134,6 +135,40 @@ describe("buildBeforeModelResolveAttachments", () => {
 });
 
 describe("resolveHookModelSelection", () => {
+  it.each(["raw", "unchanged", "locked"] as const)(
+    "normalizes only hook-authored model input (%s)",
+    async (source) => {
+      const manifestPlugins = createPluginMetadataSnapshotFixture({
+        plugins: [
+          {
+            id: "custom",
+            modelIdNormalization: {
+              providers: { custom: { aliases: { latest: "middle", middle: "final" } } },
+            },
+          },
+        ],
+      });
+      await expect(
+        resolveHookModelSelection({
+          prompt: "test",
+          provider: "custom",
+          modelId: "middle",
+          modelSelectionLocked: source === "locked",
+          hookContext,
+          hookRunner: {
+            hasHooks: () => true,
+            runBeforeModelResolve: async () =>
+              source === "unchanged" ? undefined : { modelOverride: "latest" },
+          },
+          normalization: {
+            manifestPlugins,
+            resolvedModelCatalog: [{ provider: "custom", id: "final" }],
+            allowPluginNormalization: false,
+          },
+        }),
+      ).resolves.toEqual({ provider: "custom", modelId: "middle" });
+    },
+  );
   it("does not expose locked model selection to routing hooks", async () => {
     const hookRunner = {
       hasHooks: vi.fn(() => true),

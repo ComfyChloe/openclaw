@@ -9,12 +9,12 @@ import { DEFAULT_MODEL, DEFAULT_PROVIDER } from "../agents/defaults.js";
 import {
   inferUniqueProviderFromConfiguredModels,
   isCliProvider,
-  normalizeStoredOverrideModel,
   parseModelRef,
   resolvePersistedSelectedModelRef,
   type CliProviderClassifier,
 } from "../agents/model-selection.js";
 import { resolveAgentModelPrimaryValue } from "../config/model-input.js";
+import { resolveSessionModelOverrideRouteResolution } from "../config/sessions/model-override-provenance.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 
 type SessionDisplayModelRow = {
@@ -23,6 +23,7 @@ type SessionDisplayModelRow = {
   modelProvider?: string;
   modelOverride?: string;
   providerOverride?: string;
+  modelOverrideRouteResolution?: "resolved";
 };
 
 type SessionDisplayDefaults = {
@@ -123,23 +124,20 @@ export function resolveSessionDisplayModelRef(
   const agentId =
     ownerAgentId ?? (row.key.startsWith("agent:") ? row.key.split(":")[1] : undefined);
   const defaultRef = resolveDefaultModelRef(cfg, agentId);
-  const normalizedOverride = normalizeStoredOverrideModel({
-    providerOverride: row.providerOverride,
-    modelOverride: row.modelOverride,
-  });
   const persistedRef = resolvePersistedSelectedModelRef({
     defaultProvider: defaultRef.provider,
     runtimeProvider: row.modelProvider,
     runtimeModel: row.model,
-    overrideProvider: normalizedOverride.providerOverride,
-    overrideModel: normalizedOverride.modelOverride,
+    overrideProvider: row.providerOverride,
+    overrideModel: row.modelOverride,
+    overrideRouteResolution: resolveSessionModelOverrideRouteResolution(row),
     allowManifestNormalization: false,
     allowPluginNormalization: false,
   });
   if (!persistedRef) {
     return defaultRef;
   }
-  return normalizedOverride.modelOverride
+  return row.modelOverride?.trim()
     ? persistedRef
     : normalizeCliRuntimeDisplayRef(cfg, agentId, persistedRef, defaultRef, classifyCliProvider);
 }

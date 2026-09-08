@@ -1,5 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { makeOpenClawConfigFixture } from "./embedded-agent-runner/model.test-harness.js";
+import {
+  makeModel,
+  makeOpenClawConfigFixture,
+} from "./embedded-agent-runner/model.test-harness.js";
 
 const runtimeMocks = vi.hoisted(() => {
   const createLease = (owner: string) => {
@@ -133,8 +136,8 @@ describe("resolveEffectiveToolInventoryRuntimeModelContextAsync", () => {
     expect(runtimeMocks.requestLease.release).not.toHaveBeenCalled();
   });
 
-  it("uses configured model context without acquiring a runtime lease", async () => {
-    const { resolveEffectiveToolInventoryRuntimeModelContextAsync } =
+  it("uses exact configured model context and compatibility without acquiring a runtime lease", async () => {
+    const { resolveEffectiveToolInventoryRuntimeModelContextAsync, resolveConfiguredModelCompat } =
       await import("./tools-effective-inventory.js");
     const cfg = makeOpenClawConfigFixture({
       models: {
@@ -143,6 +146,12 @@ describe("resolveEffectiveToolInventoryRuntimeModelContextAsync", () => {
             api: "anthropic-messages",
             models: [
               {
+                ...makeModel("custom/configured"),
+                name: "Other namespaced model",
+                api: "openai-completions",
+                compat: { supportsTools: false },
+              },
+              {
                 id: "configured",
                 name: "Configured",
                 reasoning: false,
@@ -150,6 +159,7 @@ describe("resolveEffectiveToolInventoryRuntimeModelContextAsync", () => {
                 cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
                 contextWindow: 8192,
                 maxTokens: 1024,
+                compat: { supportsTools: true },
               },
             ],
           },
@@ -167,6 +177,9 @@ describe("resolveEffectiveToolInventoryRuntimeModelContextAsync", () => {
       modelApi: "anthropic-messages",
       runtimeModel: { id: "configured", provider: "custom" },
     });
+    expect(
+      resolveConfiguredModelCompat({ cfg, modelProvider: "custom", modelId: "configured" }),
+    ).toMatchObject({ supportsTools: true });
     expect(runtimeMocks.acquire).not.toHaveBeenCalled();
     expect(runtimeMocks.resolveModelAsync).not.toHaveBeenCalled();
     expect(runtimeMocks.requestLease.release).not.toHaveBeenCalled();

@@ -232,6 +232,7 @@ async function runSkillExperienceReviewInner(candidate: ExperienceReviewCandidat
         prompt: buildSkillExperienceReviewPrompt({ ...candidate, existingSkills }, mode),
         provider: candidate.ctx.modelProviderId,
         model: candidate.ctx.modelId,
+        requestedRouteResolution: "resolved",
         ...(candidate.ctx.authProfileId
           ? { authProfileId: candidate.ctx.authProfileId, authProfileIdSource: "user" as const }
           : {}),

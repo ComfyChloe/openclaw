@@ -7,6 +7,7 @@ import { estimateBase64DecodedBytes } from "@openclaw/media-core/base64";
 import { normalizeLowercaseStringOrEmpty } from "@openclaw/normalization-core/string-coerce";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import type { AssistantMessage } from "../../llm/types.js";
+import { modelKey } from "../../shared/model-key.js";
 import { extractEmbeddedAssistantText } from "../embedded-agent-utils.js";
 import { isMinimaxVlmProvider } from "../minimax-vlm.js";
 import { findNormalizedProviderValue, normalizeProviderId } from "../model-selection.js";
@@ -147,14 +148,6 @@ export function coerceImageModelConfig(cfg?: OpenClawConfig): ImageModelConfig {
   return coerceToolModelConfig(cfg?.agents?.defaults?.imageModel);
 }
 
-function formatConfiguredImageModelRef(provider: string, modelId: string): string {
-  const slash = modelId.indexOf("/");
-  if (slash > 0 && normalizeProviderId(modelId.slice(0, slash)) === provider) {
-    return modelId;
-  }
-  return `${provider}/${modelId}`;
-}
-
 function modelIdMatchesProviderlessRef(params: {
   provider: string;
   modelId: string;
@@ -194,7 +187,7 @@ function findConfiguredImageModelMatches(params: { cfg?: OpenClawConfig; ref: st
       if (!modelIdMatchesProviderlessRef({ provider, modelId, ref: params.ref })) {
         continue;
       }
-      matches.add(formatConfiguredImageModelRef(provider, modelId));
+      matches.add(modelKey(provider, modelId));
     }
   }
   return [...matches];
@@ -263,8 +256,6 @@ export function resolveProviderVisionModelFromConfig(params: {
   if (!id) {
     return null;
   }
-  const slash = id.indexOf("/");
-  const idProvider = slash === -1 ? "" : normalizeLowercaseStringOrEmpty(id.slice(0, slash));
-  const selectedProvider = normalizeLowercaseStringOrEmpty(params.provider);
-  return idProvider && idProvider === selectedProvider ? id : `${params.provider}/${id}`;
+  // Model IDs are provider-local even when their namespace repeats the provider.
+  return modelKey(params.provider, id);
 }

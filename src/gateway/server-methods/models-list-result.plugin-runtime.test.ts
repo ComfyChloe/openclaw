@@ -25,7 +25,9 @@ type PrepareHarnessCatalog =
 const mocks = vi.hoisted(() => ({
   prepareHarnessCatalog: vi.fn<PrepareHarnessCatalog>(async (params) => ({
     snapshot: params.snapshot,
+    defaultProvider: "openai",
     defaultModel: undefined,
+    rawDefaultModel: undefined,
     catalog: params.snapshot.entries,
   })),
 }));

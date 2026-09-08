@@ -1,4 +1,5 @@
 import { sanitizeForLog } from "../../../packages/terminal-core/src/ansi.js";
+import { resolveStoredRuntimeModelSelection } from "../../auto-reply/reply/stored-model-override.js";
 import {
   formatThinkingLevels,
   isThinkingLevelSupported,
@@ -19,7 +20,10 @@ import {
   isModelSelectionLocked,
   repairProviderWrappedModelOverride,
 } from "../../sessions/model-overrides.js";
-import { resolveStoredModelOverride } from "../../sessions/stored-model-overrides.js";
+import {
+  readStoredModelOverride,
+  type StoredModelOverride,
+} from "../../sessions/stored-model-overrides.js";
 import {
   sessionDeliveryChannel,
   sessionDeliveryOrigin,
@@ -40,20 +44,11 @@ import { ensureAuthProfileStore } from "../auth-profiles/store-runtime.js";
 import { ensureSelectedAgentHarnessPlugin } from "../harness/runtime-plugin.js";
 import { resolveAvailableAgentHarnessPolicy } from "../harness/selection.js";
 import { loadManifestModelCatalog } from "../model-catalog.js";
-import type { ModelFallbackRouteResolution } from "../model-fallback.types.js";
 import { splitTrailingAuthProfile } from "../model-ref-profile.js";
 import type { ModelManifestNormalizationContext } from "../model-ref-shared.js";
-import {
-  modelKey,
-  resolveDefaultModelForAgent,
-  resolveModelAliasFromPair,
-  resolveThinkingDefault,
-} from "../model-selection.js";
+import { modelKey, resolveThinkingDefault } from "../model-selection.js";
 import { resolveConfiguredThinkingDefault } from "../model-thinking-default.js";
-import {
-  createModelVisibilityPolicy,
-  type ModelVisibilityPolicy,
-} from "../model-visibility-policy.js";
+import { createModelVisibilityPolicy } from "../model-visibility-policy.js";
 import { listOpenAIAuthProfileProvidersForAgentRuntime } from "../openai-routing.js";
 import { resolveProviderIdForAuth } from "../provider-auth-aliases.js";
 import { resolveSessionRuntimeOverrideForProvider } from "../session-runtime-compat.js";
@@ -63,11 +58,7 @@ import {
   resolveEffectiveAgentRuntime,
 } from "../thinking-runtime.js";
 import { persistAgentSession } from "./attempt-execution.shared.js";
-import {
-  normalizeAgentCommandDefaultModelRef,
-  normalizeAgentCommandModelRef,
-  parseAgentCommandModelRef,
-} from "./model-ref.js";
+import { normalizeAgentCommandModelRef, parseAgentCommandModelRef } from "./model-ref.js";
 import { normalizeExplicitOverrideInput } from "./prepare.js";
 import type { resolveAgentRunContext } from "./run-context.js";
 import { loadTranscriptResolveRuntime } from "./runtime-loaders.js";
@@ -88,6 +79,7 @@ export async function resolveEmbeddedModelSelection(params: {
   pluginsEnabled: boolean;
   manifestMetadataSnapshot?: PluginMetadataSnapshot;
   modelManifestContext: ModelManifestNormalizationContext;
+  configuredModel: { provider: string; model: string };
   configuredThinkingCatalog: ReturnType<typeof loadManifestModelCatalog>;
   requestedThinkLevel?: ThinkLevel;
   thinkOverride?: ThinkLevel;
@@ -96,24 +88,12 @@ export async function resolveEmbeddedModelSelection(params: {
   suppressVisibleSessionEffects: boolean;
   runContext: AgentRunContext;
 }) {
-  const configuredDefaultRef = resolveDefaultModelForAgent({
-    cfg: params.cfg,
-    agentId: params.sessionAgentId,
-    allowPluginNormalization: params.pluginsEnabled,
-    ...params.modelManifestContext,
-  });
+  const { provider: defaultProvider, model: defaultModel } = params.configuredModel;
   const configuredDefaultAuthProfileId = splitTrailingAuthProfile(
     resolveAgentEffectiveModelPrimary(params.cfg, params.sessionAgentId) ?? "",
   ).profile;
-  const { provider: defaultProvider, model: defaultModel } = normalizeAgentCommandDefaultModelRef(
-    params.cfg,
-    configuredDefaultRef.provider,
-    configuredDefaultRef.model,
-    params.modelManifestContext,
-  );
   let provider = defaultProvider;
   let model = defaultModel;
-  let requestedRouteResolution: ModelFallbackRouteResolution = "resolved";
   let sessionEntry = params.sessionEntry;
   const hasStoredOverride = Boolean(sessionEntry?.modelOverride || sessionEntry?.providerOverride);
   let storedModelOverrideSource = hasStoredOverride ? sessionEntry?.modelOverrideSource : undefined;
@@ -137,18 +117,27 @@ export async function resolveEmbeddedModelSelection(params: {
     throw new Error("Model override is not authorized for this caller.");
   }
 
+  if (
+    params.opts.requestedRouteResolution === "resolved" &&
+    (!explicitProviderOverride || !explicitModelOverride)
+  ) {
+    throw new Error("Resolved model requests require both provider and model.");
+  }
+
   let allowedModelCatalog: ReturnType<typeof loadManifestModelCatalog> = [];
   let modelCatalog: ReturnType<typeof loadManifestModelCatalog> | null = null;
-  let visibilityPolicy: ModelVisibilityPolicy = createModelVisibilityPolicy({
-    cfg: params.cfg,
-    catalog: [],
-    defaultProvider,
-    defaultModel,
-    agentId: params.sessionAgentId,
-    allowManifestNormalization: true,
-    allowPluginNormalization: params.pluginsEnabled,
-    ...params.modelManifestContext,
-  });
+  const resolveVisibility = (catalog: ReturnType<typeof loadManifestModelCatalog>) =>
+    createModelVisibilityPolicy({
+      cfg: params.cfg,
+      catalog,
+      defaultProvider,
+      defaultModel,
+      agentId: params.sessionAgentId,
+      allowManifestNormalization: true,
+      allowPluginNormalization: params.pluginsEnabled,
+      ...params.modelManifestContext,
+    });
+  let visibilityPolicy = resolveVisibility([]);
   const hasAllowlist = !visibilityPolicy.allowAny;
   const agentModels = resolveAgentConfig(params.cfg, params.sessionAgentId)?.models;
   const hasConfiguredModels =
@@ -162,18 +151,24 @@ export async function resolveEmbeddedModelSelection(params: {
           metadataSnapshot: params.manifestMetadataSnapshot,
         })
       : [];
-    visibilityPolicy = createModelVisibilityPolicy({
-      cfg: params.cfg,
-      catalog: modelCatalog,
-      defaultProvider,
-      defaultModel,
-      agentId: params.sessionAgentId,
-      allowManifestNormalization: true,
-      allowPluginNormalization: params.pluginsEnabled,
-      ...params.modelManifestContext,
-    });
+    visibilityPolicy = resolveVisibility(modelCatalog);
     allowedModelCatalog = visibilityPolicy.allowedCatalog;
   }
+
+  const projectStoredSelection = (storedOverride: StoredModelOverride, entry = sessionEntry) =>
+    resolveStoredRuntimeModelSelection({
+      cfg: params.cfg,
+      sessionEntry: entry,
+      storedOverride,
+      defaultProvider,
+      catalog:
+        params.modelManifestContext.resolvedModelCatalog ?? modelCatalog ?? allowedModelCatalog,
+      aliasIndex: visibilityPolicy.selectionAliasIndex,
+      normalization: {
+        ...params.modelManifestContext,
+        allowPluginNormalization: params.pluginsEnabled,
+      },
+    });
 
   if (
     !isModelSelectionLocked(sessionEntry) &&
@@ -201,15 +196,9 @@ export async function resolveEmbeddedModelSelection(params: {
     }
     const repaired = repairProviderWrappedModelOverride({ entry, defaultProvider, defaultModel });
     entryUpdated ||= repaired.updated;
-    const overrideProvider = entry.providerOverride?.trim() || defaultProvider;
-    const overrideModel = entry.modelOverride?.trim();
-    if (overrideModel) {
-      const normalizedOverride = normalizeAgentCommandModelRef(
-        params.cfg,
-        overrideProvider,
-        overrideModel,
-        params.modelManifestContext,
-      );
+    const storedOverride = readStoredModelOverride({ sessionEntry: entry });
+    if (storedOverride) {
+      const normalizedOverride = projectStoredSelection(storedOverride, entry);
       if (
         !visibilityPolicy.allowsKey(modelKey(normalizedOverride.provider, normalizedOverride.model))
       ) {
@@ -247,12 +236,11 @@ export async function resolveEmbeddedModelSelection(params: {
 
   const effectiveStoredOverride = hasLegacyAutoFallbackOverrideWithoutOrigin
     ? null
-    : resolveStoredModelOverride({
+    : readStoredModelOverride({
         sessionEntry,
         sessionStore: params.sessionStore,
         sessionKey: params.sessionKey,
         parentSessionKey: sessionEntry?.parentSessionKey,
-        defaultProvider,
       });
   if (effectiveStoredOverride?.source === "parent") {
     storedModelOverrideSource = undefined;
@@ -264,7 +252,6 @@ export async function resolveEmbeddedModelSelection(params: {
   const storedModelOverride = hasLegacyAutoFallbackOverrideWithoutOrigin
     ? undefined
     : (effectiveStoredOverride?.model ?? sessionEntry?.modelOverride?.trim());
-  const storedModelOverrideRouteResolution = effectiveStoredOverride?.routeResolution;
   const currentRunModelChannel = [
     params.runContext.messageChannel,
     params.opts.replyChannel,
@@ -305,43 +292,15 @@ export async function resolveEmbeddedModelSelection(params: {
   if (normalizedChannelOverride && !hasEffectiveStoredOverride) {
     provider = normalizedChannelOverride.provider;
     model = normalizedChannelOverride.model;
-    requestedRouteResolution = "resolved";
   }
-  if (storedModelOverride) {
-    const candidateProvider = storedProviderOverride || defaultProvider;
-    const storedRouteKey = modelKey(candidateProvider, storedModelOverride);
-    const storedRouteCataloged = (modelCatalog ?? allowedModelCatalog).some(
-      (entry) => modelKey(entry.provider, entry.id) === storedRouteKey,
-    );
-    const storedAlias =
-      storedModelOverrideRouteResolution === "raw" && !storedRouteCataloged
-        ? resolveModelAliasFromPair({
-            cfg: params.cfg,
-            agentId: params.sessionAgentId,
-            provider: candidateProvider,
-            model: storedModelOverride,
-            defaultProvider,
-            aliasIndex: visibilityPolicy.selectionAliasIndex,
-            allowPluginNormalization: params.pluginsEnabled,
-            ...params.modelManifestContext,
-          })
-        : null;
-    const normalizedStored = normalizeAgentCommandModelRef(
-      params.cfg,
-      storedAlias?.provider ?? candidateProvider,
-      storedAlias?.model ?? storedModelOverride,
-      params.modelManifestContext,
-    );
+  if (effectiveStoredOverride) {
+    const normalizedStored = projectStoredSelection(effectiveStoredOverride);
     if (
       isModelSelectionLocked(sessionEntry) ||
       visibilityPolicy.allowsKey(modelKey(normalizedStored.provider, normalizedStored.model))
     ) {
       provider = normalizedStored.provider;
       model = normalizedStored.model;
-      requestedRouteResolution =
-        storedAlias || storedRouteCataloged
-          ? "resolved"
-          : (storedModelOverrideRouteResolution ?? "raw");
     }
   }
   const autoFallbackPrimaryProbe =
@@ -357,7 +316,6 @@ export async function resolveEmbeddedModelSelection(params: {
   if (autoFallbackPrimaryProbe && sessionEntry) {
     provider = autoFallbackPrimaryProbe.provider;
     model = autoFallbackPrimaryProbe.model;
-    requestedRouteResolution = "resolved";
     autoFallbackPrimaryProbeSessionEntry = { ...sessionEntry };
     clearAutoFallbackPrimaryProbeSelection(autoFallbackPrimaryProbeSessionEntry);
   }
@@ -370,6 +328,7 @@ export async function resolveEmbeddedModelSelection(params: {
             explicitProviderOverride,
             explicitModelOverride,
             params.modelManifestContext,
+            params.opts.requestedRouteResolution,
           )
         : parseAgentCommandModelRef(
             params.cfg,
@@ -399,9 +358,7 @@ export async function resolveEmbeddedModelSelection(params: {
     }
     provider = explicitRef.provider;
     model = explicitRef.model;
-    requestedRouteResolution = "resolved";
   }
-  const unresolvedSelectionKey = modelKey(provider, model);
   const allowedInitialSelection = isModelSelectionLocked(sessionEntry)
     ? { provider, model }
     : visibilityPolicy.resolveSelection({ provider, model });
@@ -413,9 +370,6 @@ export async function resolveEmbeddedModelSelection(params: {
   }
   provider = allowedInitialSelection.provider;
   model = allowedInitialSelection.model;
-  if (modelKey(provider, model) !== unresolvedSelectionKey) {
-    requestedRouteResolution = "resolved";
-  }
   const providerForAuthProfileValidation = provider;
   let sessionEntryForAttempt = autoFallbackPrimaryProbeSessionEntry ?? sessionEntry;
   const initialAgentHarnessRuntimeOverride = resolveSessionRuntimeOverrideForProvider({
@@ -451,21 +405,6 @@ export async function resolveEmbeddedModelSelection(params: {
       agentId: params.sessionAgentId,
       sessionKey: params.sessionKey,
     });
-    const acceptedAuthProviders = listOpenAIAuthProfileProvidersForAgentRuntime({
-      provider: providerForAuthProfileValidation,
-      harnessRuntime: validationHarnessPolicy.runtime,
-      config: params.cfg,
-    }).map((candidateProvider) =>
-      params.pluginsEnabled
-        ? resolveProviderIdForAuth(candidateProvider, {
-            config: params.cfg,
-            workspaceDir: params.workspaceDir,
-            ...(params.manifestMetadataSnapshot
-              ? { metadataSnapshot: params.manifestMetadataSnapshot }
-              : {}),
-          })
-        : candidateProvider,
-    );
     const authAliasLookupParams = params.pluginsEnabled
       ? {
           config: params.cfg,
@@ -479,6 +418,15 @@ export async function resolveEmbeddedModelSelection(params: {
           workspaceDir: params.workspaceDir,
           metadataSnapshot: { plugins: [] },
         };
+    const acceptedAuthProviders = listOpenAIAuthProfileProvidersForAgentRuntime({
+      provider: providerForAuthProfileValidation,
+      harnessRuntime: validationHarnessPolicy.runtime,
+      config: params.cfg,
+    }).map((candidateProvider) =>
+      params.pluginsEnabled
+        ? resolveProviderIdForAuth(candidateProvider, authAliasLookupParams)
+        : candidateProvider,
+    );
     const profileMatchesRuntime =
       profile &&
       acceptedAuthProviders.some((candidateProvider) =>
@@ -554,16 +502,7 @@ export async function resolveEmbeddedModelSelection(params: {
         ...(params.workspaceDir ? { workspaceDir: params.workspaceDir } : {}),
       }),
     );
-    const allowedRuntimeCatalog = createModelVisibilityPolicy({
-      cfg: params.cfg,
-      catalog: runtimeCatalog,
-      defaultProvider,
-      defaultModel,
-      agentId: params.sessionAgentId,
-      allowManifestNormalization: true,
-      allowPluginNormalization: params.pluginsEnabled,
-      ...params.modelManifestContext,
-    }).allowedCatalog;
+    const allowedRuntimeCatalog = resolveVisibility(runtimeCatalog).allowedCatalog;
     if (
       hasResolvedThinkingCatalogEntry({
         catalog: allowedRuntimeCatalog,
@@ -672,7 +611,7 @@ export async function resolveEmbeddedModelSelection(params: {
     sessionEntry,
     provider,
     model,
-    requestedRouteResolution,
+    requestedRouteResolution: "resolved" as const,
     defaultProvider,
     defaultModel,
     configuredDefaultAuthProfileId,

@@ -142,6 +142,19 @@
       "zai": "refreshable"
     }
   },
+  "modelIdNormalization": {
+    "providers": {
+      "zai": {
+        "stripPrefixes": ["zai/"]
+      },
+      "z.ai": {
+        "stripPrefixes": ["z.ai/"]
+      },
+      "z-ai": {
+        "stripPrefixes": ["z-ai/"]
+      }
+    }
+  },
   "modelPricing": {
     "providers": {
       "zai": {

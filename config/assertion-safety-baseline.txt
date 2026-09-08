@@ -1683,9 +1683,7 @@ src/agents/compaction-usage.ts	3
 src/agents/compaction.ts	5
 src/agents/config.ts	1
 src/agents/content-blocks.ts	1
-src/agents/context-cache-projection.ts	1
 src/agents/context-cache.ts	1
-src/agents/context-resolution.ts	1
 src/agents/context-runtime-state.ts	4
 src/agents/context-window-guard.ts	1
 src/agents/context.ts	2
@@ -1956,7 +1954,6 @@ src/agents/subagents/registry/subagent-session-cleanup.ts	2
 src/agents/subagents/spawn/acp-spawn-admission.ts	1
 src/agents/subagents/spawn/acp-spawn-parent-stream.ts	11
 src/agents/subagents/spawn/subagent-spawn-gateway.ts	3
-src/agents/subagents/spawn/subagent-spawn-session-patch.ts	1
 src/agents/subagents/spawn/subagent-spawn.ts	2
 src/agents/subagents/swarm/swarm-output-schema.ts	1
 src/agents/subagents/swarm/swarm-scheduler.ts	1
@@ -2121,7 +2118,6 @@ src/auto-reply/reply/get-reply.ts	2
 src/auto-reply/reply/history.ts	2
 src/auto-reply/reply/inbound-context.ts	8
 src/auto-reply/reply/mentions.ts	1
-src/auto-reply/reply/model-selection.ts	2
 src/auto-reply/reply/queue/drain.ts	2
 src/auto-reply/reply/queue/enqueue.ts	1
 src/auto-reply/reply/queue/settings.ts	1
@@ -3166,7 +3162,7 @@ src/mcp/plugin-tools-handlers.ts	3
 src/media-generation/provider-registry.ts	1
 src/media-understanding/attachments.select.ts	1
 src/media-understanding/entry-capabilities.ts	1
-src/media-understanding/image-model-runtime.ts	3
+src/media-understanding/image-model-runtime.ts	2
 src/media-understanding/runner.entries.ts	7
 src/media-understanding/runner.ts	2
 src/media-understanding/runtime.ts	2
@@ -3306,7 +3302,7 @@ src/plugins/config-normalization-shared.ts	1
 src/plugins/config-schema.ts	6
 src/plugins/contracts/inventory/bundled-capability-metadata.ts	3
 src/plugins/contracts/registry.ts	1
-src/plugins/contracts/tts-contract-suites.ts	19
+src/plugins/contracts/tts-contract-suites.ts	18
 src/plugins/conversation-binding.ts	1
 src/plugins/current-plugin-metadata-snapshot.ts	1
 src/plugins/dashboard-capabilities.ts	1
@@ -3579,7 +3575,7 @@ src/state/openclaw-state-snapshot-sanitizer.ts	1
 src/state/user-profiles-tailscale-avatar.ts	2
 src/state/user-profiles.ts	1
 src/status/status-message.ts	3
-src/status/status-text.ts	3
+src/status/status-text.ts	1
 src/status/summary.runtime.ts	1
 src/system-agent/agent-turn.ts	4
 src/system-agent/assistant-prompts.ts	1

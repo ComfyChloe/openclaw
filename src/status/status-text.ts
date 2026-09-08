@@ -555,8 +555,8 @@ export async function buildStatusReplyParts(
     resolvedFastMode ??
     resolveFastModeState({
       cfg,
-      provider,
-      model,
+      provider: selectedLookupProvider,
+      model: selectedLookupModel,
       agentId: statusAgentId,
       sessionEntry,
     }).mode;
@@ -578,9 +578,6 @@ export async function buildStatusReplyParts(
   });
   const { buildStatusMessageParts } = await loadStatusMessageRuntime();
   await waitForContextWindowCacheLoad();
-  const explicitThinkingDefault =
-    (agentConfig?.thinkingDefault as ThinkLevel | undefined) ??
-    (agentDefaults.thinkingDefault as ThinkLevel | undefined);
   const preparedContextTokens =
     typeof contextTokens === "number" && contextTokens > 0 ? contextTokens : undefined;
   const selectedCatalogEntry = findModelInCatalog(
@@ -595,8 +592,9 @@ export async function buildStatusReplyParts(
   );
   const requestedThinkLevel =
     resolvedThinkLevel ??
-    explicitThinkingDefault ??
+    agentConfig?.thinkingDefault ??
     (await resolveDefaultThinkingLevel()) ??
+    agentDefaults.thinkingDefault ??
     (sessionEntry?.thinkingLevel as ThinkLevel | undefined) ??
     "off";
   // Active profiles can forbid `off` (for example, always-thinking models). Absence means
@@ -643,7 +641,7 @@ export async function buildStatusReplyParts(
         primary: params.primaryModelLabelOverride ?? `${provider}/${model}`,
         ...(agentFallbacksOverride === undefined ? {} : { fallbacks: agentFallbacksOverride }),
       },
-      thinkingDefault: explicitThinkingDefault,
+      thinkingDefault: agentConfig?.thinkingDefault ?? agentDefaults.thinkingDefault,
       verboseDefault: agentDefaults.verboseDefault,
       reasoningDefault: agentConfig?.reasoningDefault ?? agentDefaults.reasoningDefault,
       elevatedDefault: agentDefaults.elevatedDefault,

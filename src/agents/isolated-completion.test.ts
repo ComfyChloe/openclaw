@@ -18,10 +18,123 @@ const { createDeferred } = await import("../../test/helpers/promise.js");
 const { validateAgentRunDelegatedAuthority } = await import("../infra/agent-run-registry.js");
 const { mintSecretSentinel } = await import("../secrets/sentinel.js");
 const { getAdmittedRunDelegatedAuthority } = await import("./admitted-run-context.js");
+const { withPreparedModelSelection } = await import("./prepared-model-selection.js");
+const { runIsolatedAgentRuntimeCompletion } =
+  await import("../plugins/runtime/runtime-llm-isolated.js");
 
 beforeEach(resetIsolatedCompletionTestState);
 
 describe("runIsolatedCompletion", () => {
+  it.each(["success", "denied"] as const)("releases one selected owner after %s", async (mode) => {
+    const postClose = createDeferred();
+    let delayedBorrow: Promise<unknown> | undefined;
+    const denied = new Error("Selection policy denied inference.");
+    registerIsolatedHarness({
+      runIsolatedCompletionV2: async () => ({
+        assistant: isolatedAssistant([{ type: "text", text: "done" }]),
+      }),
+    });
+    const operation = withPreparedModelSelection(
+      { cfg: {}, agentId: "main" },
+      [],
+      async (context) => {
+        Object.assign(preparedModelRuntime, { isCurrent: () => false });
+        expect(context.borrowPreparedRuntime()).toBe(preparedModelRuntime);
+        delayedBorrow = postClose.promise.then(() => context.borrowPreparedRuntime());
+        void delayedBorrow.catch(() => {});
+        if (mode === "denied") {
+          throw denied;
+        }
+        return await runIsolatedCompletion({
+          ...isolatedRequest(),
+          config: context.preparedModelRuntime.config,
+          borrowPreparedRuntime: context.borrowPreparedRuntime,
+          assertCurrent: context.assertCurrent,
+        });
+      },
+    );
+    void operation
+      .finally(() => {
+        Object.assign(preparedModelRuntime, { isCurrent: () => true });
+        postClose.resolve();
+      })
+      .catch(() => {});
+    if (mode === "denied") {
+      await expect(operation).rejects.toBe(denied);
+      expect(mocks.prepareSimpleCompletionModel).not.toHaveBeenCalled();
+    } else {
+      await expect(operation).resolves.toMatchObject({ text: "done" });
+    }
+    expect(mocks.acquireAgentRunPreparedModelRuntime).toHaveBeenCalledOnce();
+    expect(releaseRuntimeLease).toHaveBeenCalledOnce();
+    if (!delayedBorrow) {
+      throw new Error("Selection did not expose its borrower.");
+    }
+    await expect(delayedBorrow).rejects.toThrow("Prepared model selection has ended");
+  });
+
+  it.each(["timeout", "abort"] as const)(
+    "revokes on %s while retaining resources until settlement",
+    async (mode) => {
+      vi.useFakeTimers();
+      const started = createDeferred();
+      const settle = createDeferred();
+      const controller = new AbortController();
+      let borrow: (() => unknown) | undefined;
+      let operation: Promise<never> | undefined;
+      const completion = runIsolatedAgentRuntimeCompletion({
+        request: {
+          messages: [{ role: "user", content: "test" }],
+          signal: controller.signal,
+          execution: { mode: "isolated-agent-runtime", timeoutMs: 5 },
+        },
+        run: ({ abortSignal }) => {
+          operation = withPreparedModelSelection(
+            { cfg: {}, agentId: "main", abortSignal },
+            [],
+            async (context) => {
+              borrow = context.borrowPreparedRuntime;
+              started.resolve();
+              await settle.promise;
+              context.assertCurrent();
+              throw new Error("Cancelled operation reached inference.");
+            },
+          );
+          return operation;
+        },
+      });
+      const rejected = expect(completion).rejects.toMatchObject({
+        code: mode === "timeout" ? "LLM_COMPLETION_TIMEOUT" : "LLM_COMPLETION_ABORTED",
+      });
+      try {
+        await started.promise;
+        if (mode === "timeout") {
+          await vi.advanceTimersByTimeAsync(5);
+        } else {
+          controller.abort();
+        }
+        await rejected;
+        expect(releaseRuntimeLease).not.toHaveBeenCalled();
+        if (!borrow || !operation) {
+          throw new Error("Selection did not enter its awaited operation.");
+        }
+        expect(borrow).toThrow();
+        settle.resolve();
+        await expect(operation).rejects.not.toThrow("Cancelled operation reached inference");
+        expect(releaseRuntimeLease).toHaveBeenCalledOnce();
+        expect(borrow).toThrow("Prepared model selection has ended");
+        expect(mocks.prepareSimpleCompletionModel).not.toHaveBeenCalled();
+      } finally {
+        controller.abort();
+        settle.resolve();
+        if (operation) {
+          await Promise.allSettled([operation]);
+        }
+        vi.useRealTimers();
+      }
+    },
+  );
+
   it.each(["v1", "v2"] as const)(
     "rejects a retained %s dispatch callback after isolated completion closes",
     async (version) => {
@@ -41,7 +154,7 @@ describe("runIsolatedCompletion", () => {
       if (!dispatchLater) {
         throw new Error("The harness did not receive its dispatch callback.");
       }
-      expect(dispatchLater).toThrow("Isolated completion has ended");
+      expect(dispatchLater).toThrow("Prepared model selection has ended");
       expect(dispatch).not.toHaveBeenCalled();
     },
   );

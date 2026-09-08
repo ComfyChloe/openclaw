@@ -103,7 +103,11 @@ describe("TTS core", () => {
         },
         {
           completeWithPreparedSimpleCompletionModel: vi.fn(async () => assistant),
-          prepareSimpleCompletionModel: vi.fn(async () => ({ model, auth })),
+          prepareSimpleCompletionModelFromRef: vi.fn(async () => ({
+            model,
+            auth,
+            selection: { provider: model.provider, modelId: model.id, agentDir: "/tmp/tts-agent" },
+          })),
           requireApiKey: vi.fn(() => "key"),
         },
       );

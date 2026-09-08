@@ -3,6 +3,7 @@ import { truncateUtf16Safe } from "@openclaw/normalization-core/utf16-slice";
 import type { SessionCompanionExchange } from "../../packages/gateway-protocol/src/schema/sessions.js";
 import { prepareSystemAgentRunAdmission } from "../agents/admitted-run-context.js";
 import { resolveAgentWorkspaceDir } from "../agents/agent-scope.js";
+import { splitTrailingAuthProfile } from "../agents/model-ref-profile.js";
 import { resolveSimpleCompletionSelectionForAgent } from "../agents/simple-completion-runtime.js";
 import { resolveUtilityModelRefForAgent } from "../agents/utility-model.js";
 import { resolveSessionStorePathCore } from "../config/sessions.js";
@@ -200,8 +201,7 @@ async function defaultRun(params: SessionCompanionRunParams): Promise<string> {
       config: buildSessionCompanionRunConfig(params.cfg),
       codeModeOverride: false,
       prompt: current.content,
-      provider: selection.runtimeProvider ?? selection.provider,
-      model: selection.modelId,
+      model: splitTrailingAuthProfile(params.modelRef).model,
       modelFallbacksOverride: [],
       agentHarnessRuntimeOverride: "openclaw",
       authProfileId: selection.profileId,

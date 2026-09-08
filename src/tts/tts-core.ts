@@ -1,12 +1,5 @@
 import { resolveTimerTimeoutMs } from "@openclaw/normalization-core/number-coercion";
 // TTS core coordinates text preparation, provider selection, and speech output.
-import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
-import {
-  buildModelAliasIndex,
-  resolveDefaultModelForAgent,
-  resolveModelRefFromString,
-  type ModelRef,
-} from "../agents/model-selection.js";
 import type { OpenClawConfig } from "../config/types.js";
 import { sanitizeAssistantVisibleText } from "../shared/text/assistant-visible-text.js";
 import type { ResolvedTtsConfig } from "./tts-types.js";
@@ -19,9 +12,10 @@ export {
   scheduleCleanup,
 } from "./tts-provider-helpers.js";
 
+// speech-core is private-local; injected dependencies are an internal owner seam.
 type SummarizeTextDeps = {
   completeWithPreparedSimpleCompletionModel: typeof import("../agents/simple-completion-runtime.js").completeWithPreparedSimpleCompletionModel;
-  prepareSimpleCompletionModel: typeof import("../agents/simple-completion-runtime.js").prepareSimpleCompletionModel;
+  prepareSimpleCompletionModelFromRef: typeof import("../agents/simple-completion-runtime.js").prepareSimpleCompletionModelFromRef;
   requireApiKey: typeof import("../agents/model-auth.js").requireApiKey;
 };
 
@@ -36,7 +30,7 @@ function loadDefaultSummarizeTextDeps(): Promise<SummarizeTextDeps> {
   ]).then(([completionRuntime, { requireApiKey }]) => ({
     completeWithPreparedSimpleCompletionModel:
       completionRuntime.completeWithPreparedSimpleCompletionModel,
-    prepareSimpleCompletionModel: completionRuntime.prepareSimpleCompletionModel,
+    prepareSimpleCompletionModelFromRef: completionRuntime.prepareSimpleCompletionModelFromRef,
     requireApiKey,
   })));
 }
@@ -47,33 +41,6 @@ type SummarizeResult = {
   inputLength: number;
   outputLength: number;
 };
-
-type SummaryModelSelection = {
-  ref: ModelRef;
-  source: "summaryModel" | "default";
-};
-
-function resolveSummaryModelRef(
-  cfg: OpenClawConfig,
-  config: ResolvedTtsConfig,
-): SummaryModelSelection {
-  const defaultRef = resolveDefaultModelForAgent({ cfg });
-  const override = normalizeOptionalString(config.summaryModel);
-  if (!override) {
-    return { ref: defaultRef, source: "default" };
-  }
-
-  const aliasIndex = buildModelAliasIndex({ cfg, defaultProvider: defaultRef.provider });
-  const resolved = resolveModelRefFromString({
-    raw: override,
-    defaultProvider: defaultRef.provider,
-    aliasIndex,
-  });
-  if (!resolved) {
-    return { ref: defaultRef, source: "default" };
-  }
-  return { ref: resolved.ref, source: "summaryModel" };
-}
 
 /** Summarize long text before synthesis using the configured summary model. */
 export async function summarizeText(
@@ -91,21 +58,20 @@ export async function summarizeText(
     throw new Error(`Invalid targetLength: ${targetLength}`);
   }
 
+  const summaryModel = config.summaryModel;
   const startTime = Date.now();
   const resolvedDeps = deps ?? (await loadDefaultSummarizeTextDeps());
-  const { ref } = resolveSummaryModelRef(cfg, config);
   // Dynamic model discovery precedes the request timeout, matching the established
   // summarization contract. The timeout below bounds only the completion request.
-  const prepared = await resolvedDeps.prepareSimpleCompletionModel({
+  const prepared = await resolvedDeps.prepareSimpleCompletionModelFromRef({
     cfg,
-    provider: ref.provider,
-    modelId: ref.model,
+    modelRef: summaryModel,
   });
   if ("error" in prepared) {
     throw new Error(prepared.error);
   }
   const completionModel = prepared.model;
-  const providerKey = resolvedDeps.requireApiKey(prepared.auth, ref.provider);
+  const providerKey = resolvedDeps.requireApiKey(prepared.auth, completionModel.provider);
 
   try {
     const controller = new AbortController();

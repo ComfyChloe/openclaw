@@ -1,4 +1,3 @@
-import { normalizeProviderId } from "@openclaw/model-catalog-core/provider-id";
 import { normalizeOptionalString as readStringParam } from "@openclaw/normalization-core/string-coerce";
 import {
   resolveMergedModelProviderConfig,
@@ -287,12 +286,5 @@ function isSupportedHarness(entry: {
 }
 
 function normalizeModelId(provider: string, modelId: string): string {
-  const trimmed = modelId.trim();
-  const slashIndex = trimmed.indexOf("/");
-  const unqualified =
-    slashIndex > 0 &&
-    normalizeProviderId(trimmed.slice(0, slashIndex)) === normalizeProviderId(provider)
-      ? trimmed.slice(slashIndex + 1).trim()
-      : trimmed;
-  return canonicalizeProviderModelId(provider, unqualified);
+  return canonicalizeProviderModelId(provider, modelId.trim());
 }

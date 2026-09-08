@@ -18,7 +18,7 @@ type SummarizeTextDeps = NonNullable<Parameters<TtsCoreModule["summarizeText"]>[
 let ttsRuntime: TtsRuntimeModule;
 let ttsRuntimeInitialized = false;
 let completeWithPreparedSimpleCompletionModel: SummarizeTextDeps["completeWithPreparedSimpleCompletionModel"];
-let prepareSimpleCompletionModelMock: SummarizeTextDeps["prepareSimpleCompletionModel"];
+let prepareSimpleCompletionModelFromRefMock: SummarizeTextDeps["prepareSimpleCompletionModelFromRef"];
 let requireApiKeyMock: SummarizeTextDeps["requireApiKey"];
 let summarizeTextCore: TtsCoreModule["summarizeText"];
 let resolveTtsConfig: TtsRuntimeModule["resolveTtsConfig"];
@@ -134,7 +134,7 @@ const mockAssistantMessage = (content: AssistantMessage["content"]): AssistantMe
 function createSummarizeTextDeps() {
   return {
     completeWithPreparedSimpleCompletionModel,
-    prepareSimpleCompletionModel: prepareSimpleCompletionModelMock,
+    prepareSimpleCompletionModelFromRef: prepareSimpleCompletionModelFromRefMock,
     requireApiKey: requireApiKeyMock,
   };
 }
@@ -292,15 +292,16 @@ const loadTtsRuntime = createLazyRuntimeModule(() => import("../../plugin-sdk/tt
 
 const loadTtsCore = createLazyRuntimeModule(() => import("../../plugin-sdk/speech-core.js"));
 
-function createPrepareSimpleCompletionModelMock(): SummarizeTextDeps["prepareSimpleCompletionModel"] {
-  return vi.fn(async ({ provider, modelId }) => ({
-    model: createResolvedModel(provider, modelId).model,
+function createPrepareSimpleCompletionModelMock(): SummarizeTextDeps["prepareSimpleCompletionModelFromRef"] {
+  return vi.fn(async () => ({
+    model: createResolvedModel("openai", "gpt-4o-mini").model,
+    selection: { provider: "openai", modelId: "gpt-4o-mini", agentDir: "/tmp/tts-agent" },
     auth: {
       apiKey: "test-api-key",
       source: "test",
       mode: "api-key" as const,
     },
-  })) as SummarizeTextDeps["prepareSimpleCompletionModel"];
+  }));
 }
 
 async function setupTtsRuntime() {
@@ -364,7 +365,7 @@ function createResolvedSummarizationConfig(cfg: OpenClawConfig): ResolvedTtsConf
 async function setupSummarizationMocks() {
   ({ summarizeText: summarizeTextCore } = await loadTtsCore());
   completeWithPreparedSimpleCompletionModel = vi.fn();
-  prepareSimpleCompletionModelMock = createPrepareSimpleCompletionModelMock();
+  prepareSimpleCompletionModelFromRefMock = createPrepareSimpleCompletionModelMock();
   requireApiKeyMock = vi.fn() as SummarizeTextDeps["requireApiKey"];
   vi.mocked(completeWithPreparedSimpleCompletionModel).mockResolvedValue(
     mockAssistantMessage([{ type: "text", text: "Summary" }]),
@@ -659,15 +660,15 @@ export function describeTtsSummarizationContract() {
       };
       await runSummarizeText({ cfg });
 
-      expect(prepareSimpleCompletionModelMock).toHaveBeenCalledWith({
+      expect(prepareSimpleCompletionModelFromRefMock).toHaveBeenCalledWith({
         cfg,
-        provider: "openai",
-        modelId: "gpt-4.1-mini",
+        modelRef: "openai/gpt-4.1-mini",
       });
     });
 
     it("keeps native completion APIs for direct summarization", async () => {
-      vi.mocked(prepareSimpleCompletionModelMock).mockResolvedValue({
+      vi.mocked(prepareSimpleCompletionModelFromRefMock).mockResolvedValue({
+        selection: { provider: "local-summary", modelId: "demo-model", agentDir: "/tmp/tts-agent" },
         model: {
           ...createResolvedModel("local-summary", "demo-model").model,
           baseUrl: "http://127.0.0.1:4000/v1",

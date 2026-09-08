@@ -3,7 +3,28 @@ import {
   hasSessionActiveAutoModelFallback,
   hasUserPinnedModelSelection,
   resolveSessionModelOverrideSource,
+  resolveSessionModelOverrideRouteResolution,
 } from "./model-override-provenance.js";
+
+describe("resolveSessionModelOverrideRouteResolution", () => {
+  it.each([
+    { source: "user", marker: undefined, expected: "resolved" },
+    { source: "user", marker: "resolved", expected: "resolved" },
+    { source: undefined, marker: undefined, expected: "resolved" },
+  ] as const)(
+    "keeps source=$source marker=$marker as $expected",
+    ({ source, marker, expected }) => {
+      expect(
+        resolveSessionModelOverrideRouteResolution({
+          providerOverride: "custom",
+          modelOverride: "custom/model",
+          modelOverrideSource: source,
+          modelOverrideRouteResolution: marker,
+        }),
+      ).toBe(expected);
+    },
+  );
+});
 
 describe("hasUserPinnedModelSelection", () => {
   it.each([

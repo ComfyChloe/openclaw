@@ -30,7 +30,7 @@ import {
   createBundledStaticCatalogModelResolver,
   loadBundledProviderStaticCatalogContextModels,
 } from "./embedded-agent-runner/model.static-catalog.js";
-import { createStaticModelIdMatcher } from "./embedded-agent-runner/model.static-id.js";
+import { createStaticProviderModelIdNormalizer } from "./model-ref-shared.js";
 import {
   buildConfiguredModelCatalog,
   parseConfiguredModelVisibilityEntries,
@@ -211,7 +211,7 @@ export async function prepareWorkspaceBuildGroup(
     preferBuiltPluginArtifacts,
   );
   const prepare = async () => {
-    const matchesStaticModelId = createStaticModelIdMatcher({
+    const normalizeModelId = createStaticProviderModelIdNormalizer({
       manifestPlugins: pluginMetadataSnapshot,
     });
     const mediaCapabilityProviders = reuseRuntimeFacts
@@ -239,13 +239,11 @@ export async function prepareWorkspaceBuildGroup(
     });
     const configuredManifestModels = new Map<string, ProviderRuntimeModel | undefined>();
     const resolveConfiguredManifestModel = (lookup: { provider: string; modelId: string }) => {
-      const key = `${normalizeProviderId(lookup.provider)}\0${lookup.modelId.trim().toLowerCase()}`;
-      if (configuredManifestModels.has(key)) {
-        return configuredManifestModels.get(key);
+      const key = `${normalizeProviderId(lookup.provider)}\0${lookup.modelId.trim()}`;
+      if (!configuredManifestModels.has(key)) {
+        configuredManifestModels.set(key, resolveManifestStaticCatalogModel(lookup));
       }
-      const model = resolveManifestStaticCatalogModel(lookup);
-      configuredManifestModels.set(key, model);
-      return model;
+      return configuredManifestModels.get(key);
     };
     const configuredProviderIds = [
       ...new Set([
@@ -268,7 +266,7 @@ export async function prepareWorkspaceBuildGroup(
       ...new Set([
         ...collectConfiguredProviderIdsNeedingStaticCatalog({
           config: input.config,
-          matchesStaticModelId,
+          normalizeModelId,
           resolveStaticCatalogModel: resolveConfiguredManifestModel,
         }),
         ...(options.providerDiscoveryProviderIds ?? []).map(normalizeProviderId).filter(Boolean),
@@ -396,7 +394,7 @@ export async function prepareWorkspaceBuildGroup(
         metadataSnapshot: pluginMetadataSnapshot,
         ...(preparedStaticProviderCatalog ? { preparedStaticProviderCatalog } : {}),
         providerStaticModels,
-        matchesStaticModelId,
+        normalizeModelId,
         resolveStaticCatalogModel: resolveConfiguredManifestModel,
       });
       const runtimeCapabilityModels = prepareRuntimeCapabilityModels({

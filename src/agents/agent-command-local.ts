@@ -10,6 +10,7 @@ import type { RuntimeEnv } from "../runtime.js";
 import { runWithAgentCommandRecoveryOwner } from "./agent-command-recovery-owner.js";
 import {
   prepareAgentCommandExecution,
+  withPreparedAgentCommandRuntime,
   type PreparedAgentCommandExecution,
 } from "./command/prepare.js";
 import { resolveAgentCommandDeps } from "./command/runtime-loaders.js";
@@ -18,7 +19,6 @@ import {
   createCronCreatorAuthorityCapability,
   runWithCronCreatorAuthorityCapability,
 } from "./cron-creator-authority-context.js";
-import { withAgentPluginRegistry } from "./runtime-plugins.js";
 import { measureAgentStartup } from "./startup-timing.js";
 
 type ResolvedAgentCommandDeps = Awaited<ReturnType<typeof resolveAgentCommandDeps>>;
@@ -69,11 +69,9 @@ export async function runLocalAgentCommand<TResult>(params: {
                 }
               : prepared;
             const run = () =>
-              withAgentPluginRegistry({
-                config: admittedPrepared.cfg,
-                workspaceDir: admittedPrepared.workspaceDir,
-                run: () => params.run(admittedPrepared, resolvedDeps),
-              });
+              withPreparedAgentCommandRuntime(admittedPrepared.commandRuntimeContext, () =>
+                params.run(admittedPrepared, resolvedDeps),
+              );
             return capability
               ? await runWithCronCreatorAuthorityCapability(
                   capability,

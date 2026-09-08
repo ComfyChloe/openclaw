@@ -1,7 +1,27 @@
 import { describe, expect, it, vi } from "vitest";
+import { applyModelOverrideToSessionEntry } from "./model-overrides.js";
 import { resolveStoredModelOverride } from "./stored-model-overrides.js";
 
+vi.mock("../agents/provider-model-normalization.runtime.js", () => ({
+  normalizeProviderModelIdWithRuntime: ({ context }: { context: { modelId: string } }) =>
+    context.modelId === "latest" ? "middle" : context.modelId === "middle" ? "final" : undefined,
+}));
+
 describe("resolveStoredModelOverride", () => {
+  it("preserves the exact namespaced selection written by the override owner", () => {
+    const entry = { sessionId: "namespaced-selection", updatedAt: 1 };
+    applyModelOverrideToSessionEntry({
+      entry,
+      selection: { provider: "custom", model: "custom/Model", isDefault: false },
+    });
+    expect(resolveStoredModelOverride({ defaultProvider: "openai", sessionEntry: entry })).toEqual({
+      provider: "custom",
+      model: "custom/Model",
+      source: "session",
+      routeResolution: "resolved",
+    });
+  });
+
   it("recovers resolved provenance for legacy auto-fallback overrides", () => {
     expect(
       resolveStoredModelOverride({
@@ -41,7 +61,7 @@ describe("resolveStoredModelOverride", () => {
       provider: "anthropic",
       model: "claude-sonnet-4-7",
       source: "parent",
-      routeResolution: "raw",
+      routeResolution: "resolved",
     });
     expect(loadSessionEntry).toHaveBeenCalledWith("agent:main:telegram:dm:parent");
   });
@@ -89,7 +109,7 @@ describe("resolveStoredModelOverride", () => {
     });
   });
 
-  it("continues to inherit deliberate parent model pins", () => {
+  it.each(["user", undefined] as const)("inherits parent model pins with source=%s", (source) => {
     expect(
       resolveStoredModelOverride({
         defaultProvider: "openai",
@@ -98,17 +118,56 @@ describe("resolveStoredModelOverride", () => {
           "agent:main:discord:channel:root": {
             sessionId: "parent-session",
             updatedAt: 1,
-            providerOverride: "anthropic",
-            modelOverride: "claude-sonnet-4-6",
-            modelOverrideSource: "user",
+            providerOverride: "custom",
+            modelOverride: "middle",
+            ...(source ? { modelOverrideSource: source } : {}),
           },
         },
       }),
     ).toEqual({
-      provider: "anthropic",
-      model: "claude-sonnet-4-6",
+      provider: "custom",
+      model: "middle",
       source: "parent",
-      routeResolution: "raw",
+      routeResolution: "resolved",
     });
+  });
+});
+
+it("preserves a pre-source selected model and its stored entry through the public view", () => {
+  const entry = {
+    sessionId: "legacy-selected",
+    updatedAt: 1,
+    providerOverride: "custom",
+    modelOverride: "middle",
+  };
+  const result = resolveStoredModelOverride({
+    sessionEntry: entry,
+    defaultProvider: "openai",
+  });
+  expect(result).toEqual({
+    provider: "custom",
+    model: "middle",
+    source: "session",
+    routeResolution: "resolved",
+  });
+  expect(entry).toEqual({
+    sessionId: "legacy-selected",
+    updatedAt: 1,
+    providerOverride: "custom",
+    modelOverride: "middle",
+  });
+});
+
+it("preserves normalized provider-less compatibility input through the public view", () => {
+  expect(
+    resolveStoredModelOverride({
+      sessionEntry: { sessionId: "public-compat", updatedAt: 1, modelOverride: "openrouter:auto" },
+      defaultProvider: "openai",
+    }),
+  ).toEqual({
+    provider: "openrouter",
+    model: "openrouter/auto",
+    source: "session",
+    routeResolution: "resolved",
   });
 });

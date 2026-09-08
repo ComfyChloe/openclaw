@@ -23,6 +23,8 @@ const {
   releasePreparedModelRuntimeMock,
   resolveModelAsyncMock,
   resolveModelWithRegistryMock,
+  resolveApiKeyForProviderCoreMock,
+  fetchMock,
 } = imageRuntimeMocks;
 
 const { describeImageWithModelCore } = await import("./image.js");
@@ -608,6 +610,51 @@ describe("describeImageWithModelCore", () => {
     expect(completeMock).not.toHaveBeenCalled();
   });
 
+  it.each(["timeout", "cancellation"])(
+    "does not start late MiniMax fallback auth after setup %s",
+    async (mode) => {
+      vi.useFakeTimers();
+      let rejectResolution!: (error: Error) => void;
+      resolveModelAsyncMock.mockImplementationOnce(
+        () =>
+          new Promise((_, reject) => {
+            rejectResolution = reject;
+          }),
+      );
+      const controller = new AbortController();
+      const result = describeImageWithModelCore({
+        cfg: {},
+        agentDir: "/tmp/openclaw-agent",
+        provider: "minimax",
+        model: "MiniMax-VL-01",
+        buffer: Buffer.from("png-bytes"),
+        fileName: "image.png",
+        mime: "image/png",
+        prompt: "Describe the image.",
+        timeoutMs: 25,
+        signal: controller.signal,
+      });
+      const assertion = expect(result).rejects.toThrow(
+        mode === "timeout"
+          ? "image description setup timed out after 25ms before provider request started"
+          : "caller cancelled setup",
+      );
+      await vi.advanceTimersByTimeAsync(0);
+      expect(resolveModelAsyncMock).toHaveBeenCalledOnce();
+      if (mode === "timeout") {
+        await vi.advanceTimersByTimeAsync(25);
+      } else {
+        controller.abort(new Error("caller cancelled setup"));
+      }
+      await assertion;
+      rejectResolution(new Error("Unknown model: minimax/MiniMax-VL-01"));
+      await vi.runAllTimersAsync();
+      expect(resolveApiKeyForProviderCoreMock).not.toHaveBeenCalled();
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(releasePreparedModelRuntimeMock).toHaveBeenCalledOnce();
+    },
+  );
+
   it.each(
     (["timeout", "cancellation"] as const).flatMap((mode) =>
       (["admission", "model", "credential", "credential-model", "runtime-auth"] as const).map(
@@ -642,6 +689,7 @@ describe("describeImageWithModelCore", () => {
             agentDir: "/tmp/openclaw-agent",
             config: {},
             metadataSnapshot: createEmptyPluginMetadataSnapshot(),
+            modelCatalog: { entries: [] },
             createStores: () => ({ authStorage: preparedAuthStorage, modelRegistry: {} }),
           },
           release: releasePreparedModelRuntimeMock,
