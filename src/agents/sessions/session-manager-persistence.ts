@@ -177,6 +177,30 @@ export class SessionManagerPersistence extends SessionManagerCore {
     const candidatePersistedIndex = currentEntries.findIndex(
       (entry) => isRecord(entry) && entry.id === candidate?.id,
     );
+    // Custom data never participates in topology or FTS. Keep loaded payloads by reference
+    // while the storage owner carries their original bytes through the atomic suffix rewrite.
+    const retainedCustomData = new Map<string, unknown>(
+      this.boundedContextIncomplete && candidatePersistedIndex >= 0
+        ? currentEntries
+            .slice(candidatePersistedIndex, candidatePersistedIndex + SYNC_REBUILD_MAX_ROWS)
+            .flatMap((entry) =>
+              isRecord(entry) &&
+              entry.type === "custom" &&
+              typeof entry.id === "string" &&
+              entry.data !== undefined
+                ? [[entry.id, entry.data] as const]
+                : [],
+            )
+        : [],
+    );
+    let retainedCustomDataIds = [...retainedCustomData.keys()];
+    const restoreCustomData = <T>(entry: T): T =>
+      isRecord(entry) &&
+      entry.type === "custom" &&
+      typeof entry.id === "string" &&
+      retainedCustomData.has(entry.id)
+        ? { ...entry, data: retainedCustomData.get(entry.id) }
+        : entry;
     let retainedContextPrefix =
       persistedSuffixStartSeq !== undefined && candidatePersistedIndex >= 0
         ? currentEntries.slice(0, candidatePersistedIndex)
@@ -191,8 +215,22 @@ export class SessionManagerPersistence extends SessionManagerCore {
           {
             maxBytes: SYNC_REBUILD_MAX_BYTES,
             maxEvents: SYNC_REBUILD_MAX_ROWS,
+            retainedCustomDataIds,
           },
         );
+        // SQLite cannot project over-depth JSON. Those rows retain their complete payload
+        // and stay on the ordinary exact-byte path rather than claiming an opaque reference.
+        const projectedIds = new Set(
+          expectedPersistedEntries.flatMap((entry) =>
+            isRecord(entry) &&
+            entry.type === "custom" &&
+            typeof entry.id === "string" &&
+            !Object.hasOwn(entry, "data")
+              ? [entry.id]
+              : [],
+          ),
+        );
+        retainedCustomDataIds = retainedCustomDataIds.filter((id) => projectedIds.has(id));
       } catch (error) {
         const exceededPlanningLimit =
           error instanceof Error &&
@@ -363,10 +401,12 @@ export class SessionManagerPersistence extends SessionManagerCore {
       expectedPersistedEntries = currentEntries;
       useFullTranscriptFallback = true;
     }
-    const replacementEvents = useFullTranscriptFallback ? events : suffixEvents;
+    const replacementEvents = useFullTranscriptFallback
+      ? events.map(restoreCustomData)
+      : suffixEvents;
     const adoptPrepared = (version?: typeof this.transcriptVersion) => {
       // Publish the detached tree before later post-commit observers can append through this manager.
-      this.fileEntries = prepared.fileEntries;
+      this.fileEntries = prepared.fileEntries.map(restoreCustomData);
       this.opaqueFileEntries = prepared.opaqueFileEntries;
       this.buildIndex();
       for (const [id, parentId] of prepared.opaqueParentsById) {
@@ -401,6 +441,7 @@ export class SessionManagerPersistence extends SessionManagerCore {
           this.transcriptMutationAt,
           adoptPrepared,
           persistedSuffixStartSeq !== undefined && !useFullTranscriptFallback,
+          useFullTranscriptFallback ? [] : retainedCustomDataIds,
         )
       ) {
         throw new Error(`SQLite session changed before trimming ${this.sessionId}`);

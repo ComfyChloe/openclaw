@@ -24,12 +24,13 @@ import {
   resolveSqliteSessionTranscriptReadFence,
   SessionTranscriptReadFenceError,
 } from "./session-transcript-read-fence.js";
+import { projectTranscriptRetainedDataSql } from "./session-transcript-retained-data.js";
 
 /** Loads one raw suffix only after SQL-side row and byte bounds are proven. */
 export function loadTranscriptSuffixEventsBoundedSync(
   scope: SessionTranscriptReadScope,
   startSeq: number,
-  limits: { maxBytes: number; maxEvents: number },
+  limits: { maxBytes: number; maxEvents: number; retainedCustomDataIds?: readonly string[] },
 ): TranscriptEvent[] {
   const resolved = resolveSqliteTranscriptReadScope(scope);
   const database = openOpenClawAgentDatabase(toDatabaseOptions(resolved));
@@ -54,6 +55,10 @@ export function loadTranscriptSuffixEventsBoundedSync(
           );
         }
       }
+      const projected = projectTranscriptRetainedDataSql(
+        sql.ref("event_json"),
+        limits.retainedCustomDataIds ?? [],
+      );
       const metadata = executeSqliteQuerySync(
         database.db,
         db
@@ -61,7 +66,7 @@ export function loadTranscriptSuffixEventsBoundedSync(
           .select([
             "seq",
             /* kysely-allow-raw: reject oversized suffixes before acquiring their JSON payloads. */
-            sql<number>`OCTET_LENGTH(event_json) + 1`.as("serialized_bytes"),
+            sql<number>`OCTET_LENGTH(${projected}) + 1`.as("serialized_bytes"),
           ])
           .where("session_id", "=", resolved.sessionId)
           .where("seq", ">=", startSeq)
@@ -89,7 +94,7 @@ export function loadTranscriptSuffixEventsBoundedSync(
         database.db,
         db
           .selectFrom("transcript_events")
-          .select(["event_json", "seq"])
+          .select([projected.as("event_json"), "seq"])
           .where("session_id", "=", resolved.sessionId)
           .where(
             "seq",

@@ -52,6 +52,7 @@ import {
   transcriptEventContextEligibility,
 } from "./session-transcript-projection-rebuild.js";
 import { startSessionTranscriptIndexReconcile } from "./session-transcript-reconcile.js";
+import { copyRetainedTranscriptPayload } from "./session-transcript-retained-data.js";
 import { createSessionTranscriptHeader } from "./transcript-header.js";
 
 type TranscriptAppendOptions = {
@@ -122,6 +123,7 @@ export function insertTranscriptRowsWithoutProjectionInTransaction(
     seq: number;
     createdAt: number;
     messageIdempotencyKey?: string | null;
+    storedEventSeq?: number;
   }[],
   reservedMessageIdempotencyKeys: ReadonlySet<string> = new Set(),
 ): void {
@@ -129,7 +131,11 @@ export function insertTranscriptRowsWithoutProjectionInTransaction(
   const insertIdentity = createTranscriptIdentityInserter(database, sessionId, false);
   for (const row of rows) {
     const event = canonicalizeTranscriptEventMedia(row.event);
-    insertEvent({ seq: row.seq, eventJson: JSON.stringify(event), createdAt: row.createdAt });
+    if (row.storedEventSeq === undefined) {
+      insertEvent({ seq: row.seq, eventJson: JSON.stringify(event), createdAt: row.createdAt });
+    } else {
+      copyRetainedTranscriptPayload(database, sessionId, row.storedEventSeq, row.seq);
+    }
     const identity = readTranscriptEventIdentity(event);
     if (!identity) {
       continue;

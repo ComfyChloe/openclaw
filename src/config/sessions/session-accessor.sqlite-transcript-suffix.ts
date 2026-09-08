@@ -1,4 +1,5 @@
 import { isRecord } from "@openclaw/normalization-core/record-coerce";
+import { sql } from "kysely";
 import {
   executeSqliteQuerySync,
   executeSqliteQueryTakeFirstSync,
@@ -35,59 +36,23 @@ import {
   SYNC_REBUILD_MAX_ROWS,
   type SessionTranscriptIndexProjection,
 } from "./session-transcript-index.js";
+import { hasTranscriptMessage } from "./session-transcript-projection-rebuild.js";
 import {
-  extractTranscriptIndexEntry,
-  hasTranscriptMessage,
-  shouldProjectActiveEvent,
-  transcriptEventContextEligibility,
-} from "./session-transcript-projection-rebuild.js";
+  projectTranscriptRetainedDataSql,
+  stageRetainedTranscriptData,
+} from "./session-transcript-retained-data.js";
+import {
+  prepareFullTranscriptSuffixMutation,
+  prepareTranscriptIndexProjection,
+} from "./session-transcript-suffix-projection.js";
 import {
   isSessionTranscriptLeafControl,
   parseSessionTranscriptTreeEntry,
-  scanSessionTranscriptTree,
-  selectSessionTranscriptTreePathNodes,
 } from "./transcript-tree.js";
-
-function prepareTranscriptIndexProjection(
-  events: readonly TranscriptEvent[],
-  seqByIndex: readonly number[],
-  createdAtByIndex: readonly number[],
-): SessionTranscriptIndexProjection {
-  const tree = scanSessionTranscriptTree(events);
-  const visibleIndexes =
-    tree.nodes.length > 0
-      ? selectSessionTranscriptTreePathNodes(tree, tree.leafId).map((node) => node.index)
-      : tree.hasLeafControl
-        ? []
-        : events.map((_event, index) => index);
-  const activeRows: SessionTranscriptIndexProjection["activeRows"] = [];
-  let activeMessageCount = 0;
-  for (const index of visibleIndexes) {
-    const event = events[index];
-    if (!shouldProjectActiveEvent(event)) {
-      continue;
-    }
-    const messagePosition = hasTranscriptMessage(event) ? activeMessageCount++ : null;
-    const createdAt = createdAtByIndex[index] ?? Date.now();
-    const ftsEntry = extractTranscriptIndexEntry(event, createdAt);
-    activeRows.push({
-      activePosition: activeRows.length,
-      contextEligible: transcriptEventContextEligibility(event),
-      eventSeq: seqByIndex[index] ?? index,
-      messagePosition,
-      ...(ftsEntry ? { ftsEntry } : {}),
-    });
-  }
-  return {
-    activeMessageCount,
-    activeRows,
-    indexedSeq: seqByIndex.at(-1) ?? -1,
-    leafEventId: tree.appendParentId,
-  };
-}
 
 export type SqliteTranscriptSuffixMutationPlan = {
   expectedRows: readonly SqliteTranscriptStorageRow[];
+  retainedCustomDataIds?: readonly string[];
   incremental?: {
     expectedMutationAt: number | null;
     projectionWasHealthy: boolean;
@@ -103,79 +68,6 @@ export type SqliteTranscriptSuffixMutationPlan = {
   previousProjection?: SessionTranscriptIndexProjection;
   startSeq: number;
 };
-
-function prepareFullTranscriptSuffixMutation(
-  database: OpenClawAgentDatabase,
-  resolved: ResolvedTranscriptScope,
-  expectedEvents: readonly TranscriptEvent[],
-  nextEvents: readonly TranscriptEvent[],
-): SqliteTranscriptSuffixMutationPlan {
-  const expectedRows = readTranscriptStorageRows(database, resolved.sessionId);
-  const expected = expectedEvents.map(canonicalizeTranscriptEventMedia);
-  const next = nextEvents.map(canonicalizeTranscriptEventMedia);
-  const expectedJson = expected.map((event) => JSON.stringify(event));
-  if (
-    expectedRows.length !== expectedJson.length ||
-    expectedRows.some((row, index) => row.eventJson !== expectedJson[index])
-  ) {
-    throw new Error(
-      `SQLite transcript changed while preparing suffix removal for ${resolved.sessionId}`,
-    );
-  }
-
-  const nextJson = next.map((event) => JSON.stringify(event));
-  let prefixLength = 0;
-  while (
-    prefixLength < expectedJson.length &&
-    prefixLength < nextJson.length &&
-    expectedJson[prefixLength] === nextJson[prefixLength]
-  ) {
-    prefixLength += 1;
-  }
-  const unchanged = prefixLength === expectedJson.length && prefixLength === nextJson.length;
-  if (!unchanged && (next.length > expected.length || prefixLength === 0)) {
-    throw new Error(
-      `Transcript mutation is not a bounded suffix removal for ${resolved.sessionId}`,
-    );
-  }
-
-  const startSeq = expectedRows[prefixLength]?.seq ?? (expectedRows.at(-1)?.seq ?? -1) + 1;
-  const nextSeqByIndex = next.map((_event, index) =>
-    index < prefixLength ? (expectedRows[index]?.seq ?? index) : startSeq + index - prefixLength,
-  );
-  const previousProjection = prepareTranscriptIndexProjection(
-    expected,
-    expectedRows.map((row) => row.seq),
-    expectedRows.map((row) => row.createdAt),
-  );
-  const storedCreatedAtByEventId = new Map(
-    expected.flatMap((event, index) => {
-      const eventId = readTranscriptEventId(event);
-      const createdAt = expectedRows[index]?.createdAt;
-      return eventId && createdAt !== undefined ? [[eventId, createdAt] as const] : [];
-    }),
-  );
-  const nextCreatedAt = next.map((event, index) => {
-    if (index < prefixLength) {
-      return expectedRows[index]?.createdAt ?? Date.now();
-    }
-    const eventId = readTranscriptEventId(event);
-    return (
-      (eventId ? storedCreatedAtByEventId.get(eventId) : undefined) ??
-      readEventTimestamp(event) ??
-      Date.now()
-    );
-  });
-  return {
-    expectedRows,
-    next,
-    nextCreatedAt,
-    nextProjection: prepareTranscriptIndexProjection(next, nextSeqByIndex, nextCreatedAt),
-    prefixLength,
-    previousProjection,
-    startSeq,
-  };
-}
 
 // Preserve the raw suffix mutation when an exact incremental projection update is unsafe.
 function verifyIncrementalPlanningFence(
@@ -234,6 +126,7 @@ function prepareIncrementalTranscriptSuffixMutation(
   persistedPrefixLength: number,
   expectedMutationAt?: number | null,
   eventsStartAtPersistedPrefix = false,
+  retainedCustomDataIds: readonly string[] = [],
 ): SqliteTranscriptSuffixMutationPlan {
   const expectedTail = (
     eventsStartAtPersistedPrefix ? expectedEvents : expectedEvents.slice(persistedPrefixLength)
@@ -285,7 +178,13 @@ function prepareIncrementalTranscriptSuffixMutation(
     database.db,
     db
       .selectFrom("transcript_events")
-      .select(["created_at", "event_json", "seq"])
+      .select([
+        "created_at",
+        projectTranscriptRetainedDataSql(sql.ref("event_json"), retainedCustomDataIds).as(
+          "event_json",
+        ),
+        "seq",
+      ])
       .where("session_id", "=", resolved.sessionId)
       .where("seq", ">=", persistedPrefixLength)
       .orderBy("seq", "asc")
@@ -496,9 +395,10 @@ export function prepareSqliteTranscriptSuffixMutation(
   persistedPrefixLength = 0,
   expectedMutationAt?: number | null,
   eventsStartAtPersistedPrefix = false,
+  retainedCustomDataIds: readonly string[] = [],
 ): SqliteTranscriptSuffixMutationPlan {
-  if (persistedPrefixLength > 0) {
-    return prepareIncrementalTranscriptSuffixMutation(
+  if (persistedPrefixLength > 0 || eventsStartAtPersistedPrefix) {
+    const plan = prepareIncrementalTranscriptSuffixMutation(
       database,
       resolved,
       expectedEvents,
@@ -506,7 +406,9 @@ export function prepareSqliteTranscriptSuffixMutation(
       persistedPrefixLength,
       expectedMutationAt,
       eventsStartAtPersistedPrefix,
+      retainedCustomDataIds,
     );
+    return { ...plan, retainedCustomDataIds };
   }
   return prepareFullTranscriptSuffixMutation(database, resolved, expectedEvents, nextEvents);
 }
@@ -527,12 +429,19 @@ export function replaceSqliteTranscriptSuffixInTransaction(
       `SQLite transcript changed while preparing suffix removal for ${resolved.sessionId}`,
     );
   }
+  const retainedCustomDataIds = plan.retainedCustomDataIds ?? [];
   const storedRows = plan.incremental
     ? executeSqliteQuerySync(
         database.db,
         db
           .selectFrom("transcript_events")
-          .select(["created_at", "event_json", "seq"])
+          .select([
+            "created_at",
+            projectTranscriptRetainedDataSql(sql.ref("event_json"), retainedCustomDataIds).as(
+              "event_json",
+            ),
+            "seq",
+          ])
           .where("session_id", "=", resolved.sessionId)
           .where("seq", ">=", plan.startSeq)
           .orderBy("seq", "asc")
@@ -586,6 +495,13 @@ export function replaceSqliteTranscriptSuffixInTransaction(
     }),
   );
 
+  const stagedData = stageRetainedTranscriptData(
+    database,
+    resolved.sessionId,
+    plan.expectedRows,
+    insertEvents,
+    retainedCustomDataIds,
+  );
   executeSqliteQuerySync(
     database.db,
     db
@@ -598,7 +514,8 @@ export function replaceSqliteTranscriptSuffixInTransaction(
     db
       .deleteFrom("transcript_events")
       .where("session_id", "=", resolved.sessionId)
-      .where("seq", ">=", plan.startSeq),
+      .where("seq", ">=", plan.startSeq)
+      .$if(stagedData !== undefined, (query) => query.where("seq", "<", stagedData!.startSeq)),
   );
   insertTranscriptRowsWithoutProjectionInTransaction(
     database,
@@ -609,12 +526,33 @@ export function replaceSqliteTranscriptSuffixInTransaction(
       const eventId = readTranscriptEventId(event);
       const storedKey = eventId ? suffixIdentityKeys.get(eventId) : undefined;
       const nextKey = isRecord(event) ? readMessageIdempotencyKey(event.message) : null;
-      return storedKey && storedKey === nextKey
-        ? { event, seq, createdAt, messageIdempotencyKey: storedKey }
-        : { event, seq, createdAt };
+      const storedEventSeq = stagedData?.sources.get(index);
+      const row: {
+        event: TranscriptEvent;
+        seq: number;
+        createdAt: number;
+        storedEventSeq?: number;
+        messageIdempotencyKey?: string;
+      } = { event, seq, createdAt };
+      if (storedEventSeq !== undefined) {
+        row.storedEventSeq = storedEventSeq;
+      }
+      if (storedKey && storedKey === nextKey) {
+        row.messageIdempotencyKey = storedKey;
+      }
+      return row;
     }),
     retainedIdempotencyKeys,
   );
+  if (stagedData) {
+    executeSqliteQuerySync(
+      database.db,
+      db
+        .deleteFrom("transcript_events")
+        .where("session_id", "=", resolved.sessionId)
+        .where("seq", ">=", stagedData.startSeq),
+    );
+  }
 
   const removedIdempotencyKeys = new Set(
     [...suffixIdentityKeys.values()].filter(

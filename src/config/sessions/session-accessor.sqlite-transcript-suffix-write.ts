@@ -55,6 +55,7 @@ export function replaceTranscriptSuffixEventsSync(
   expectedMutationAt?: number | null,
   captureVersionInTransaction?: (version: SessionTranscriptContextVersion) => void,
   eventsStartAtPersistedPrefix = false,
+  retainedCustomDataIds: readonly string[] = [],
 ): boolean {
   const fencedScope = withOwnedSessionTranscriptWriterFence(scope);
   const resolved = resolveSqliteTranscriptScope(fencedScope);
@@ -67,6 +68,7 @@ export function replaceTranscriptSuffixEventsSync(
     prefixLength,
     expectedMutationAt,
     eventsStartAtPersistedPrefix,
+    retainedCustomDataIds,
   );
   let replaced = false;
   runOpenClawAgentWriteTransaction((database) => {
