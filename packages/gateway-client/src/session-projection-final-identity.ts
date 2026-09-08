@@ -149,13 +149,13 @@ export function hasUniqueSnapshotTerminalMatch(
   if (!terminalContent || readFinalContentIdentity(run.message) !== terminalContent) {
     return false;
   }
-  const terminalMatch = matches.at(-1);
-  return (
-    terminalMatch !== undefined &&
-    readFinalContentIdentity(terminalMatch.message) === terminalContent &&
-    matches.filter((entry) => readFinalContentIdentity(entry.message) === terminalContent)
-      .length === 1
-  );
+  const durableTerminalMatches = matches.filter((entry) => {
+    const metadata = readRecord(readRecord(entry.message)?.["__openclaw"]);
+    return (
+      metadata?.runTerminal === true && readFinalContentIdentity(entry.message) === terminalContent
+    );
+  });
+  return durableTerminalMatches.length === 1;
 }
 
 /** Check whether ordinary single-match promotion needs terminal-content verification. */

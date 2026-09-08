@@ -38,7 +38,7 @@ describe("terminal snapshot reconciliation", () => {
     const persisted = {
       role: "assistant",
       content: [{ text: "The repair is complete.", type: "text" }],
-      __openclaw: { id: "assistant-final", seq: 4, runId },
+      __openclaw: { id: "assistant-final", seq: 4, runId, runTerminal: true },
     };
     let state = reduceSessionProjection(createSessionProjection(scope), {
       type: "runTerminal",
@@ -82,17 +82,14 @@ describe("terminal snapshot reconciliation", () => {
     ).toEqual([earlier, laterToolBoundary, synthetic]);
   });
 
-  it("retains an unsequenced terminal when partial history contains only a tool boundary", () => {
+  it("retains an unsequenced terminal when partial history has one unmarked same-content row", () => {
     const runId = "partial-tool-history-run";
     const synthetic = createAssistantMessage("The repair is complete.");
-    const toolBoundary = {
-      role: "assistant",
-      content: [
-        { type: "text", text: "Checking the repository." },
-        { type: "toolCall", id: "read-1", name: "read", arguments: { path: "AGENTS.md" } },
-      ],
-      __openclaw: { id: "assistant-tool-boundary", seq: 2, runId },
-    };
+    const earlier = createAssistantMessage("The repair is complete.", {
+      id: "assistant-earlier",
+      seq: 2,
+      runId,
+    });
     let state = reduceSessionProjection(createSessionProjection(scope), {
       type: "runTerminal",
       runId,
@@ -101,8 +98,8 @@ describe("terminal snapshot reconciliation", () => {
     });
     state = projectLiveSessionMessage(state, synthetic, { runId });
 
-    expect(reconcileSessionProjectionSnapshot(state, [toolBoundary], scope).messages).toEqual([
-      toolBoundary,
+    expect(reconcileSessionProjectionSnapshot(state, [earlier], scope).messages).toEqual([
+      earlier,
       synthetic,
     ]);
   });

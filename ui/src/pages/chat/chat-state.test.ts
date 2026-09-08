@@ -1192,7 +1192,7 @@ describe("canonical session message recovery", () => {
     const persistedFinal = {
       role: "assistant",
       content: [{ type: "text", text: "The repair is complete." }],
-      __openclaw: { id: "assistant-final", seq: 4, runId },
+      __openclaw: { id: "assistant-final", seq: 4, runId, runTerminal: true },
     };
     const request = vi.fn().mockResolvedValue({
       messages: [prompt, toolBoundary, persistedFinal],

@@ -283,7 +283,7 @@ suite.define(() => {
     const persistedFinal = {
       role: "assistant",
       content: [{ type: "text", text: finalText }],
-      __openclaw: { id: "assistant-final", runId, seq: 4 },
+      __openclaw: { id: "assistant-final", runId, runTerminal: true, seq: 4 },
       timestamp: Date.now(),
     };
 
