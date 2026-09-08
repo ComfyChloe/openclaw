@@ -3,6 +3,7 @@ import { normalizeProviderId } from "@openclaw/model-catalog-core/provider-id";
 import type {
   ModelChoice,
   ModelsListParams,
+  ModelsListResult,
 } from "../../../packages/gateway-protocol/src/schema/agents-models-skills.js";
 import { resolveAgentWorkspaceDir, resolveDefaultAgentId } from "../../agents/agent-scope.js";
 import type { RuntimeAuthMaterialization } from "../../agents/auth-profiles/runtime-materializations.js";
@@ -22,10 +23,7 @@ import {
 import type { ModelCatalogSnapshot, ModelCatalogEntry } from "../../agents/model-catalog.types.js";
 import { createModelFastModeResolver } from "../../agents/model-fast-mode.js";
 import { modelKey } from "../../agents/model-ref-shared.js";
-import {
-  dedupeModelCatalogEntries,
-  modelCatalogLogicalKey,
-} from "../../agents/model-selection-shared.js";
+import { dedupeModelCatalogEntries } from "../../agents/model-selection-shared.js";
 import {
   createModelVisibilityPolicy,
   RUNTIME_MODEL_VISIBILITY_NORMALIZATION,
@@ -33,6 +31,7 @@ import {
 import {
   createOpenAIModelRoutesResolver,
   openAIModelCatalogRoutePolicy,
+  resolveModelCatalogIdentityKey,
 } from "../../agents/openai-model-routes.js";
 import { publishedModelCatalogOwnerMatchesAgent } from "../../agents/prepared-model-catalog-owner.js";
 import type { ResolvedPublishedModelCatalogOwner } from "../../agents/prepared-model-catalog.types.js";
@@ -49,6 +48,9 @@ import type { PluginMetadataSnapshot } from "../../plugins/plugin-metadata-snaps
 import { normalizeAgentId } from "../../routing/session-key.js";
 import { loadDeferredCatalog, readPreparedCatalog } from "../server-model-catalog-auth.js";
 import { resolveGatewayModelThinkingProfile } from "../session-utils-model.js";
+import { resolveChatAccountSelection } from "./chat-account-selection.js";
+import type { ChatMetadataReadParams, ChatMetadataSessionEntry } from "./chat-metadata-contract.js";
+import { resolveSessionCatalogProfiles } from "./chat-metadata-session-projection.js";
 import { resolveModelProviderCapabilities } from "./model-provider-capabilities.js";
 import {
   createModelsListAuthProjection,
@@ -70,10 +72,6 @@ type ModelsListEntryWithCapabilities = ModelChoice;
 type ApiKeyProviderCapabilities = {
   providers: ReadonlyMap<string, boolean>;
   resolveProvider(provider: string): string;
-};
-type ModelsListResult = {
-  models: ModelsListEntryWithCapabilities[];
-  providerOutcomes?: ReturnType<typeof projectProviderCatalogOutcomes>;
 };
 type PreparedModelsListResult = {
   read: () => ModelsListResult;
@@ -102,14 +100,7 @@ export function createGatewayAgentModelCatalogProjector(params: ModelsListAuthPr
         view.logicalEntries.map(async (entry) => {
           const routeVariants = view.variantsOf(entry) ?? [entry];
           const evaluation = evaluateNative(entry, await evaluateEntry(entry, routeVariants));
-          const { entry: projected, donor } = view.project(entry, evaluation);
-          if (donor && Object.hasOwn(donor, "compat")) {
-            projected.compat = donor.compat;
-          }
-          if (donor && Object.hasOwn(donor, "params")) {
-            projected.params = donor.params;
-          }
-          return projected;
+          return view.project(entry, evaluation).runtimeEntry;
         }),
       )),
   };
@@ -233,6 +224,7 @@ type BuildModelsListResultParams = {
   source: ModelsListCatalogSource;
   agentId?: string;
   requesterProfileId?: string;
+  readScope?: ChatMetadataReadParams;
   params: ModelsListParams;
   preloadedCatalog?: {
     agentId: string;
@@ -253,6 +245,7 @@ export async function buildModelsListResult(
       "Model catalog changed while preparing this result. Retry the request.",
     );
   }
+  params.readScope?.draftAccountSelection?.assertCurrent();
   return prepared.read();
 }
 
@@ -261,6 +254,14 @@ export async function prepareModelsListResult(
   params: BuildModelsListResultParams,
 ): Promise<PreparedModelsListResult> {
   const { source } = params;
+  const scope = params.readScope;
+  const draft = scope?.draftAccountSelection;
+  const sessionEntry: ChatMetadataSessionEntry | undefined = draft
+    ? { authProfileOverride: draft.authProfileId, authProfileOverrideSource: "user" }
+    : scope?.sessionEntry;
+  const profiles = resolveSessionCatalogProfiles(sessionEntry);
+  const useRequesterDefaults = !scope?.sessionKey && !scope?.sessionEntry;
+  draft?.assertCurrent();
   const currentConfig =
     source.kind === "gateway" ? source.context.getRuntimeConfig : getRuntimeConfig;
   const publishedOwner = source.kind === "published" ? source.owner : undefined;
@@ -347,6 +348,8 @@ export async function prepareModelsListResult(
   const { defaultProvider, defaultModel, rawDefaultModel } = preparedCatalog;
   const preparedRuntimeAuthModes = preparedProjectionOwner?.authModes;
   const preparedRuntimeAuthMaterializations = preparedProjectionOwner?.authMaterializations;
+  // Capture authority again after acquisition and before hydrating a personal projection.
+  draft?.assertCurrent();
   const projector =
     (usedPreloadedCatalog ? params.catalogProjector : undefined) ??
     createGatewayAgentModelCatalogProjector({
@@ -364,7 +367,11 @@ export async function prepareModelsListResult(
         ? isPreparedModelCatalogFull(publishedOwner.modelCatalog)
         : ownerSnapshot?.catalogComplete === true,
       // Provider-config inventory describes shared authored configuration, not personal accounts.
-      requesterProfileId: view === "provider-config" ? undefined : params.requesterProfileId,
+      requesterProfileId:
+        view === "provider-config" || !useRequesterDefaults
+          ? undefined
+          : (draft?.owner ?? params.requesterProfileId),
+      ...(view === "provider-config" ? {} : profiles),
       routeResolverFactory: params.routeResolverFactory,
       pluginRegistry: preparedPluginRegistry,
       isCurrent,
@@ -403,9 +410,21 @@ export async function prepareModelsListResult(
     !providerFilter || normalizeProvider(entry.provider) === providerFilter;
   const { routeVariants, providerOutcomes } = projector.snapshot;
   const publicProviderOutcomes = projectProviderCatalogOutcomes(providerOutcomes);
-  const outcomeProjection = publicProviderOutcomes?.length
-    ? { providerOutcomes: publicProviderOutcomes }
-    : {};
+  draft?.assertCurrent();
+  const outcomeProjection = {
+    ...(publicProviderOutcomes?.length ? { providerOutcomes: publicProviderOutcomes } : {}),
+    ...(snapshot.refreshFailed ? { refreshFailed: true } : {}),
+    ...(view === "provider-config" || (!scope && !params.requesterProfileId)
+      ? {}
+      : {
+          accountSelection: resolveChatAccountSelection({
+            authStore: projector.authStore,
+            sessionEntry,
+            requesterProfileId:
+              draft?.owner ?? scope?.requesterProfileId ?? params.requesterProfileId,
+          }),
+        }),
+  };
   const includeProviderCapabilities = params.params.includeProviderCapabilities === true;
   const capableProviders = includeProviderCapabilities
     ? apiKeyProviderCapabilities({ cfg, metadataSnapshot, workspaceDir })
@@ -492,8 +511,6 @@ export async function prepareModelsListResult(
     manifestPlugins: metadataSnapshot,
   });
   const { evaluateEntry } = projector;
-  const evaluationKey = (entry: ModelCatalogEntry) =>
-    openAIModelCatalogRoutePolicy.resolveIdentity(entry)?.key ?? modelCatalogLogicalKey(entry);
   const evaluations = new Map<string, ModelAuthAvailabilityEvaluation>();
   const readCatalog = await prepareLogicalVisibleModelCatalog({
     cfg,
@@ -510,7 +527,7 @@ export async function prepareModelsListResult(
       const host = await evaluateEntry(entry, variants);
       return () => {
         const evaluation = evaluateNative(entry, host);
-        evaluations.set(evaluationKey(entry), evaluation);
+        evaluations.set(resolveModelCatalogIdentityKey(entry), evaluation);
         const routeManaged = evaluation.routeResolution !== null;
         const syntheticLocal =
           !routeManaged &&
@@ -547,7 +564,7 @@ export async function prepareModelsListResult(
       models: readCatalog()
         .filter(matchesProvider)
         .map((entry) => {
-          const evaluation = evaluations.get(evaluationKey(entry));
+          const evaluation = evaluations.get(resolveModelCatalogIdentityKey(entry));
           if (!evaluation) {
             throw new Error("Model catalog publication omitted prepared auth evaluation");
           }

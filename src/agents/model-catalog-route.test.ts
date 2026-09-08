@@ -10,7 +10,6 @@ import { prepareModelCatalogThinkingPolicies } from "../plugins/provider-thinkin
 import type { ProviderDefaultThinkingPolicyContext } from "../plugins/provider-thinking.types.js";
 import { makeModel } from "./embedded-agent-runner/model.test-harness.js";
 import {
-  findModelCatalogRouteDonor,
   type ModelCatalogRoutePolicy,
   projectModelCatalogEntryForRoute,
   resolveConfiguredModelCatalogOverrides,
@@ -77,14 +76,16 @@ describe("projectModelCatalogEntryForRoute", () => {
       params: { logicalOnly: true },
     },
   ])("prefers the exact physical donor over the $api row", (entry) => {
-    expect(
-      findModelCatalogRouteDonor({
-        entry,
-        route: chatGPTRoute,
-        policy: routePolicy,
-        catalog: [platformEntry, chatGPTEntry],
-      }),
-    ).toBe(chatGPTEntry);
+    const { entry: publicEntry, runtimeEntry } = projectModelCatalogEntryForRoute({
+      entry,
+      projection: { kind: "selected", route: chatGPTRoute, policy: routePolicy },
+      catalog: [platformEntry, chatGPTEntry],
+    });
+    expect(runtimeEntry.params).toEqual({ chatGPTOnly: true });
+    expect(runtimeEntry.compat).toEqual({ supportsTools: true });
+    expect(runtimeEntry.contextWindow).toBe(400_000);
+    expect(publicEntry).not.toHaveProperty("params");
+    expect(publicEntry).not.toHaveProperty("compat");
   });
 
   it("projects one physical row onto the selected route capabilities", () => {
@@ -93,7 +94,7 @@ describe("projectModelCatalogEntryForRoute", () => {
         entry: platformEntry,
         projection: { kind: "selected", route: platformRoute, policy: routePolicy },
         catalog: [platformEntry, chatGPTEntry],
-      }),
+      }).entry,
     ).toEqual({
       provider: "openai",
       id: "gpt-5.5",
@@ -112,7 +113,7 @@ describe("projectModelCatalogEntryForRoute", () => {
         entry: platformEntry,
         projection: { kind: "selected", route: chatGPTRoute, policy: routePolicy },
         catalog: [platformEntry, chatGPTEntry],
-      }),
+      }).entry,
     ).toEqual({
       provider: "openai",
       id: "gpt-5.5",
@@ -133,7 +134,7 @@ describe("projectModelCatalogEntryForRoute", () => {
         entry: platformEntry,
         projection: { kind: "selected", route: chatGPTRoute, policy: routePolicy },
         catalog: [platformEntry],
-      }),
+      }).entry,
     ).toEqual({
       provider: "openai",
       id: "gpt-5.5",
@@ -190,7 +191,7 @@ describe("projectModelCatalogEntryForRoute", () => {
         .spyOn(activeThinkingPolicy, "resolveActiveProviderThinkingProfile")
         .mockReturnValue({ levels: [{ id: "off" }], defaultLevel: "off" });
       try {
-        const projected = projectModelCatalogEntryForRoute({
+        const { entry: projected } = projectModelCatalogEntryForRoute({
           entry: expectDefined(catalog.entries[0], "prepared route test entry"),
           projection: route
             ? { kind: "selected", route, policy: routePolicy }
@@ -225,7 +226,7 @@ describe("projectModelCatalogEntryForRoute", () => {
       projectModelCatalogEntryForRoute({
         entry: platformEntry,
         projection: { kind: "unmanaged" },
-      }),
+      }).entry,
     ).toBe(platformEntry);
   });
 
@@ -234,12 +235,12 @@ describe("projectModelCatalogEntryForRoute", () => {
       projectModelCatalogEntryForRoute({
         entry: platformEntry,
         projection: { kind: "unresolved", policy: routePolicy },
-      }),
+      }).entry,
     ).toEqual({ provider: "openai", id: "gpt-5.5", name: "GPT-5.5" });
   });
 
   it("does not copy private route policy facts into the catalog row", () => {
-    const projected = projectModelCatalogEntryForRoute({
+    const { entry: projected } = projectModelCatalogEntryForRoute({
       entry: platformEntry,
       projection: { kind: "selected", route: chatGPTRoute, policy: routePolicy },
       catalog: [chatGPTEntry],
@@ -275,7 +276,7 @@ describe("projectModelCatalogEntryForRoute", () => {
         projection: { kind: "selected", route: chatGPTRoute, policy: routePolicy },
         catalog: [platformEntry],
         ...(overrides ? { overrides } : {}),
-      }),
+      }).entry,
     ).toEqual({
       provider: "openai",
       id: "gpt-5.5",

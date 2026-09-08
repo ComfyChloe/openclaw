@@ -36,6 +36,7 @@ import {
   resolveCatalogModelRef,
 } from "./model-ref-shared.js";
 import { findNormalizedProviderValue, parseModelRef } from "./model-selection-normalize.js";
+import { resolveModelCatalogIdentityKey } from "./openai-model-routes.js";
 import { normalizeProviderModelIdWithRuntime } from "./provider-model-normalization.runtime.js";
 
 export { resolvePrimaryStringValue as normalizeModelSelection } from "@openclaw/normalization-core/string-coerce";
@@ -1523,13 +1524,6 @@ export type ModelVisibilityPolicy = {
   }) => ModelCatalogEntry[];
 };
 
-/** Canonical logical identity shared by visibility and physical route rows. */
-export function modelCatalogLogicalKey(entry: Pick<ModelCatalogEntry, "provider" | "id">): string {
-  const provider = normalizeProviderId(entry.provider);
-  const model = splitTrailingAuthProfile(entry.id).model;
-  return modelKey(provider, model);
-}
-
 export function dedupeModelCatalogEntries(
   entries: readonly ModelCatalogEntry[],
 ): ModelCatalogEntry[] {
@@ -1565,7 +1559,7 @@ export function createModelVisibilityPolicyWithFallbacks(
   const { visibility, policyAliasIndex, selectionAliasIndex, configuredCatalog } = prepared;
   const wildcardModelKeys = visibility.wildcardModelKeys;
   const allowed = buildAllowedModelSetFromPrepared(params, prepared);
-  const configuredKeys = new Set(configuredCatalog.map(modelCatalogLogicalKey));
+  const configuredKeys = new Set(configuredCatalog.map(resolveModelCatalogIdentityKey));
   const retainedKeys = new Set<string>();
   const addConfiguredRef = (
     raw: string | undefined,
@@ -1589,7 +1583,7 @@ export function createModelVisibilityPolicyWithFallbacks(
     if (!resolved) {
       return undefined;
     }
-    const key = modelCatalogLogicalKey({
+    const key = resolveModelCatalogIdentityKey({
       provider: resolved.ref.provider,
       id: resolved.ref.model,
     });
@@ -1610,7 +1604,7 @@ export function createModelVisibilityPolicyWithFallbacks(
     addConfiguredRef(raw, false, selectionAliasIndex);
   }
   if (params.defaultModel) {
-    const key = modelCatalogLogicalKey({
+    const key = resolveModelCatalogIdentityKey({
       provider: params.defaultProvider,
       id: params.defaultModel,
     });

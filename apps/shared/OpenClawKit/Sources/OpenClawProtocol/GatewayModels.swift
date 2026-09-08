@@ -16697,6 +16697,8 @@ public struct ModelsAuthStatusParams: Codable, Sendable {
 
 public struct ModelsListParams: Codable, Sendable {
     public let agentid: String?
+    public let sessionkey: String?
+    public let authprofileid: String?
     public let provider: String?
     public let includedetails: Bool?
     public let includeprovidercapabilities: Bool?
@@ -16706,6 +16708,8 @@ public struct ModelsListParams: Codable, Sendable {
 
     public init(
         agentid: String? = nil,
+        sessionkey: String? = nil,
+        authprofileid: String? = nil,
         provider: String? = nil,
         includedetails: Bool? = nil,
         includeprovidercapabilities: Bool? = nil,
@@ -16714,6 +16718,8 @@ public struct ModelsListParams: Codable, Sendable {
         view: AnyCodable? = nil)
     {
         self.agentid = agentid
+        self.sessionkey = sessionkey
+        self.authprofileid = authprofileid
         self.provider = provider
         self.includedetails = includedetails
         self.includeprovidercapabilities = includeprovidercapabilities
@@ -16724,6 +16730,8 @@ public struct ModelsListParams: Codable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case agentid = "agentId"
+        case sessionkey = "sessionKey"
+        case authprofileid = "authProfileId"
         case provider
         case includedetails = "includeDetails"
         case includeprovidercapabilities = "includeProviderCapabilities"
@@ -16735,18 +16743,26 @@ public struct ModelsListParams: Codable, Sendable {
 
 public struct ModelsListResult: Codable, Sendable {
     public let models: [ModelChoice]
+    public let refreshfailed: Bool?
+    public let accountselection: ChatAccountSelection?
     public let provideroutcomes: [[String: AnyCodable]]?
 
     public init(
         models: [ModelChoice],
+        refreshfailed: Bool? = nil,
+        accountselection: ChatAccountSelection? = nil,
         provideroutcomes: [[String: AnyCodable]]? = nil)
     {
         self.models = models
+        self.refreshfailed = refreshfailed
+        self.accountselection = accountselection
         self.provideroutcomes = provideroutcomes
     }
 
     private enum CodingKeys: String, CodingKey {
         case models
+        case refreshfailed = "refreshFailed"
+        case accountselection = "accountSelection"
         case provideroutcomes = "providerOutcomes"
     }
 }
