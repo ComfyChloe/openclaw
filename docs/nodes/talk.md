@@ -389,6 +389,12 @@ relay clients. Backend WebSocket paths keep the Platform key on the Gateway;
 OpenClaw converts telephony G.711 u-law audio to and from GPT-Live's 24 kHz PCM
 contract.
 
+In **Settings → Talk**, OpenAI authentication offers **Automatic**, **ChatGPT OAuth only**,
+and **OpenAI Platform API key only**. Explicit choices exclude the other credential
+method; changing authentication does not rewrite the provider, model, voice, transport,
+agent, or chat. These options remain in the catalog when the Talk owner is unavailable,
+but their presence does not establish credential readiness.
+
 For GA `gpt-realtime-2.1`, `gpt-realtime-2.1-mini`, and `gpt-realtime-2`
 browser sessions, Platform credentials remain preferred in this order: the
 configured realtime API key, an `openai` API-key profile, then

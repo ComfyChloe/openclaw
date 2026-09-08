@@ -2765,6 +2765,12 @@ export const en: TranslationMap & {
     mtls: "mTLS",
   },
   talkPage: {
+    auth: {
+      title: "Talk authentication",
+      description:
+        "Choose the credential method for this provider. Explicit choices never fall back to another credential method. Provider and model selection are unchanged; changes apply to the next call on all clients.",
+      auto: "Automatic (provider policy)",
+    },
     intro: "Configure realtime voice providers, models, and speaker voices.",
     voiceSection: {
       title: "Realtime voice",
