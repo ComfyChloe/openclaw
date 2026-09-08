@@ -19,6 +19,8 @@ const CPU_METRICS = ["cpuPercentMax"];
 const DIRECT_VIOLATIONS = new Set(["cpuPercentMax", "peakRssMb"]);
 const SOAK_VIOLATIONS = new Set(["gatewayRssGrowthMb", "rssGrowthMb"]);
 const ROLE_VIOLATION = /^resourceByRole\.([^.]+)\.(maxCpuPercent|peakRssMb)$/u;
+const CPU_EVIDENCE_VIOLATION = /^resourceByRole\.([^.]+)\.maxCpuPercent$/u;
+const CPU_THRESHOLD = /^<= ([0-9]+(?:\.[0-9]+)?)$/u;
 
 type JsonRecord = Record<string, unknown>;
 type KovaReportGateOptions = { requireInstrumentedPerformanceContract?: boolean };
@@ -790,6 +792,74 @@ export function evaluateToleratedProfiledKovaReport(
   });
 }
 
+function validateInconclusiveCpuViolation(record: ValidatedRecord, violation: JsonRecord) {
+  const match = CPU_EVIDENCE_VIOLATION.exec(text(violation.metric, "CPU evidence metric"));
+  const roleId = match?.[1];
+  check(roleId !== undefined, "CPU evidence identity was invalid");
+  const actual = object(violation.actual, "CPU evidence actual");
+  const lower = finite(actual.lower, "CPU evidence lower bound");
+  const upper = finite(actual.upper, "CPU evidence upper bound");
+  const threshold = Number(
+    CPU_THRESHOLD.exec(text(violation.expected, "CPU evidence expectation"))?.[1],
+  );
+  const role = object(
+    object(record.measurements.resourceByRole, "role measurements")[roleId],
+    "CPU evidence role measurement",
+  );
+  check(
+    violation.kind === "evidence" &&
+      violation.failureDomain === "kova-harness" &&
+      violation.role === roleId &&
+      lower <= threshold &&
+      threshold < upper &&
+      role.maxCpuPercentLower === lower &&
+      role.maxCpuPercent === upper,
+    "CPU evidence was not a reconciled inconclusive interval",
+  );
+  return text(violation.message, "CPU evidence message");
+}
+
+function evaluateToleratedInconclusiveCpuKovaReport(
+  report: unknown,
+  options: KovaReportGateOptions = {},
+) {
+  return evaluate(() => {
+    const { gate, records, cards, requiredInstrumented } = validateEnvelope(report, options);
+    check(gate.verdict === "BLOCKED", "gate verdict was not BLOCKED");
+    check(requiredInstrumented === 0, "BLOCKED gate had incomplete instrumented evidence");
+    check(
+      records.every((record) => record.status === "PASS" || record.status === "BLOCKED"),
+      "BLOCKED report had another record status",
+    );
+    check(
+      records
+        .filter((record) => record.status === "PASS")
+        .every((record) => recordViolations(record).length === 0),
+      "PASS record had violations",
+    );
+    const blocked = records.filter((record) => record.status === "BLOCKED");
+    const blocking = cards.filter((card) => card.severity === "blocking");
+    check(blocked.length > 0 && blocked.length === blocking.length, "blocked evidence/card drift");
+    for (const record of blocked) {
+      const messages = recordViolations(record).map((value) =>
+        validateInconclusiveCpuViolation(record, object(value, "CPU evidence violation")),
+      );
+      const card = blocking.find(
+        (value) => value.scenario === record.scenario && value.state === stateId(record),
+      );
+      check(
+        messages.length > 0 &&
+          card?.kind === "blocked" &&
+          card.status === "BLOCKED" &&
+          card.failedCommand === null &&
+          card.summary === messages[0],
+        "blocked CPU evidence/card was incomplete",
+      );
+      exactStrings(card.violations, messages, "blocked CPU card violations");
+    }
+  });
+}
+
 export function evaluateToleratedKovaReport(report: unknown, options: KovaReportGateOptions = {}) {
   const partial = evaluateToleratedPartialKovaReport(report, options);
   if (partial.ok) {
@@ -799,7 +869,14 @@ export function evaluateToleratedKovaReport(report: unknown, options: KovaReport
   if (profiled.ok) {
     return { ok: true, classification: "profiled-resource-only" };
   }
-  return { ok: false, reason: `partial: ${partial.reason}; profiled: ${profiled.reason}` };
+  const inconclusiveCpu = evaluateToleratedInconclusiveCpuKovaReport(report, options);
+  if (inconclusiveCpu.ok) {
+    return { ok: true, classification: "inconclusive-cpu-evidence" };
+  }
+  return {
+    ok: false,
+    reason: `partial: ${partial.reason}; profiled: ${profiled.reason}; inconclusive CPU: ${inconclusiveCpu.reason}`,
+  };
 }
 
 function readCliInvocation() {

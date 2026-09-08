@@ -360,6 +360,50 @@ function profiledResourceReport(): JsonObject {
   };
 }
 
+function inconclusiveCpuReport(): JsonObject {
+  const report = partialReport();
+  const message =
+    "gateway max CPU interval [229.4%, 308.1%] crosses threshold 250%; CPU measurement is inconclusive";
+  setAt(report, ["summary", "statuses"], { BLOCKED: 1 });
+  setAt(report, ["performance", "groups", 0, "statuses"], { BLOCKED: 1 });
+  setAt(report, ["performance", "groups", 0, "metrics", "cpuPercentMax"], metric(308.1));
+  setAt(report, ["records", 0, "status"], "BLOCKED");
+  setAt(report, ["records", 0, "measurements", "cpuPercentMax"], 308.1);
+  setAt(report, ["records", 0, "measurements", "resourceByRole"], {
+    gateway: { maxCpuPercent: 308.1, maxCpuPercentLower: 229.4 },
+  });
+  setAt(
+    report,
+    ["records", 0, "violations"],
+    [
+      {
+        actual: { lower: 229.4, upper: 308.1 },
+        expected: "<= 250",
+        failureDomain: "kova-harness",
+        kind: "evidence",
+        message,
+        metric: "resourceByRole.gateway.maxCpuPercent",
+        role: "gateway",
+      },
+    ],
+  );
+  setAt(report, ["gate", "verdict"], "BLOCKED");
+  setAt(report, ["gate", "blockingCount"], 1);
+  arrayAt(valueAt(report, ["gate", "cards"])).push({
+    actual: "BLOCKED",
+    failedCommand: null,
+    kind: "blocked",
+    measurements: { cpuPercentMax: 308.1, peakRssMb: 650 },
+    scenario: SCENARIO,
+    severity: "blocking",
+    state: STATE,
+    status: "BLOCKED",
+    summary: message,
+    violations: [message],
+  });
+  return report;
+}
+
 function attachPassingBaseline(report: JsonObject): void {
   report.baseline = {
     comparison: {
@@ -701,6 +745,30 @@ describe("scripts/lib/kova-report-gate.mts", () => {
       classification: "profiled-resource-only",
       ok: true,
     });
+  });
+
+  it("accepts only Kova-owned inconclusive CPU intervals whose lower bound passes", () => {
+    const report = inconclusiveCpuReport();
+    expect(evaluateToleratedKovaReport(report, STRICT_INSTRUMENTED_PERFORMANCE_OPTIONS)).toEqual({
+      classification: "inconclusive-cpu-evidence",
+      ok: true,
+    });
+
+    const productFailure = structuredClone(report);
+    setAt(productFailure, ["records", 0, "violations", 0, "failureDomain"], "openclaw");
+    expect(
+      evaluateToleratedKovaReport(productFailure, STRICT_INSTRUMENTED_PERFORMANCE_OPTIONS).ok,
+    ).toBe(false);
+
+    setAt(report, ["records", 0, "violations", 0, "actual", "lower"], 251);
+    setAt(
+      report,
+      ["records", 0, "measurements", "resourceByRole", "gateway", "maxCpuPercentLower"],
+      251,
+    );
+    expect(evaluateToleratedKovaReport(report, STRICT_INSTRUMENTED_PERFORMANCE_OPTIONS).ok).toBe(
+      false,
+    );
   });
 
   it("rejects deep-profile failures from the current producer contract", () => {

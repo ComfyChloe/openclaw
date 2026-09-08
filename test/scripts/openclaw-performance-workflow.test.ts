@@ -1104,9 +1104,7 @@ printf '%s\\n' \
       'node --import tsx "$PERFORMANCE_HELPER_DIR/scripts/lib/kova-report-gate.mts" "${gate_args[@]}"',
     );
     expect(runKova.run).not.toContain("report.summary?.statuses ?? {}");
-    expect(runKova.run).toContain(
-      "profiling-affected resource thresholds with no baseline regression",
-    );
+    expect(runKova.run).toContain("Kova-owned inconclusive CPU interval whose lower bound passed");
   });
 
   it("preserves required PARTIAL failures and clears only advisory PARTIAL failures", () => {
