@@ -40,7 +40,7 @@ separately recorded later windows; new plugins should use focused subpaths.
 
 <Warning>
   Plugins importing the removed root, compat, or extension surfaces no longer
-  load. Follow the mappings below before upgrading.
+  load. Follow the [import path mappings](/plugins/sdk-migration/import-paths) before upgrading.
 </Warning>
 
 OpenClaw does not remove or reinterpret documented plugin behavior in the same
