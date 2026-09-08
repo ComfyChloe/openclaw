@@ -205,7 +205,7 @@ export const talkClientHandlers: GatewayRequestHandlers = {
       const config = context.getRuntimeConfig();
       const target =
         sessionMutationAuthorization?.talkSessionTarget ??
-        prepareTalkSessionTarget(config, params.sessionKey);
+        prepareTalkSessionTarget(config, params.sessionKey, params.agentId);
       sessionMutationAuthorization?.assertCurrent();
       await appendClientVoiceTranscript({
         agentId: target.agentId,
@@ -247,7 +247,7 @@ export const talkClientHandlers: GatewayRequestHandlers = {
       const config = context.getRuntimeConfig();
       const { agentId } =
         sessionMutationAuthorization?.talkSessionTarget ??
-        prepareTalkSessionTarget(config, params.sessionKey);
+        prepareTalkSessionTarget(config, params.sessionKey, params.agentId);
       sessionMutationAuthorization?.assertCurrent();
       const origin = resolveClientVoiceSessionOrigin({
         agentId,
@@ -285,7 +285,7 @@ export const talkClientHandlers: GatewayRequestHandlers = {
     try {
       const target =
         sessionMutationAuthorization?.talkSessionTarget ??
-        prepareTalkSessionTarget(context.getRuntimeConfig(), params.sessionKey);
+        prepareTalkSessionTarget(context.getRuntimeConfig(), params.sessionKey, params.agentId);
       const runTarget = resolveOwnedActiveTalkRunTarget({
         context,
         clientConnId: client?.connId,

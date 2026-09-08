@@ -15,5 +15,6 @@ export const GATEWAY_SERVER_CAPS = {
   SESSION_SETTINGS_CAS: "session-settings-cas-v1",
   SYSTEM_AGENT_WIZARD_CANCEL: "openclaw-chat-wizard-cancel",
   SYSTEM_AGENT_SETUP_MODEL_REF: "openclaw-setup-model-ref",
+  TALK_SESSION_TARGET: "talk-session-target-v1",
   TASK_SUGGESTIONS_ACCEPT_MODES: "taskSuggestions.acceptModes",
 } as const;

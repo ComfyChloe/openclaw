@@ -20,6 +20,14 @@ Native Talk is a continuous loop: listen for speech, send the transcript to the 
 
 Apple Watch also retains **Talk to Claw**, the separate [one-turn companion flow](/platforms/ios#talk-to-claw-with-the-iphone): native dictation, text relayed through the iPhone, and system-voice readback. **Talk on Watch** is the realtime path included in normal Watch setup; see [standalone voice setup](/platforms/ios#standalone-voice).
 
+## Talk target negotiation
+
+`hello-ok.features.capabilities` advertises `talk-session-target-v1` only when the Gateway supports `sessionKey` and optional `agentId` on `talk.catalog`, `talk.client.create`, `talk.session.create`, `talk.client.toolCall`, `talk.client.transcript`, `talk.client.close`, and `talk.client.steer`. This advertises a wire contract, not permission or credential readiness. An empty `talk.catalog` request remains global.
+
+Clients bind this fact and the chosen target to the physical connection lease for the entire call, including transcript and close cleanup. Without the capability, a selected agent may be omitted only when the unchanged, valid `agent:<owner>:<nonempty-rest>` session key already identifies that same agent. Opaque keys and unscoped aliases must not receive synthetic prefixes. Legacy global catalog readiness is advisory; actual creation validates the target and credentials. Clients must not infer support from a version or replay rejected requests with downgraded fields.
+
+Session-ID operations remain session-ID based; `talk.session.steer` resolves its target from the retained session and connection. Agent-run aborts retain their acknowledged run target rather than being rewritten as Talk targets.
+
 ## Choose a Talk voice from chat
 
 After setting `talk.provider` and the matching `talk.providers.<provider>` configuration, use `/voice status` to inspect the active provider and voice, `/voice list [limit]` to list its available voices, and `/voice set <voiceId|name>` to save a provider-scoped selection. Discord exposes the same command natively as `/talkvoice`.
@@ -145,13 +153,16 @@ loss also ends the call with an error; automatic reconnection is not supported.
 ## Session ownership
 
 `talk.client.create` and realtime `talk.session.create` resolve their session before
-loading profile context or starting a provider. An agent-prefixed `sessionKey`
-selects that agent. Otherwise, Talk uses `talk.agentId`, then the configured system
-agent or an unambiguous default agent. Without an owner in a multi-agent Gateway,
-set `talk.agentId` or send an agent-prefixed key.
+loading profile context or starting a provider. A supported explicit `agentId`
+disambiguates the target; an agent-prefixed `sessionKey` must agree with it. Without
+an explicit agent, a scoped key owns its agent before persistence lookup. Unscoped
+requests retain persisted ownership where applicable, or use `talk.agentId`, the
+configured system agent, or an unambiguous default. Ambiguous ownership is rejected
+rather than guessed.
 
-`talk.catalog` also requires an unambiguous Talk owner and checks it before
-discovering providers, so missing ownership returns its setup error promptly.
+Targeted `talk.catalog` checks that selected owner before provider discovery. An
+empty request remains global and requires an unambiguous global Talk owner; it is
+not proof of another agent’s authentication or the caller’s permission to create a call.
 
 Omitting `sessionKey` selects the same owned main session as a bare `main` key;
 both enforce sharing, incognito, and operator-role restrictions. Main aliases
