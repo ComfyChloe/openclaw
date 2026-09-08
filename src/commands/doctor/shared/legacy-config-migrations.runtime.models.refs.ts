@@ -90,8 +90,10 @@ export function scanKnownModelRefs(value: unknown, key?: string, path = ""): boo
   if (!record) {
     return false;
   }
-  const providerModelPair = typeof record.provider === "string" && typeof record.model === "string";
-  if (providerModelPair && normalizeKnownModelRef(`${record.provider}/${record.model}`)) {
+  const provider = typeof record.provider === "string" ? record.provider : undefined;
+  const model = typeof record.model === "string" ? record.model : undefined;
+  const providerModelPair = provider !== undefined && model !== undefined;
+  if (providerModelPair && normalizeKnownModelRef(`${provider}/${model}`)) {
     return true;
   }
   if (isProviderCatalogsPath(path) && scanProviderCatalogModelIds(record)) {
