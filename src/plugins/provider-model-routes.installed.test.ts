@@ -151,8 +151,8 @@ describe("installed Arcee catalog identity", () => {
         modelId: "trinity-large-thinking",
         metadataSnapshot,
       });
-      expect(projected.models?.providers?.arcee.baseUrl).toBe("https://openrouter.ai/api/v1");
-      expect(cfg.models?.providers?.arcee.baseUrl).toBe("https://api.arcee.ai/api/v1");
+      expect(projected.models?.providers?.arcee?.baseUrl).toBe("https://openrouter.ai/api/v1");
+      expect(cfg.models?.providers?.arcee?.baseUrl).toBe("https://api.arcee.ai/api/v1");
     });
   });
 });
