@@ -1,10 +1,6 @@
-// Demand-driven catalog discovery for the Models settings page.
-//
-// The initial page load uses the fast prepared catalog (configured models only)
-// so full discovery stays out of first navigation. Opening a default-model picker
-// signals interest; this controller fetches the full catalog through the shared
-// model-catalog store (cooldown + concurrency dedupe) and merges it in without
-// disturbing the saved selection.
+// Picker-triggered reads of the Gateway's published model catalog.
+// The Gateway owns freshness and provider discovery; this controller only owns
+// the pending read and merges its result without disturbing saved selections.
 import type { GatewayBrowserClient } from "../../api/gateway.ts";
 import { formatUiError } from "../../lib/format-error.ts";
 import { loadModelCatalog } from "../../lib/model-catalog-store.ts";
@@ -91,7 +87,6 @@ export function createCatalogDiscoveryController(
     try {
       const result = await loadModelCatalog(client, {
         agentId,
-        refreshIfDue: true,
         signal: request.signal,
       });
       if (ownsResult()) {

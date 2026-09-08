@@ -4,7 +4,6 @@ import { setImmediate } from "node:timers/promises";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ModelCatalogResult } from "../../api/types.ts";
 import type { SelectPicker } from "../../components/select-picker.ts";
-import { invalidateModelCatalogCache } from "../../lib/model-catalog-store.ts";
 import { updatePickers } from "../../test-helpers/select-picker.ts";
 import { waitForFast } from "../../test-helpers/wait-for.ts";
 import { EMPTY_MODEL_PROVIDERS_DATA } from "./load.ts";
@@ -72,9 +71,20 @@ function createCatalogHarness() {
   const harness = createHarness("main");
   const originalRequest = harness.request.getMockImplementation()!;
   const discover = vi.fn<() => Promise<ModelCatalogResult>>();
-  const catalogRequest = async (method: string, params?: { refresh?: boolean }) => {
+  const readSignals: Array<AbortSignal | undefined> = [];
+  const catalogRequest = async (
+    method: string,
+    params?: { preparedOnly?: boolean; refresh?: boolean },
+    options?: { signal?: AbortSignal },
+  ) => {
     if (method === "models.list") {
-      return params?.refresh ? discover() : preparedCatalog;
+      if (params?.preparedOnly) {
+        return preparedCatalog;
+      }
+      if (!params?.refresh) {
+        readSignals.push(options?.signal);
+      }
+      return discover();
     }
     if (method === "config.get") {
       return { config: savedModelConfig, hash: "saved-model-config" };
@@ -82,7 +92,7 @@ function createCatalogHarness() {
     return originalRequest(method);
   };
   harness.request.mockImplementation(catalogRequest);
-  return { ...harness, discover, catalogRequest };
+  return { ...harness, discover, catalogRequest, readSignals };
 }
 
 describe("ModelProvidersPage catalog discovery", () => {
@@ -91,7 +101,7 @@ describe("ModelProvidersPage catalog discovery", () => {
     { picker: "utility", index: 1 },
     { picker: "fallback", index: 2 },
   ])(
-    "discovers the full catalog when the $picker picker opens and merges it without clearing saved state",
+    "reads published models when the $picker picker opens without clearing saved state",
     async ({ index: firstPicker }) => {
       const { context, request, discover, runtimeConfig } = createCatalogHarness();
       const pending = deferred<ModelCatalogResult>();
@@ -118,6 +128,11 @@ describe("ModelProvidersPage catalog discovery", () => {
 
       await openModelPicker(page, firstPicker);
       expect(discover).toHaveBeenCalledOnce();
+      expect(request).toHaveBeenCalledWith(
+        "models.list",
+        { view: "configured", agentId: "main" },
+        { signal: expect.any(AbortSignal) },
+      );
 
       for (const index of [0, 1, 2, 0]) {
         await openModelPicker(page, index);
@@ -169,8 +184,8 @@ describe("ModelProvidersPage catalog discovery", () => {
       );
       expect(page.data?.config).toEqual(savedModelConfig);
       expect(runtimeConfig.patch).not.toHaveBeenCalled();
-      expect(discover).toHaveBeenCalledOnce();
-      expect(request.mock.calls.filter(([method]) => method === "models.list")).toHaveLength(2);
+      expect(discover).toHaveBeenCalledTimes(2);
+      expect(request.mock.calls.filter(([method]) => method === "models.list")).toHaveLength(3);
     },
   );
 
@@ -270,8 +285,6 @@ describe("ModelProvidersPage catalog discovery", () => {
       await openModelPicker(page);
       expect(discover).toHaveBeenCalledOnce();
 
-      // A published config change retires the shared catalog before reloading the page.
-      invalidateModelCatalogCache(snapshot.client!);
       if (replacement === "core refresh") {
         page.querySelector<HTMLButtonElement>('button[aria-label="Refresh"]')!.click();
       } else {
@@ -321,7 +334,6 @@ describe("ModelProvidersPage catalog discovery", () => {
       await openModelPicker(page);
       expect(discover).toHaveBeenCalledOnce();
 
-      invalidateModelCatalogCache(snapshot.client!);
       page.routeData = {
         gateway: context.gateway,
         gatewaySnapshot: snapshot,
@@ -362,10 +374,11 @@ describe("ModelProvidersPage catalog discovery", () => {
     },
   );
 
-  it("keeps a shared discovery alive when another page retires its subscription", async () => {
-    const { context, discover, snapshot } = createCatalogHarness();
+  it("keeps another page's catalog read alive when one page retires", async () => {
+    const { context, discover, snapshot, readSignals } = createCatalogHarness();
+    const retired = deferred<ModelCatalogResult>();
     const pending = deferred<ModelCatalogResult>();
-    discover.mockReturnValue(pending.promise);
+    discover.mockReturnValueOnce(retired.promise).mockReturnValueOnce(pending.promise);
     const first = appendPage(context);
     const second = appendPage(context);
     await waitForFast(() => expect(first.data?.config).toEqual(savedModelConfig));
@@ -374,7 +387,7 @@ describe("ModelProvidersPage catalog discovery", () => {
     await second.updateComplete;
     await openModelPicker(first);
     await openModelPicker(second);
-    expect(discover).toHaveBeenCalledOnce();
+    expect(discover).toHaveBeenCalledTimes(2);
     first.routeData = {
       gateway: context.gateway,
       gatewaySnapshot: snapshot,
@@ -388,10 +401,14 @@ describe("ModelProvidersPage catalog discovery", () => {
       },
     };
     await first.updateComplete;
+    expect(readSignals).toHaveLength(2);
+    expect(readSignals[0]?.aborted).toBe(true);
+    expect(readSignals[1]?.aborted).toBe(false);
     pending.resolve({
       models: [{ id: "shared", name: "Shared discovery", provider: "openai", available: true }],
     });
     await waitForFast(() => expect(second.data?.models?.[0]?.id).toBe("shared"));
+    retired.resolve({ models: [{ id: "retired", provider: "openai", name: "Retired" }] });
     await drainPageUpdates(first);
     await drainPageUpdates(second);
 
@@ -399,6 +416,6 @@ describe("ModelProvidersPage catalog discovery", () => {
     expect(second.querySelector('[role="option"][data-value="openai/shared"]')).not.toBeNull();
     expect(first.querySelector(".model-providers__catalog-progress")).toBeNull();
     expect(second.querySelector(".model-providers__catalog-progress")).toBeNull();
-    expect(discover).toHaveBeenCalledOnce();
+    expect(discover).toHaveBeenCalledTimes(2);
   });
 });
