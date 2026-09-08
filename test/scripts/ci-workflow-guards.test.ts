@@ -4402,7 +4402,7 @@ NODE
     expect(codeqlInitializeIndex).toBeLessThan(codeqlBuildIndex);
     expect(codeqlBuildIndex).toBeLessThan(codeqlAnalyzeIndex);
     expect(codeqlBuild.run).toBe(
-      "swift build --package-path apps/macos --product OpenClaw --arch arm64 --disable-index-store -debug-info-format none -Xswiftc -whole-module-optimization -Xswiftc -num-threads -Xswiftc 1",
+      "swift build --package-path apps/macos --product OpenClaw --arch arm64 --disable-index-store -debug-info-format none -Xswiftc -whole-module-optimization -Xswiftc -num-threads -Xswiftc 1 -Xswiftc -no-emit-module-separately-wmo",
     );
     expect(codeqlSelect.run).toContain("/Applications/Xcode_26.6.app/Contents/Developer");
     expect(codeqlSelect.run).toContain('if [[ "$xcode_version" != 26.6* ]]; then');
