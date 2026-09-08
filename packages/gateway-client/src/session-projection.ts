@@ -2,8 +2,10 @@
 
 import { asNullableRecord as readRecord } from "@openclaw/normalization-core/record-coerce";
 import {
+  canRecoverSessionProjectionFinal,
   hasSessionProjectionAcceptedFinal,
   hasUniqueSnapshotTerminalMatch,
+  isUnsequencedLiveTerminal,
   readSessionProjectionFinalMessageIdentity,
 } from "./session-projection-final-identity.js";
 import {
@@ -456,13 +458,10 @@ export function reconcileSessionProjectionSnapshot(
       continue;
     }
     const matches = entries.filter((entry) => entryMatches(entry, current, true));
+    const run = current.identity?.runId ? state.runs[current.identity.runId] : undefined;
     if (
-      matches.length === 1 ||
-      hasUniqueSnapshotTerminalMatch(
-        current,
-        matches,
-        current.identity?.runId ? state.runs[current.identity.runId] : undefined,
-      )
+      (matches.length === 1 && !isUnsequencedLiveTerminal(current, run)) ||
+      hasUniqueSnapshotTerminalMatch(current, matches, run)
     ) {
       continue;
     }
@@ -502,16 +501,18 @@ function updateRun(
   if (current && current.status !== "streaming" && !resumesErrorProjection) {
     const incomingFinalIdentity = readSessionProjectionFinalMessageIdentity(incoming.message);
     const incomingIsFinal = incoming.status === "completed" || incoming.status === "yielded";
-    const canRecoverFinal =
-      !hasDisplayableSessionMessage(current.message) ||
-      (current.acceptedFinalMessageIdentities?.length ?? 0) > 0;
+    const currentHasDisplayableMessage = hasDisplayableSessionMessage(current.message);
+    const canAcceptFinal = currentHasDisplayableMessage
+      ? current.status === incoming.status ||
+        (current.acceptedFinalMessageIdentities?.length ?? 0) > 0
+      : canRecoverSessionProjectionFinal(current.message, incoming.message);
     const acceptFinal =
       incomingIsFinal &&
-      (current.status === incoming.status || canRecoverFinal) &&
+      canAcceptFinal &&
       incomingFinalIdentity !== null &&
       !hasSessionProjectionAcceptedFinal(current, incoming.message);
     // Distinct valid finals are remembered; the first delivered reply remains immutable.
-    const recoverMessage = acceptFinal && !hasDisplayableSessionMessage(current.message);
+    const recoverMessage = acceptFinal && !currentHasDisplayableMessage;
     const recoverError =
       readNonemptyString(current.errorMessage) === null && incomingErrorMessage !== null;
     const updateTerminalSequence =

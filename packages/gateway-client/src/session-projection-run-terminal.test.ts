@@ -145,6 +145,17 @@ describe("session run terminal bookkeeping", () => {
       message: emptyMessage,
     });
     expect(hasSessionProjectionAcceptedFinal(state.runs["run-1"], emptyMessage)).toBe(false);
+    const mismatchedMessage = createMessage("assistant", "wrong final", {
+      id: "different-assistant-final",
+      seq: 8,
+    });
+    state = reduceSessionProjection(state, {
+      type: "runTerminal",
+      runId: "run-1",
+      status: "completed",
+      message: mismatchedMessage,
+    });
+    expect(state.runs["run-1"]?.message).toBe(emptyMessage);
     state = reduceSessionProjection(state, {
       type: "runTerminal",
       runId: "run-1",

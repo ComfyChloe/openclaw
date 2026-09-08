@@ -23,6 +23,20 @@ type TerminalProjectionRun = {
   acceptedFinalMessageIdentities?: readonly string[];
 };
 
+function readPersistedFinalIdentity(message: unknown): string | null {
+  const identity = readSessionMessageIdentity(message);
+  if (identity?.externalSource) {
+    return `import:${identity.role}:${identity.externalSource}`;
+  }
+  if (identity?.id && !identity.isImported) {
+    return `id:${identity.role}:${identity.id}`;
+  }
+  if (identity?.sequence !== null && identity?.sequence !== undefined) {
+    return `seq:${identity.role}:${identity.sequence}`;
+  }
+  return null;
+}
+
 function readFinalContentIdentity(message: unknown): string | null {
   const display = readSessionMessageDisplayContent(message);
   if (!display.text && !display.hasNonText) {
@@ -55,17 +69,21 @@ export function readSessionProjectionFinalMessageIdentity(message: unknown): str
   if (!hasDisplayableSessionMessage(message)) {
     return null;
   }
-  const identity = readSessionMessageIdentity(message);
-  if (identity?.externalSource) {
-    return `import:${identity.role}:${identity.externalSource}`;
+  return readPersistedFinalIdentity(message) ?? readFinalContentIdentity(message);
+}
+
+/** Check whether a displayable terminal may recover a prior empty terminal. */
+export function canRecoverSessionProjectionFinal(
+  currentMessage: unknown,
+  incomingMessage: unknown,
+): boolean {
+  if (hasDisplayableSessionMessage(currentMessage)) {
+    return false;
   }
-  if (identity?.id && !identity.isImported) {
-    return `id:${identity.role}:${identity.id}`;
-  }
-  if (identity?.sequence !== null && identity?.sequence !== undefined) {
-    return `seq:${identity.role}:${identity.sequence}`;
-  }
-  return readFinalContentIdentity(message);
+  const currentIdentity = readPersistedFinalIdentity(currentMessage);
+  return (
+    currentIdentity === null || currentIdentity === readPersistedFinalIdentity(incomingMessage)
+  );
 }
 
 /** Check whether a run has already accepted the same terminal reply. */
@@ -108,5 +126,21 @@ export function hasUniqueSnapshotTerminalMatch(
     readFinalContentIdentity(terminalMatch.message) === terminalContent &&
     matches.filter((entry) => readFinalContentIdentity(entry.message) === terminalContent)
       .length === 1
+  );
+}
+
+/** Check whether ordinary single-match promotion needs terminal-content verification. */
+export function isUnsequencedLiveTerminal(
+  current: TerminalProjectionEntry,
+  run: TerminalProjectionRun | undefined,
+): boolean {
+  return Boolean(
+    current.live &&
+    current.identity?.role === "assistant" &&
+    !current.identity.id &&
+    current.identity.sequence === null &&
+    run &&
+    run.status !== "streaming" &&
+    readFinalContentIdentity(current.message) === readFinalContentIdentity(run.message),
   );
 }

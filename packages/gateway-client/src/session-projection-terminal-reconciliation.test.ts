@@ -82,6 +82,31 @@ describe("terminal snapshot reconciliation", () => {
     ).toEqual([earlier, laterToolBoundary, synthetic]);
   });
 
+  it("retains an unsequenced terminal when partial history contains only a tool boundary", () => {
+    const runId = "partial-tool-history-run";
+    const synthetic = createAssistantMessage("The repair is complete.");
+    const toolBoundary = {
+      role: "assistant",
+      content: [
+        { type: "text", text: "Checking the repository." },
+        { type: "toolCall", id: "read-1", name: "read", arguments: { path: "AGENTS.md" } },
+      ],
+      __openclaw: { id: "assistant-tool-boundary", seq: 2, runId },
+    };
+    let state = reduceSessionProjection(createSessionProjection(scope), {
+      type: "runTerminal",
+      runId,
+      status: "completed",
+      message: synthetic,
+    });
+    state = projectLiveSessionMessage(state, synthetic, { runId });
+
+    expect(reconcileSessionProjectionSnapshot(state, [toolBoundary], scope).messages).toEqual([
+      toolBoundary,
+      synthetic,
+    ]);
+  });
+
   it("retains an unsequenced terminal when multiple same-run rows have terminal content", () => {
     const runId = "ambiguous-run";
     const synthetic = createAssistantMessage("The repair is complete.");
