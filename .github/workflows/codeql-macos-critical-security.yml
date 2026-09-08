@@ -58,7 +58,7 @@ jobs:
 
       - name: Build macOS for CodeQL
         # Preserve ARM-only application paths in CodeQL coverage on the Intel host.
-        run: swift build --package-path apps/macos --product OpenClaw --arch arm64
+        run: swift build --package-path apps/macos --product OpenClaw --arch arm64 --disable-index-store -debug-info-format none
 
       - name: Analyze
         id: analyze
