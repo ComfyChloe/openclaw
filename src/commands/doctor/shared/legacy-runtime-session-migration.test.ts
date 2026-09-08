@@ -23,6 +23,65 @@ afterEach(async () => {
 });
 
 describe("legacy runtime session model migration", () => {
+  it.each([
+    {
+      overrideProvider: "google-gemini-cli",
+      overrideModel: "assistant-b",
+      expectedProvider: "google",
+      explicitRuntime: undefined,
+      expectedRuntime: "google-gemini-cli",
+    },
+    {
+      overrideProvider: "google-gemini-cli",
+      overrideModel: "assistant-b",
+      expectedProvider: "google",
+      explicitRuntime: "openclaw",
+      expectedRuntime: "openclaw",
+    },
+    {
+      overrideProvider: "openai",
+      overrideModel: "claude-cli/team/model",
+      expectedProvider: "openai",
+      explicitRuntime: undefined,
+      expectedRuntime: undefined,
+    },
+  ])("uses the selected override runtime while retaining $explicitRuntime", async (row) => {
+    const state = await createOpenClawTestState({ layout: "state-only", prefix: "runtime-order-" });
+    states.push(state);
+    const cfg: OpenClawConfig = {
+      plugins: { enabled: false },
+      agents: { entries: { main: {} }, defaults: { model: "openai/current-model" } },
+    };
+    const scope = {
+      storePath: path.join(state.sessionsDir(), "sessions.json"),
+      sessionKey: "agent:main:mixed-runtimes",
+      env: state.env,
+    };
+    await replaceSessionEntry(scope, {
+      sessionId: "mixed-runtimes",
+      updatedAt: 1,
+      modelProvider: "claude-cli",
+      model: "assistant-a",
+      providerOverride: row.overrideProvider,
+      modelOverride: row.overrideModel,
+      modelOverrideSource: "user",
+      authProfileOverride: "authored:account",
+      agentRuntimeOverride: row.explicitRuntime,
+    });
+
+    await maybeRepairCodexSessionRoutes({ cfg, env: state.env, shouldRepair: true });
+
+    const entry = loadSessionEntry(scope);
+    expect(entry).toMatchObject({
+      modelProvider: "anthropic",
+      model: "assistant-a",
+      providerOverride: row.expectedProvider,
+      modelOverride: row.overrideModel,
+      authProfileOverride: "authored:account",
+    });
+    expect(entry?.agentRuntimeOverride).toBe(row.expectedRuntime);
+  });
+
   it("updates the retired Codex runtime IDs without moving its account or binding", async () => {
     const state = await createOpenClawTestState({ layout: "state-only", prefix: "runtime-pair-" });
     states.push(state);

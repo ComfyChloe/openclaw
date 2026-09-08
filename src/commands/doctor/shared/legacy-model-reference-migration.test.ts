@@ -1,9 +1,60 @@
 import { describe, expect, it } from "vitest";
 import type { OpenClawConfig } from "../../../config/types.openclaw.js";
+import { resolveModelEntries } from "../../../media-understanding/resolve.js";
 import { normalizeLegacyRuntimeModelRefs } from "./legacy-config-core-normalizers.js";
 import { migrateLegacyConfig } from "./legacy-config-migrate.js";
 
 describe("canonical model-reference migration", () => {
+  it("preserves provider-local model IDs and their matching media preference", () => {
+    const config: OpenClawConfig = {
+      tools: {
+        media: {
+          audio: { preferredModel: "openai/claude-cli/team/model" },
+          models: [
+            { provider: "openai", model: "other-model", capabilities: ["audio"] },
+            { provider: "openai", model: "claude-cli/team/model", capabilities: ["audio"] },
+          ],
+        },
+      },
+    };
+
+    const result = normalizeLegacyRuntimeModelRefs(config, []);
+
+    expect(result).toEqual(config);
+    expect(
+      resolveModelEntries({
+        cfg: result,
+        capability: "audio",
+        config: result.tools?.media?.audio,
+        providerRegistry: new Map(),
+      })[0]?.entry,
+    ).toMatchObject({ provider: "openai", model: "claude-cli/team/model" });
+  });
+
+  it("migrates an identified legacy media provider/model pair together", () => {
+    const config: OpenClawConfig = {
+      tools: {
+        media: {
+          audio: { preferredModel: "google-gemini-cli/gemini-3.1-pro-preview" },
+          models: [
+            {
+              provider: "google-gemini-cli",
+              model: "gemini-3.1-pro-preview",
+              capabilities: ["audio"],
+            },
+          ],
+        },
+      },
+    };
+
+    const result = normalizeLegacyRuntimeModelRefs(config, []);
+
+    expect(result.tools?.media).toEqual({
+      audio: { preferredModel: "google/gemini-3.1-pro-preview" },
+      models: [{ provider: "google", model: "gemini-3.1-pro-preview", capabilities: ["audio"] }],
+    });
+  });
+
   it("repairs a retired preferred audio model without discarding the preference", () => {
     const result = migrateLegacyConfig({
       plugins: { enabled: false },

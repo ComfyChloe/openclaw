@@ -654,7 +654,7 @@ export function normalizeLegacyRuntimeModelRefs(
           migrated.legacyProvider === "google-gemini-cli")
         ? migrated.ref
         : null;
-    }).value as OpenClawConfig;
+    }).value as OpenClawConfig; // SAFETY: Rewriting model-ref strings and map keys preserves the config's value and container types.
   const rawAgents = cfgWithProviders.agents;
   if (!isRecord(rawAgents)) {
     return rewriteRemainingSlots(cfgWithProviders);
