@@ -454,6 +454,7 @@ const BUILT_IN_MODEL_PROVIDER_OVERLAY_IDS = new Set([
   "kimi-coding",
   "litellm",
   "lmstudio",
+  "meta",
   "microsoft-foundry",
   "minimax",
   "minimax-portal",

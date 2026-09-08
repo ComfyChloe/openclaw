@@ -437,6 +437,11 @@
   - changed-files:
       - any-glob-to-any-file:
           - "extensions/kimi-coding/**"
+"extensions: meta":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "extensions/meta/**"
+          - "docs/providers/meta.md"
 "extensions: minimax":
   - changed-files:
       - any-glob-to-any-file:
