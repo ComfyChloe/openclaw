@@ -449,10 +449,14 @@ export function reconcileSessionProjectionSnapshot(
   }
   let entries = createProjectionEntries(visibleMessages);
   for (const current of state.entries) {
-    const matches = entries.filter((entry) => entryMatches(entry, current, true));
     if (
       (!current.live && !current.pending) ||
-      options.shouldIncludeMessage?.(current.message) === false ||
+      options.shouldIncludeMessage?.(current.message) === false
+    ) {
+      continue;
+    }
+    const matches = entries.filter((entry) => entryMatches(entry, current, true));
+    if (
       matches.length === 1 ||
       hasUniqueSnapshotTerminalMatch(
         current,
