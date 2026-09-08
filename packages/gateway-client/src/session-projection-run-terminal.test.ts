@@ -132,9 +132,12 @@ describe("session run terminal bookkeeping", () => {
     ).toBe(failed);
   });
 
-  it("upgrades an empty completed final exactly once without reopening the run", () => {
-    const emptyMessage = createMessage("assistant", "");
-    const deliveredMessage = createMessage("assistant", "eventual final");
+  it("upgrades an identified empty completed final exactly once without reopening the run", () => {
+    const emptyMessage = createMessage("assistant", "", { id: "assistant-final", seq: 7 });
+    const deliveredMessage = createMessage("assistant", "eventual final", {
+      id: "assistant-final",
+      seq: 7,
+    });
     let state = reduceSessionProjection(createSessionProjection(primaryScope), {
       type: "runTerminal",
       runId: "run-1",

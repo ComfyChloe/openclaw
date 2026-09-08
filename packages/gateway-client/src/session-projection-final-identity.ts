@@ -1,8 +1,11 @@
 /** Terminal identity rules used to reconcile live and durable assistant projections. */
 
-import { stableStringify } from "@openclaw/normalization-core";
 import { asNullableRecord as readRecord } from "@openclaw/normalization-core/record-coerce";
-import { readSessionMessageDisplayContent } from "./session-projection-message-content.js";
+import { stableStringify } from "@openclaw/normalization-core/stable-stringify";
+import {
+  hasDisplayableSessionMessage,
+  readSessionMessageDisplayContent,
+} from "./session-projection-message-content.js";
 import {
   readSessionMessageIdentity,
   type SessionMessageIdentity,
@@ -49,6 +52,9 @@ function readFinalContentIdentity(message: unknown): string | null {
 
 /** Read stable persisted identity first, falling back to canonical display content. */
 export function readSessionProjectionFinalMessageIdentity(message: unknown): string | null {
+  if (!hasDisplayableSessionMessage(message)) {
+    return null;
+  }
   const identity = readSessionMessageIdentity(message);
   if (identity?.externalSource) {
     return `import:${identity.role}:${identity.externalSource}`;
@@ -96,7 +102,10 @@ export function hasUniqueSnapshotTerminalMatch(
   if (!terminalContent || readFinalContentIdentity(run.message) !== terminalContent) {
     return false;
   }
+  const terminalMatch = matches.at(-1);
   return (
+    terminalMatch !== undefined &&
+    readFinalContentIdentity(terminalMatch.message) === terminalContent &&
     matches.filter((entry) => readFinalContentIdentity(entry.message) === terminalContent)
       .length === 1
   );
