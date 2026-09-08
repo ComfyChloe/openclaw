@@ -6,13 +6,10 @@ import { expectDefined } from "@openclaw/normalization-core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ErrorCodes } from "../../../packages/gateway-protocol/src/index.js";
 import { createDeferred } from "../../../test/helpers/promise.js";
+import { createColdOpenAIRealtimeCatalogFixture } from "../../../test/helpers/talk-cold-openai-catalog.js";
 import type { OpenClawConfig } from "../../config/config.js";
 import { normalizeResolvedSecretInputString } from "../../config/types.secrets.js";
 import { getAgentEventLifecycleGeneration } from "../../infra/agent-events.js";
-import type {
-  PluginCapabilityCatalogContext,
-  PluginCapabilityCatalogEntry,
-} from "../../plugins/capability-catalog-context.types.js";
 import { setActiveDegradedSecretOwners } from "../../secrets/runtime-degraded-state.js";
 import { ensureProfileForEmail } from "../../state/user-profiles.js";
 import { resolveRealtimeVoiceAgentConsultToolsAllow } from "../../talk/agent-consult-tool.js";
@@ -22,7 +19,6 @@ import {
 } from "../../talk/client-voice-confirmation.js";
 import { resetClientVoiceConfirmationStateForTest } from "../../talk/client-voice-confirmation.test-support.js";
 import { REALTIME_VOICE_DESCRIBE_VIEW_TOOL_NAME } from "../../talk/describe-view-tool.js";
-import { resolveRelativeBundledPluginPublicModuleId } from "../../test-utils/bundled-plugin-public-surface.js";
 import { withOpenClawTestState } from "../../test-utils/openclaw-test-state.js";
 import { resolveSessionMutationAuthorization } from "../session-sharing.js";
 import { prepareTalkAgentConsultTranscript } from "../talk-agent-consult-transcript.js";
@@ -438,33 +434,14 @@ describe("talk.catalog handler", () => {
   ] as const)("isolates a cold realtime owner for %s", async (method, params) => {
     markTalkOwnerCold("talk:realtime");
     // The existing manifest-owned catalog supplies real static capabilities without api.ts/runtime registration.
-    const moduleId = resolveRelativeBundledPluginPublicModuleId({
-      fromModuleUrl: import.meta.url,
-      pluginId: "openai",
-      artifactBasename: "capability-catalog.js",
-    });
-    const { default: catalogEntry } = (await import(moduleId)) as {
-      default: PluginCapabilityCatalogEntry;
-    };
-    const credentialOperation = vi.fn(() => {
-      throw new Error("cold owner must not resolve credentials");
-    });
-    const catalog =
-      typeof catalogEntry === "function"
-        ? catalogEntry(
-            new Proxy({}, { get: () => credentialOperation }) as PluginCapabilityCatalogContext,
-          )
-        : catalogEntry;
-    const provider = expectDefined(
-      catalog.realtimeVoiceProviders?.[0],
-      "OpenAI catalog voice provider",
-    );
-    const resolveConfig = vi.spyOn(provider, "resolveConfig").mockImplementation(() => {
-      throw new Error("cold SecretRef");
-    });
-    const configured = vi.spyOn(provider, "isConfigured");
-    const createBrowser = vi.spyOn(provider, "createBrowserSession");
-    const createBridge = vi.spyOn(provider, "createBridge");
+    const {
+      provider,
+      credentialOperation,
+      resolveConfig,
+      configured,
+      createBrowser,
+      createBridge,
+    } = await createColdOpenAIRealtimeCatalogFixture();
     mocks.listRealtimeVoiceProviders.mockReturnValue([provider] as never);
     const respond = vi.fn();
     await callTalkHandler(method, {
