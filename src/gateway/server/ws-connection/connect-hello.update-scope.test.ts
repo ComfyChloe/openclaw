@@ -3,6 +3,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { WebSocket, WebSocketServer } from "ws";
 import {
   GATEWAY_SERVER_CAPS,
+  validateTalkCatalogParams,
+  validateTalkClientCreateParams,
+  validateTalkSessionCreateParams,
+  validateTalkClientToolCallParams,
+  validateTalkClientTranscriptParams,
+  validateTalkClientCloseParams,
+  validateTalkClientSteerParams,
   type HelloOk,
 } from "../../../../packages/gateway-protocol/src/index.js";
 import type { OpenClawConfig } from "../../../config/types.openclaw.js";
@@ -103,7 +110,7 @@ function makeContext(role: "operator" | "node", scopes: string[]) {
       getClient: () => null,
       connId: `conn-${role}`,
       bootId: "gateway-boot-a",
-      gatewayMethods: [],
+      gatewayMethods: [] as string[],
       events: [],
       buildRequestContext: () => ({ nodeRegistry: { get: () => undefined } }),
       refreshHealthSnapshot: vi.fn(async () => ({})),
@@ -421,6 +428,63 @@ describe("sendGatewayHello update detail scope", () => {
     });
     expectRedactedHelloSnapshot(context);
   });
+
+  it.each([
+    null,
+    "talk.catalog",
+    "talk.client.create",
+    "talk.session.create",
+    "talk.client.toolCall",
+    "talk.client.transcript",
+    "talk.client.close",
+    "talk.client.steer",
+  ])(
+    "advertises the complete Talk target contract only when available (missing=%s)",
+    async (missing) => {
+      const methods = [
+        "talk.catalog",
+        "talk.client.create",
+        "talk.session.create",
+        "talk.client.toolCall",
+        "talk.client.transcript",
+        "talk.client.close",
+        "talk.client.steer",
+      ];
+      const context = makeContext("operator", ["operator.read"]);
+      context.handler.gatewayMethods.push(...methods.filter((method) => method !== missing));
+      await sendGatewayHello(
+        context as never,
+        makeState("operator", ["operator.read"]) as never,
+        {},
+      );
+      expect(helloPayload(context)?.features.capabilities?.includes("talk-session-target-v1")).toBe(
+        missing === null,
+      );
+    },
+  );
+
+  it.each([
+    ["talk.catalog", validateTalkCatalogParams, {}],
+    ["talk.client.create", validateTalkClientCreateParams, {}],
+    ["talk.session.create", validateTalkSessionCreateParams, {}],
+    [
+      "talk.client.toolCall",
+      validateTalkClientToolCallParams,
+      { callId: "call", name: "openclaw_agent_consult" },
+    ],
+    [
+      "talk.client.transcript",
+      validateTalkClientTranscriptParams,
+      { voiceSessionId: "voice", entryId: "entry", role: "user", text: "fixture" },
+    ],
+    ["talk.client.close", validateTalkClientCloseParams, { voiceSessionId: "voice" }],
+    ["talk.client.steer", validateTalkClientSteerParams, { text: "status" }],
+  ] as const)(
+    "the advertised Talk contract accepts both target fields: %s",
+    (_method, validate, params) => {
+      expect(validate({ ...params, agentId: "work", sessionKey: "agent:work:thread" })).toBe(true);
+    },
+  );
 
   it("includes update details for an operator.read client", async () => {
     const context = makeContext("operator", ["operator.read"]);

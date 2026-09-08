@@ -14,6 +14,7 @@ import {
 } from "../media-understanding/entry-capabilities.js";
 import { buildMediaUnderstandingCapabilityRegistry } from "../media-understanding/provider-capability-registry.js";
 import { resolveVoiceModelRefs } from "../tts/voice-models.js";
+import { resolveBundledProviderPolicySurface } from "../plugins/provider-public-artifacts.js";
 import { collectAgentMemorySearchAssignments } from "./runtime-config-collectors-memory.js";
 import { collectAgentSandboxAssignments } from "./runtime-config-collectors-sandbox.js";
 import { collectTtsApiKeyAssignments } from "./runtime-config-collectors-tts.js";
@@ -241,6 +242,12 @@ function collectTalkAssignments(params: {
       surface === "speech" && inherited && selected?.config.apiKey === undefined
         ? inherited
         : undefined;
+    const apiKeyActive =
+      surface !== "realtime" || !providerId ||
+      (resolveBundledProviderPolicySurface(providerId)?.isRealtimeVoiceApiKeyActive?.({
+        ...findTalkProviderConfig(section.providers, providerId)?.config,
+        ...selected?.config,
+      }) ?? true);
     const entries = Object.entries(isRecord(section.providers) ? section.providers : {});
     if (inheritedKey && selected) {
       entries.push([inheritedKey.id, inheritedKey.config]);
@@ -260,13 +267,13 @@ function collectTalkAssignments(params: {
         expected: "string",
         defaults: params.defaults,
         context: params.context,
-        active: Boolean(
+        active: apiKeyActive && Boolean(
           isInherited ||
           (providerId &&
             (normalized === normalizedConfiguredId ||
               (surface === "realtime" && normalized === providerId))),
         ),
-        inactiveReason: "Talk provider is not selected.",
+        inactiveReason: "Talk provider or credential method is not selected.",
         owner,
         apply: (resolved) => {
           destination.apiKey = resolved;

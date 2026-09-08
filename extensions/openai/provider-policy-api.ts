@@ -119,6 +119,11 @@ export function projectConfiguredModelRow(ctx: ProviderNormalizeResolvedModelCon
   return null;
 }
 
+/** Explicit OAuth leaves a saved Platform key inactive, including unresolved SecretRefs. */
+export function isRealtimeVoiceApiKeyActive(providerConfig: Record<string, unknown>): boolean {
+  return providerConfig.authMethod !== "oauth";
+}
+
 export function projectRealtimeVoicePublicProjection(ctx: {
   providerConfig: Record<string, unknown>;
   config: Record<string, unknown>;

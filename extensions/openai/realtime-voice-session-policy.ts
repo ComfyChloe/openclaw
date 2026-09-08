@@ -49,6 +49,7 @@ export type OpenAIRealtimeUserMessageOptions = {
 };
 
 export type OpenAIRealtimeVoiceProviderConfig = {
+  authMethod?: "oauth" | "api-key";
   apiKey?: string;
   model?: string;
   voice?: string;
@@ -95,7 +96,12 @@ export const OPENAI_REALTIME_MODELS = [
 export const OPENAI_REALTIME_INPUT_TRANSCRIPTION_MODEL = "gpt-4o-mini-transcribe";
 export const OPENAI_REALTIME_CAPABILITIES: RealtimeVoiceProviderCapabilities & {
   voicesByModel: Record<string, readonly string[]>;
+  authMethods: readonly { id: string; label: string }[];
 } = {
+  authMethods: [
+    { id: "oauth", label: "ChatGPT OAuth only" },
+    { id: "api-key", label: "OpenAI Platform API key only" },
+  ],
   voicesByModel: Object.fromEntries(
     OPENAI_GPT_LIVE_MODELS.map((model) => [model, OPENAI_GPT_LIVE_VOICES]),
   ),
@@ -234,9 +240,14 @@ export function normalizeProviderConfig(
   config: RealtimeVoiceProviderConfig,
 ): OpenAIRealtimeVoiceProviderConfig {
   const raw = resolveOpenAIProviderConfigRecord(config);
+  const authMethod = raw?.authMethod;
+  if (authMethod !== undefined && authMethod !== "oauth" && authMethod !== "api-key") {
+    throw new Error("OpenAI Talk authMethod must be oauth or api-key");
+  }
   return {
+    authMethod,
     apiKey: normalizeResolvedSecretInputString({
-      value: raw?.apiKey,
+      value: authMethod === "oauth" ? undefined : raw?.apiKey,
       path: "plugins.entries.voice-call.config.realtime.providers.openai.apiKey",
     }),
     model: normalizeOptionalString(raw?.model),
@@ -553,6 +564,7 @@ export async function requireOpenAIRealtimePlatformAuth(
 
 export async function resolveOpenAIQuicksilverBridgeAuth(
   params: {
+    authMethod?: "oauth" | "api-key";
     configuredApiKey: string | undefined;
     cfg: RealtimeVoiceBridgeCreateRequest["cfg"] | undefined;
     agentId?: string;
@@ -560,6 +572,10 @@ export async function resolveOpenAIQuicksilverBridgeAuth(
   },
   runtime: OpenAIRealtimeHost,
 ) {
+  if (params.authMethod === "api-key") {
+    const auth = await requireOpenAIRealtimePlatformAuth(params, runtime);
+    return { type: "api-key" as const, token: auth.value };
+  }
   if (isSupportedOpenAIGptLiveModel(params.model)) {
     const { resolveAgentDir } = runtime;
     const subscriptionAuth = await resolveOpenAIChatGptSubscriptionAuth(
@@ -573,6 +589,11 @@ export async function resolveOpenAIQuicksilverBridgeAuth(
     if (subscriptionAuth) {
       return subscriptionAuth;
     }
+  }
+  if (params.authMethod === "oauth") {
+    throw new Error(
+      "Selected ChatGPT OAuth is unavailable for this Talk session. Check the account and model; API-key fallback is disabled.",
+    );
   }
   const platformAuth = await resolveOpenAIRealtimePlatformAuth(params, runtime);
   if (platformAuth.status === "available") {

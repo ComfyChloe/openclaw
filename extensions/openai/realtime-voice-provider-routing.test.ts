@@ -65,11 +65,47 @@ describe("OpenAI realtime voice provider routing", () => {
     restoreTestEnvironment();
   });
 
+  it.each(["gpt-realtime-2.1", "gpt-live-1-codex"])("publishes auth selection for browser and relay model %s", (model) => {
+    const api = readInternalRealtimeVoiceProviderApi(buildOpenAIRealtimeVoiceProvider());
+    for (const authMethod of [undefined, "oauth", "api-key"] as const) {
+      for (const resolve of [api.resolveBrowserSessionCapabilities, api.resolveGatewayRelayCapabilities]) {
+        expect(resolve({ providerConfig: { model, authMethod } })).toMatchObject({
+          authMethods: [
+            { id: "oauth", label: "ChatGPT OAuth only" },
+            { id: "api-key", label: "OpenAI Platform API key only" },
+          ],
+          selectedAuthMethod: authMethod,
+        });
+      }
+    }
+  });
+
+  it.each(["gpt-realtime-2.1", "gpt-live-1-codex", OPAQUE_REALTIME_MODEL])("explicit Platform auth does not add a model lock for %s", (model) => {
+    const { broker } = createQuicksilverBrowserBrokerFixture();
+    const api = readInternalRealtimeVoiceProviderApi(buildOpenAIRealtimeVoiceProvider({ quicksilverBrowserSessionBroker: broker }));
+    expect(api.isBrowserSessionConfigured({ providerConfig: { model, authMethod: "api-key", apiKey: "test-api-key-platform" } })).toBe(true);
+  });
+
+  it("explicit OAuth ignores a saved Platform key and does not recover through Platform when OAuth is absent", async () => {
+    const { broker, createBrowserSession } = createQuicksilverBrowserBrokerFixture();
+    const provider = buildOpenAIRealtimeVoiceProvider({ quicksilverBrowserSessionBroker: broker });
+    await expect(provider.createBrowserSession!({ providerConfig: { model: "gpt-realtime-2.1", authMethod: "oauth", apiKey: "test-api-key-platform" }, instructions: "Test" })).rejects.toThrow();
+    expect(fetchWithSsrFGuardMock).not.toHaveBeenCalled();
+    expect(createBrowserSession).not.toHaveBeenCalled();
+  });
+
   it("declares realtime Talk capabilities for catalog selection", () => {
     const provider = buildOpenAIRealtimeVoiceProvider();
 
     expect(provider.defaultModel).toBe("gpt-realtime-2.1");
+    expect(provider.capabilities).not.toHaveProperty("selectedAuthMethod");
+    expect(isProviderAuthProfileConfiguredMock).not.toHaveBeenCalled();
+    expect(resolveProviderAuthProfileApiKeyMock).not.toHaveBeenCalled();
     expect(provider.capabilities).toMatchObject({
+      authMethods: [
+        { id: "oauth", label: "ChatGPT OAuth only" },
+        { id: "api-key", label: "OpenAI Platform API key only" },
+      ],
       transports: ["webrtc", "gateway-relay"],
       inputAudioFormats: [
         { encoding: "g711_ulaw", sampleRateHz: 8000, channels: 1 },

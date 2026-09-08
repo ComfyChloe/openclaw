@@ -11,6 +11,7 @@ import {
   missingScopeErrorShape,
   normalizeUiAppearancePreference,
   type TalkSpeakParams,
+  type TalkCatalogParams,
   UI_APPEARANCE_PREFERENCE_KEYS,
   validateTalkCatalogParams,
   validateTalkConfigParams,
@@ -72,6 +73,7 @@ import {
 } from "../../tts/tts.js";
 import { getVoiceProviderConfig, providerMatchesId } from "../../tts/voice-models.js";
 import { ADMIN_SCOPE, READ_SCOPE, TALK_SECRETS_SCOPE } from "../operator-scopes.js";
+import { prepareTalkSessionTarget } from "../talk-session-target.js";
 import { formatForLog } from "../ws-log.js";
 import { respondUnavailable } from "./response.js";
 import { inferSpeechMimeType } from "./speech-mime.js";
@@ -79,6 +81,9 @@ import { talkClientHandlers } from "./talk-client.js";
 import { talkSessionHandlers } from "./talk-session.js";
 import {
   buildTalkRealtimeConfig,
+  talkClientConsultRoutingError,
+  resolveTalkRealtimeGatewayRelayLaunch,
+  buildRealtimeVoiceLaunchOptions,
   buildTalkTranscriptionConfig,
   configuredOrFalse,
   listTalkTranscriptionProviders,
@@ -250,9 +255,9 @@ function buildTalkTtsConfig(
   };
 }
 
-function buildTalkCatalog(config: OpenClawConfig) {
-  // Reject ambiguous ownership before provider discovery loads unrelated plugins.
-  const realtimeAgentId = resolveTalkSessionAgentId(config);
+function buildTalkCatalog(config: OpenClawConfig, targetAgentId?: string) {
+  // Resolve ownership before provider discovery; unscoped settings reads stay global.
+  const realtimeAgentId = targetAgentId ?? resolveTalkSessionAgentId(config);
   const talkResolved = resolveActiveTalkProviderConfig(config.talk);
   const activeSpeechProvider = canonicalizeSpeechProviderId(talkResolved?.provider, config);
   const transcriptionConfig = buildTalkTranscriptionConfig(config);
@@ -269,8 +274,14 @@ function buildTalkCatalog(config: OpenClawConfig) {
   const activeTranscriptionProvider = transcriptionSelection.activeProvider;
   const realtimeConfig = buildTalkRealtimeConfig(config);
   const realtimeProviderIds = Object.keys(realtimeConfig.providers);
+  const clientLaunchError = talkClientConsultRoutingError(realtimeConfig.consultRouting);
+  // Web Talk may recover a rejected client launch through relay only when transport
+  // is unset. Check that executable route without rewriting an explicit transport.
   const realtimeSurface =
-    realtimeConfig.transport === "gateway-relay" ? "gateway-relay" : "browser-session";
+    realtimeConfig.transport === "gateway-relay" ||
+    (realtimeConfig.transport === undefined && clientLaunchError !== undefined)
+      ? "gateway-relay"
+      : "browser-session";
   // Mirror talk.client.create's resolution inputs (agent scope + top-level model
   // override) so catalog readiness matches what session creation will actually do;
   // diverging here previously reported GPT-Live over OAuth as unconfigured.
@@ -281,7 +292,7 @@ function buildTalkCatalog(config: OpenClawConfig) {
     canonicalizeRealtimeVoiceProviderId(realtimeConfig.provider, config),
     () => {
       assertSecretOwnerAvailable("capability", "talk:realtime");
-      return resolveConfiguredRealtimeVoiceProvider({
+      const resolution = resolveConfiguredRealtimeVoiceProvider({
         cfg: config,
         configuredProviderId: realtimeConfig.provider,
         providerConfigs: realtimeConfig.providers,
@@ -289,7 +300,23 @@ function buildTalkCatalog(config: OpenClawConfig) {
         agentId: realtimeAgentId,
         defaultModel: realtimeConfig.model,
         surface: realtimeSurface,
-      }).provider.id;
+      });
+      const launchError =
+        realtimeSurface === "gateway-relay"
+          ? resolveTalkRealtimeGatewayRelayLaunch({
+              ...resolution,
+              cfg: config,
+              launchOptions: buildRealtimeVoiceLaunchOptions({
+                requested: {},
+                defaults: realtimeConfig,
+              }),
+              consultRouting: realtimeConfig.consultRouting,
+            }).error
+          : clientLaunchError;
+      if (launchError) {
+        throw new Error(launchError);
+      }
+      return resolution.provider.id;
     },
   );
   const activeRealtimeProvider = realtimeSelection.activeProvider;
@@ -450,6 +477,12 @@ function buildTalkCatalog(config: OpenClawConfig) {
         }
         if (capabilities?.voiceSelectionPolicy) {
           entry.activeVoiceSelectionPolicy = capabilities.voiceSelectionPolicy;
+        }
+        if (capabilities?.authMethods) {
+          entry.authMethods = [...capabilities.authMethods];
+        }
+        if (capabilities?.selectedAuthMethod) {
+          entry.selectedAuthMethod = capabilities.selectedAuthMethod;
         }
         if (capabilities?.voicesByModel) {
           entry.voicesByModel = capabilities.voicesByModel;
@@ -834,7 +867,13 @@ export const talkHandlers: GatewayRequestHandlers = {
     }
 
     try {
-      respond(true, buildTalkCatalog(context.getRuntimeConfig()), undefined);
+      const config = context.getRuntimeConfig();
+      const { sessionKey, agentId } = catalogParams as TalkCatalogParams;
+      const target =
+        sessionKey !== undefined || agentId !== undefined
+          ? prepareTalkSessionTarget(config, sessionKey, agentId)
+          : undefined;
+      respond(true, buildTalkCatalog(config, target?.agentId), undefined);
     } catch (err) {
       respond(
         false,

@@ -131,7 +131,7 @@ export function resolveTalkSessionTargetInput(
   params: unknown,
   connId?: string,
 ):
-  | { kind: "request"; sessionKey?: string }
+  | { kind: "request"; sessionKey?: string; agentId?: string }
   | ({ kind: "relay" } & NonNullable<ReturnType<typeof resolveUnifiedTalkSessionTarget>>)
   | undefined {
   if (method === "talk.session.steer") {
@@ -150,18 +150,19 @@ export function resolveTalkSessionTargetInput(
     return undefined;
   }
   const sessionKey = readSessionSharingStringParam(params, "sessionKey");
+  const agentId = readSessionSharingStringParam(params, "agentId");
   if (sessionKey) {
-    return { kind: "request", sessionKey };
+    return { kind: "request", sessionKey, ...(agentId ? { agentId } : {}) };
   }
   if (method === "talk.client.create") {
-    return { kind: "request" };
+    return { kind: "request", ...(agentId ? { agentId } : {}) };
   }
   if (
     method === "talk.session.create" &&
     (readSessionSharingStringParam(params, "mode") ?? "realtime") === "realtime" &&
     readSessionSharingStringParam(params, "transport") !== "managed-room"
   ) {
-    return { kind: "request" };
+    return { kind: "request", ...(agentId ? { agentId } : {}) };
   }
   return undefined;
 }

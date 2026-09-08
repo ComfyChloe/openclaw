@@ -3,6 +3,15 @@ package ai.openclaw.app.ui
 import ai.openclaw.app.MainViewModel
 import ai.openclaw.app.ui.chat.ChatScreen
 import ai.openclaw.app.ui.chat.rememberChatRealtimeTalkLauncher
+import ai.openclaw.app.ui.chat.TalkCameraControls
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.ui.Modifier
 import ai.openclaw.app.ui.design.ClawScaffold
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.WindowInsets
@@ -26,6 +35,8 @@ internal fun UnifiedChatShellScreen(
   features: List<DisplayFeature> = emptyList(),
 ) {
   val talkModeEnabled by viewModel.talkModeEnabled.collectAsState()
+  val talkStatus by viewModel.talkModeStatusText.collectAsState()
+  val talkHasFailure by viewModel.talkModeHasFailure.collectAsState()
   val startTalk = rememberChatRealtimeTalkLauncher(viewModel)
   LaunchedEffect(viewModel) { viewModel.refreshTalkSetupReadiness() }
 
@@ -33,6 +44,10 @@ internal fun UnifiedChatShellScreen(
     contentPadding = PaddingValues(start = 0.dp, top = 8.dp, end = 0.dp, bottom = 0.dp),
     contentWindowInsets = WindowInsets.safeDrawing,
   ) {
+    Column(Modifier.fillMaxSize()) {
+      TalkStatusRow(talkModeEnabled, talkHasFailure, talkStatus)
+      TalkCameraControls(viewModel)
+      Box(Modifier.weight(1f)) {
     ChatScreen(
       viewModel = viewModel,
       talkActive = talkModeEnabled,
@@ -51,5 +66,17 @@ internal fun UnifiedChatShellScreen(
       tabletopPanes = tabletopPanes,
       features = features,
     )
+      }
+    }
   }
+}
+
+@Composable
+internal fun TalkStatusRow(enabled: Boolean, hasFailure: Boolean, status: String) {
+  if (enabled || hasFailure) Text(
+    text = status,
+    style = MaterialTheme.typography.labelSmall,
+    color = if (hasFailure) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp),
+  )
 }

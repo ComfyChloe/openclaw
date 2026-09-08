@@ -51,6 +51,7 @@ import {
   buildRealtimeInstructions,
   buildRealtimeVoiceLaunchOptions,
   buildTalkRealtimeConfig,
+  talkClientConsultRoutingError,
   isUnsupportedBrowserWebRtcSession,
   resolveTalkRealtimeProviderInstructions,
 } from "./talk-shared.js";
@@ -104,6 +105,11 @@ export const createTalkClient: GatewayRequestHandler = async ({
     }
     const transport =
       normalizeOptionalLowercaseString(params.transport) ?? realtimeConfig.transport;
+    const consultError = talkClientConsultRoutingError(realtimeConfig.consultRouting);
+    if (consultError) {
+      rejectTalkClientRequest(respond, ErrorCodes.INVALID_REQUEST, consultError);
+      return;
+    }
     const wantsCameraFrames = params.capabilities?.includes("camera-frame") === true;
     const wantsGatewayControl = params.capabilities?.includes("gateway-control-v1") === true;
     const clientControl = wantsGatewayControl ? { owner: "gateway" as const } : undefined;
@@ -411,6 +417,9 @@ export const createTalkClient: GatewayRequestHandler = async ({
                 config: session,
               }),
               voiceSessionId,
+              ...(session.transport === "webrtc"
+                ? { transcriptOwner: wantsGatewayControl ? "gateway" : "client", controlSource }
+                : {}),
               ...(clientControl ? { clientControl } : {}),
             },
             undefined,

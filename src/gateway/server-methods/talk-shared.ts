@@ -451,6 +451,13 @@ function withRealtimeBrowserOverrides(
   return Object.keys(overrides).length > 0 ? { ...providerConfig, ...overrides } : providerConfig;
 }
 
+/** Client-owned transports cannot enforce transcript-triggered forced consultations. */
+export function talkClientConsultRoutingError(consultRouting?: string): string | undefined {
+  return consultRouting === "force-agent-consult"
+    ? "Client-owned Talk cannot enforce forced agent consult; select a supported gateway-relay configuration or provider-direct routing"
+    : undefined;
+}
+
 export function resolveTalkRealtimeGatewayRelayLaunch(params: {
   provider: RealtimeVoiceProviderPlugin;
   providerConfig: RealtimeVoiceProviderConfig;

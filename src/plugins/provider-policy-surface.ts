@@ -90,6 +90,8 @@ export type ProviderPolicySurface = {
 
 /** Provider policy hooks loaded only from bundled plugin public artifacts. */
 export type BundledProviderPolicySurface = ProviderPolicySurface & {
+  /** Credential activity before SecretRef resolution; must not resolve credentials. */
+  isRealtimeVoiceApiKeyActive?: (providerConfig: Record<string, unknown>) => boolean;
   projectConfiguredModelRow?: (
     ctx: ProviderProjectConfiguredModelRowContext,
   ) => ProviderRuntimeModel | null | undefined;
@@ -131,6 +133,9 @@ function extractBundledProviderPolicySurface(
   mod: Record<string, unknown>,
 ): BundledProviderPolicySurface | null {
   const surface: BundledProviderPolicySurface = extractProviderPolicySurface(mod) ?? {};
+  if (typeof mod.isRealtimeVoiceApiKeyActive === "function") {
+    Object.assign(surface, { isRealtimeVoiceApiKeyActive: mod.isRealtimeVoiceApiKeyActive });
+  }
   if (typeof mod.projectConfiguredModelRow === "function") {
     surface.projectConfiguredModelRow =
       mod.projectConfiguredModelRow as BundledProviderPolicySurface["projectConfiguredModelRow"];

@@ -20,9 +20,12 @@ export function requirePreparedTalkSessionTarget(
 export function prepareTalkSessionTarget(
   cfg: OpenClawConfig,
   requestedSessionKey?: string,
+  requestedAgentId?: string,
 ): PreparedTalkSessionTarget {
   const requestedKey = normalizeOptionalString(requestedSessionKey);
-  const owner = resolveTalkSessionAgentId(cfg, requestedKey ?? "main");
+  const owner = normalizeOptionalString(requestedAgentId)
+    ? resolveConfiguredAgentId(cfg, requestedAgentId)
+    : resolveTalkSessionAgentId(cfg, requestedKey ?? "main");
   const sessionKey = requestedKey ?? resolveAgentMainSessionKey({ cfg, agentId: owner });
   const { agentId, canonicalKey, storePath } = resolveTalkSessionStorageTarget(
     cfg,

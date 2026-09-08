@@ -32,6 +32,8 @@ export type TalkRealtimeProviderOption = {
   activeVoices?: readonly string[];
   activeVoiceSelectionPolicy?: "allowlist-default";
   voicesByModel?: Record<string, readonly string[]>;
+  authMethods?: readonly { id: string; label: string }[];
+  selectedAuthMethod?: string;
   /** Empty when the catalog does not declare transports for the provider. */
   transports: readonly string[];
   defaultModel: string | null;
@@ -61,6 +63,7 @@ type TalkViewProps = {
   onProviderChange: (providerId: string | null) => void;
   onModelChange: (model: string | null) => void;
   onVoiceChange: (voice: string | null) => void;
+  onAuthMethodChange?: (method: string) => void;
   /** Embedded schema editor for the full `talk` section. */
   editor: TemplateResult;
 };
@@ -305,6 +308,24 @@ function renderGptLiveRow(props: TalkViewProps) {
   });
 }
 
+function renderAuthRow(props: TalkViewProps) {
+  const provider = selectedTalkProviderOption(props.catalog, props.selection);
+  if (!provider?.authMethods?.length) return nothing;
+  const entry = talkProviderConfigKeys(props.selection, provider)
+    .map((key) => props.selection.providerEntries[key]).find((value) => value !== undefined);
+  return renderSettingsSelectRow({
+    title: t("talkPage.auth.title"),
+    description: t("talkPage.auth.description"),
+    value: entry ? entry.authMethod ?? "" : provider.selectedAuthMethod ?? "",
+    options: [
+      { value: "", label: t("talkPage.auth.auto") },
+      ...provider.authMethods.map(({ id, label }) => ({ value: id, label })),
+    ],
+    disabled: props.configBusy,
+    onChange: (method) => props.onAuthMethodChange?.(method),
+  });
+}
+
 export function renderTalk(props: TalkViewProps) {
   return html`
     <section class="talk-page">
@@ -318,7 +339,7 @@ export function renderTalk(props: TalkViewProps) {
           },
           html`
             ${renderStatusRow(props)} ${renderProviderRow(props)} ${renderModelRow(props)}
-            ${renderVoiceRow(props)} ${renderGptLiveRow(props)}
+            ${renderVoiceRow(props)} ${renderAuthRow(props)} ${renderGptLiveRow(props)}
           `,
         )}
       </div>

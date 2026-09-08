@@ -43,6 +43,20 @@ function manifest(canonical: string, ...aliases: string[]): PluginManifestRecord
 }
 
 describe("secrets runtime Talk capability owners", () => {
+  it("does not make explicit realtime OAuth depend on an inactive API-key SecretRef", async () => {
+    const snapshot = await prepare({
+      talk: {
+        realtime: {
+          provider: "openai",
+          transport: "webrtc",
+          providers: { openai: { authMethod: "oauth", apiKey: ref("UNUSED_TALK_KEY") } },
+        },
+      },
+    });
+    expect(snapshot.degradedOwners).toEqual([]);
+    expect(snapshot.config.talk?.realtime?.providers?.openai?.apiKey).toEqual(ref("UNUSED_TALK_KEY"));
+  });
+
   it.each(["speech", "realtime"] as const)(
     "resolves selected %s refs and ignores inactive refs",
     async (surface) => {

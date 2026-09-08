@@ -75,6 +75,8 @@ function toProviderOption(
     activeVoices: provider.activeVoices,
     activeVoiceSelectionPolicy: provider.activeVoiceSelectionPolicy,
     voicesByModel: provider.voicesByModel,
+    authMethods: provider.authMethods,
+    selectedAuthMethod: provider.selectedAuthMethod,
     transports: provider.transports ?? [],
     defaultModel: provider.defaultModel ?? null,
   };
@@ -518,6 +520,20 @@ class TalkSettingsPage extends OpenClawLightDomElement {
     }
   }
 
+  private changeAuthMethod(method: string) {
+    if (this.mutationDisabled) return;
+    const provider = selectedTalkProviderOption(this.catalog, this.liveSelection());
+    if (!provider || (method && !provider.authMethods?.some((choice) => choice.id === method))) return;
+    const keys = this.selectedProviderConfigKeys();
+    // Only this provider's credential policy changes. Auto provider/model/transport remain untouched.
+    for (const key of keys) {
+      this.context.runtimeConfig.removeFormValue(["talk", "realtime", "providers", key, "authMethod"]);
+    }
+    if (method) this.context.runtimeConfig.patchForm(
+      ["talk", "realtime", "providers", keys[0] ?? provider.id, "authMethod"], method,
+    );
+  }
+
   private changeVoice(voice: string | null) {
     if (this.mutationDisabled) {
       return;
@@ -636,6 +652,7 @@ class TalkSettingsPage extends OpenClawLightDomElement {
       onProviderChange: (providerId) => this.changeProvider(providerId),
       onModelChange: (model) => this.changeModel(model),
       onVoiceChange: (voice) => this.changeVoice(voice),
+      onAuthMethodChange: (method) => this.changeAuthMethod(method),
       editor: this.buildEditor(),
     });
   }
