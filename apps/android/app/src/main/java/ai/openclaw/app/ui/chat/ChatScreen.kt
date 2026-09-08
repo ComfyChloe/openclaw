@@ -1272,7 +1272,9 @@ internal fun ChatScreen(
       BranchSwitcherSheet(
         opening = opening.session,
         branches = sessionBranches,
-        selectionEnabled = canAdminSessionSettings && !sessionBranchesLoading && !sessionBranchSwitching,
+        selectionEnabled =
+          canAdminSessionSettings && !sessionBranchesLoading &&
+            viewModel.canSwitchChatSessionBranch(opening.session.composerOwner, opening.selectionGeneration),
         onDismiss = {
           if (isCurrentBranchOpening(opening) && branchPicker.admit(opening.session)) branchPicker.retire(opening.session)
         },

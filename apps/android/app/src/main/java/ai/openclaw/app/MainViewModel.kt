@@ -1651,12 +1651,20 @@ class MainViewModel private constructor(
   internal fun canSwitchChatSessionBranch(
     owner: ChatComposerOwner,
     selectionGeneration: Long,
+  ): Boolean {
+    val runtime = runtimeRef.value ?: return false
+    return isCurrentChatBranchTarget(owner, selectionGeneration) && runtime.canSwitchChatSessionBranch(owner.sessionKey)
+  }
+
+  internal fun canSwitchChatSessionBranch(
+    owner: ChatComposerOwner,
+    selectionGeneration: Long,
     leafEntryId: String,
   ): Boolean {
     val runtime = runtimeRef.value ?: return false
-    return isCurrentChatBranchTarget(owner, selectionGeneration) &&
+    return canSwitchChatSessionBranch(owner, selectionGeneration) &&
       operatorScopesAllowAdmin(runtime.operatorScopes.value) &&
-      !runtime.chatSessionBranchesLoading.value && !runtime.chatSessionBranchSwitching.value &&
+      !runtime.chatSessionBranchesLoading.value &&
       runtime.chatSessionBranches.value.any { it.leafEntryId == leafEntryId && !it.active }
   }
 

@@ -79,9 +79,11 @@ with Refresh available.
 
 Switch branch keeps its list and reading position through safe layout changes;
 the title and rows scroll together in short panes. Changing Gateway, agent, or
-chat retires the opening. Reading remains available during an admitted branch
-switch, with mutation rows disabled. Closing or retiring the sheet does not
-cancel that switch, and its completion cannot dismiss a replacement opening.
+chat retires the opening. Reading remains available when a run is pending,
+outbox restoration is incomplete, the current session has outbox items, or a
+branch switch is already in flight. Mutation rows stay disabled in those
+states. Closing or retiring the sheet does not cancel an admitted switch,
+and its completion cannot dismiss a replacement opening.
 
 Other dialogs, sheets, and popup menus are not fold-adapted yet.
 
