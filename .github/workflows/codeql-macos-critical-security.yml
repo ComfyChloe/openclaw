@@ -58,7 +58,8 @@ jobs:
 
       - name: Build macOS for CodeQL
         # Preserve ARM-only application paths in CodeQL coverage on the Intel host.
-        run: swift build --package-path apps/macos --product OpenClaw --arch arm64 --disable-index-store -debug-info-format none
+        # A positive backend thread count keeps SwiftPM's per-file object map linkable under WMO.
+        run: swift build --package-path apps/macos --product OpenClaw --arch arm64 --disable-index-store -debug-info-format none -Xswiftc -whole-module-optimization -Xswiftc -num-threads -Xswiftc 1
 
       - name: Analyze
         id: analyze
