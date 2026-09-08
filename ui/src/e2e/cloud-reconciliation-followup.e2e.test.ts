@@ -6,6 +6,8 @@ import {
   controlUiSessionUrl,
   createChatFlowE2eSuite,
   installMockGateway,
+  requireRecord,
+  requireString,
 } from "./chat-flow.test-support.ts";
 
 const suite = createChatFlowE2eSuite();
@@ -45,9 +47,10 @@ function session(
   state: "active" | "failed",
   queuedFollowUp = false,
   workspaceResultReconciling = false,
+  runId = "follow-up-run",
 ) {
   return {
-    activeRunIds: queuedFollowUp ? ["follow-up-run"] : [],
+    activeRunIds: queuedFollowUp ? [runId] : [],
     hasActiveRun: queuedFollowUp,
     key: sessionKey,
     kind: "direct",
@@ -94,6 +97,8 @@ suite.define(() => {
           thinkingLevel: null,
         };
         const gateway = await installMockGateway(page, {
+          agentModel: "openai/gpt-4o",
+          models: [{ id: "gpt-4o", name: "GPT-4o", provider: "openai" }],
           methodResponses: {
             "chat.history": reconcilingHistory,
             "chat.startup": reconcilingHistory,
@@ -122,15 +127,18 @@ suite.define(() => {
         await page.getByRole("button", { name: "Send message" }).click();
         const firstFollowUp = await gateway.waitForRequest("chat.send");
         expect(firstFollowUp.params).toMatchObject({ message: pendingInput.message.content });
+        // Echo the browser submission identity so custody replaces its optimistic bubble.
+        const runId = requireString(requireRecord(firstFollowUp.params).idempotencyKey, "run id");
+        const admittedInput = { ...pendingInput, runId };
         await gateway.resolveDeferred("chat.send", {
-          runId: pendingInput.runId,
+          runId,
           status: "started",
         });
 
-        const queued = session("active", true, true);
+        const queued = session("active", true, true, runId);
         const queuedHistory = {
           ...reconcilingHistory,
-          pendingInputs: { items: [pendingInput], total: 1 },
+          pendingInputs: { items: [admittedInput], total: 1 },
           sessionInfo: queued,
         };
         await gateway.setMethodResponse("chat.history", queuedHistory);
@@ -142,6 +150,9 @@ suite.define(() => {
           sessionKey,
         });
         await page.getByText("Received · waiting for workspace sync", { exact: true }).waitFor();
+        await expect
+          .poll(() => page.getByText(pendingInput.message.content, { exact: true }).count())
+          .toBe(1);
         if (captureUiProofEnabled) {
           await page.screenshot({
             fullPage: true,
@@ -154,7 +165,10 @@ suite.define(() => {
           inFlightRun: null,
           messages: [
             { role: "assistant", content: "Cloud edits are ready to apply." },
-            pendingInput.message,
+            {
+              ...pendingInput.message,
+              __openclaw: { id: "persisted-follow-up", idempotencyKey: `${runId}:user` },
+            },
           ],
           pendingInputs: { items: [], total: 0 },
           sessionId: active.sessionId,
@@ -172,6 +186,7 @@ suite.define(() => {
           session: active,
           sessionKey,
         });
+        await gateway.emitGatewayEvent("chat", { sessionKey, runId, state: "final" });
         await page
           .getByRole("paragraph")
           .filter({ hasText: "The queued follow-up started automatically." })
@@ -181,6 +196,9 @@ suite.define(() => {
             page.getByText("Received · waiting for workspace sync", { exact: true }).count(),
           )
           .toBe(0);
+        await expect
+          .poll(() => page.getByText(pendingInput.message.content, { exact: true }).count())
+          .toBe(1);
         if (captureUiProofEnabled) {
           await page.screenshot({
             fullPage: true,
