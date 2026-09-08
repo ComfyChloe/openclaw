@@ -6,6 +6,7 @@ import { replaceSessionEntrySync } from "../../config/sessions/session-accessor.
 import type { SessionEntry } from "../../config/sessions/types.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { resetPluginRuntimeStateForTest, setActivePluginRegistry } from "../../plugins/runtime.js";
+import { applyModelOverrideToSessionEntry } from "../../sessions/model-overrides.js";
 import { createSessionConversationTestRegistry } from "../../test-utils/session-conversation-registry.js";
 import {
   TURN_MODEL_DEFAULT_REF,
@@ -180,7 +181,7 @@ describe("turn model selection harness-path differential", () => {
   });
 
   it.each(["stored", "default", "channel", "turn"])(
-    "chooses delivery defaults from the raw %s model exactly once",
+    "chooses delivery defaults once from raw input or a selected stored model (%s)",
     (source) => {
       normalizeProviderModelMock.mockImplementation(
         ({ context }: { context: { modelId: string } }) =>
@@ -199,14 +200,14 @@ describe("turn model selection harness-path differential", () => {
       const entry: SessionEntry = {
         sessionId: "raw-pin-harness",
         updatedAt: 1,
-        ...(source === "stored"
-          ? {
-              providerOverride: "custom",
-              modelOverride: "latest",
-            }
-          : {}),
         chatType: "direct",
       };
+      if (source === "stored") {
+        applyModelOverrideToSessionEntry({
+          entry,
+          selection: { provider: "custom", model: "middle", isDefault: false },
+        });
+      }
       const before = { ...entry };
       const result = resolveVisibleRepliesPolicy({
         cfg: {

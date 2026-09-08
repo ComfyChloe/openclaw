@@ -300,14 +300,14 @@ vi.mock("./session-system-events.js", () => ({
 }));
 
 vi.mock("../../sessions/stored-model-overrides.js", () => ({
-  resolveStoredModelOverride: vi.fn(
+  readStoredModelOverride: vi.fn(
     (params: {
       sessionEntry?: { providerOverride?: string; modelOverride?: string };
       sessionStore?: Record<string, { providerOverride?: string; modelOverride?: string }>;
     }) => {
       const entries = [params.sessionEntry, ...Object.values(params.sessionStore ?? {})];
       if (entries.some((entry) => entry?.providerOverride || entry?.modelOverride)) {
-        preparedReplyMockState.unexpectedCalls.push("resolveStoredModelOverride");
+        preparedReplyMockState.unexpectedCalls.push("readStoredModelOverride");
       }
       return null;
     },
