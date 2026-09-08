@@ -178,7 +178,8 @@ export function resolveSessionMutationAuthorization(params: {
       assertTalkSessionStorageTarget(getCfg(), talkInput.target);
       talkSessionTarget = talkInput.target;
     } else {
-      talkSessionTarget = talkInput && prepareTalkSessionTarget(getCfg(), talkInput.sessionKey);
+      talkSessionTarget =
+        talkInput && prepareTalkSessionTarget(getCfg(), talkInput.sessionKey, talkInput.agentId);
     }
   } catch (error) {
     return {
@@ -330,7 +331,7 @@ export function resolveSessionMutationAuthorization(params: {
             assertTalkSessionStorageTarget(cfg, talkSessionTarget);
             current = talkSessionTarget;
           } else {
-            current = prepareTalkSessionTarget(cfg, talkInput.sessionKey);
+            current = prepareTalkSessionTarget(cfg, talkInput.sessionKey, talkInput.agentId);
           }
         } catch {
           throw targetChanged(talkSessionTarget.sessionKey);

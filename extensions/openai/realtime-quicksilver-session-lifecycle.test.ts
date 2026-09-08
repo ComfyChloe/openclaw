@@ -461,13 +461,14 @@ describe("GPT-Live browser session lifecycle", () => {
     });
     const { realtime, sockets } = createBroker({ runAgentConsult });
     const handleDelegationInput = vi.fn(() => "control" as const);
+    const onTranscript = vi.fn();
     try {
       const reservation = await realtime.broker.createBrowserSession(
         {
           providerConfig: {},
           model: "gpt-live-test",
           runAgentConsult,
-          gatewayControl: { bindBridge: vi.fn(), handleDelegationInput, onTranscript: vi.fn() },
+          gatewayControl: { bindBridge: vi.fn(), handleDelegationInput, onTranscript },
         },
         { type: "api-key", token: "platform-key" },
       );
@@ -482,6 +483,11 @@ describe("GPT-Live browser session lifecycle", () => {
       if (!socket) {
         throw new Error("Expected sideband socket");
       }
+      emitSideband(socket, {
+        type: "turn.done",
+        turn: { role: "user", transcript: "Client-owned speech" },
+      });
+      expect(onTranscript).not.toHaveBeenCalled();
       const delegation = {
         type: "delegation.created",
         item: {

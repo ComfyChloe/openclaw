@@ -72,6 +72,7 @@ import {
 } from "../../tts/tts.js";
 import { getVoiceProviderConfig, providerMatchesId } from "../../tts/voice-models.js";
 import { ADMIN_SCOPE, READ_SCOPE, TALK_SECRETS_SCOPE } from "../operator-scopes.js";
+import { prepareTalkSessionTarget } from "../talk-session-target.js";
 import { formatForLog } from "../ws-log.js";
 import { respondUnavailable } from "./response.js";
 import { inferSpeechMimeType } from "./speech-mime.js";
@@ -250,9 +251,9 @@ function buildTalkTtsConfig(
   };
 }
 
-function buildTalkCatalog(config: OpenClawConfig) {
-  // Reject ambiguous ownership before provider discovery loads unrelated plugins.
-  const realtimeAgentId = resolveTalkSessionAgentId(config);
+function buildTalkCatalog(config: OpenClawConfig, targetAgentId?: string) {
+  // Resolve ownership before provider discovery; unscoped settings reads stay global.
+  const realtimeAgentId = targetAgentId ?? resolveTalkSessionAgentId(config);
   const talkResolved = resolveActiveTalkProviderConfig(config.talk);
   const activeSpeechProvider = canonicalizeSpeechProviderId(talkResolved?.provider, config);
   const transcriptionConfig = buildTalkTranscriptionConfig(config);
@@ -840,7 +841,13 @@ export const talkHandlers: GatewayRequestHandlers = {
     }
 
     try {
-      respond(true, buildTalkCatalog(context.getRuntimeConfig()), undefined);
+      const config = context.getRuntimeConfig();
+      const { sessionKey, agentId } = catalogParams;
+      const target =
+        sessionKey !== undefined || agentId !== undefined
+          ? prepareTalkSessionTarget(config, sessionKey, agentId)
+          : undefined;
+      respond(true, buildTalkCatalog(config, target?.agentId), undefined);
     } catch (err) {
       respond(
         false,
