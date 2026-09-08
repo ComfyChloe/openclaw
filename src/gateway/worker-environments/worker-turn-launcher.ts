@@ -143,10 +143,13 @@ export function createWorkerSessionTurnPlacementProvider(options: WorkerTurnLaun
       if (!current || current.state === "local") {
         return await executeLocalTurn({ claim, placements: options.placements, runLocal });
       }
-      const hasPendingWorkspaceResultForOtherRun = (sessionId: string, runId: string) =>
-        options.placements
-          .listPendingWorkspaceResults()
-          .some((pending) => pending.sessionId === sessionId && pending.runId !== runId);
+      const hasPendingWorkspaceResultToSettle = (sessionId: string, runId: string) =>
+        options.placements.listPendingWorkspaceResults().some(
+          (pending) =>
+            pending.sessionId === sessionId &&
+            // A restarted run has no live claim, even when it reuses the retained run ID.
+            (pending.runId !== runId || !options.placements.get(sessionId)?.turnClaim),
+        );
       let identity = resolvePlacementIdentity(claim, current);
       let routablePlacement = current;
       let placement: ActiveWorkerPlacement;
@@ -165,7 +168,7 @@ export function createWorkerSessionTurnPlacementProvider(options: WorkerTurnLaun
             routablePlacement,
           );
         }
-        if (hasPendingWorkspaceResultForOtherRun(identity.sessionId, claim.runId)) {
+        if (hasPendingWorkspaceResultToSettle(identity.sessionId, claim.runId)) {
           await waitForPendingWorkerResult({
             placements: options.placements,
             sessionId: identity.sessionId,
@@ -193,7 +196,7 @@ export function createWorkerSessionTurnPlacementProvider(options: WorkerTurnLaun
           } catch (error) {
             if (
               !(error instanceof ActiveTurnClaimError) ||
-              !hasPendingWorkspaceResultForOtherRun(identity.sessionId, claim.runId)
+              !hasPendingWorkspaceResultToSettle(identity.sessionId, claim.runId)
             ) {
               throw error;
             }

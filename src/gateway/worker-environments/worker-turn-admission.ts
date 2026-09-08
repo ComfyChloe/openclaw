@@ -22,6 +22,7 @@ import {
 
 type ActiveWorkerPlacement = Extract<WorkerSessionPlacementRecord, { state: "active" }>;
 
+/** Wait for live reconciliation, or report a retained result that needs recovery. */
 export async function waitForPendingWorkerResult(params: {
   placements: WorkerSessionPlacementStore;
   sessionId: string;
@@ -33,6 +34,19 @@ export async function waitForPendingWorkerResult(params: {
     params.sessionId,
     params.signal ? { signal: params.signal } : {},
   );
+  // Restart clears local claims without discarding durable results. A claimless result cannot
+  // make progress through this wait; keep its fence and let recovery retain control of the files.
+  if (
+    !params.placements.get(params.sessionId)?.turnClaim &&
+    params.placements
+      .listPendingWorkspaceResults()
+      .some((pending) => pending.sessionId === params.sessionId)
+  ) {
+    throw new Error(
+      "Workspace recovery is still pending after its turn ended. " +
+        "Wait for workspace recovery to finish before retrying; if it remains blocked, inspect the cloud worker recovery error.",
+    );
+  }
 }
 const CURRENT_WORKER_BUILD_REMEDIATION =
   "redispatch the session so its worker can bootstrap the current build before retrying.";

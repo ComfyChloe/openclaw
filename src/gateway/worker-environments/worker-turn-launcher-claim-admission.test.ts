@@ -9,6 +9,7 @@ import { placementTurnOwner } from "./placement-record.js";
 import { completeReclaimedWorkspaceTeardown } from "./placement-teardown.js";
 import { createWorkerSessionPlacementGate } from "./placement-worker-gate.js";
 import type { WorkerTurnTunnelHandle } from "./tunnel-contract.js";
+import { waitForPendingWorkerResult } from "./worker-turn-admission.js";
 import {
   ENVIRONMENT_ID,
   MANIFEST_REF,
@@ -194,6 +195,44 @@ describe("worker turn launcher claim admission", () => {
       "Active worker placement does not match its attached environment",
     );
   });
+
+  it.each(["after-restart", "restart-result-run"])(
+    "returns a recovery outcome for restart-cleared claim retry %s",
+    async (runId) => {
+      seedActivePlacement("remote-exec");
+      const priorClaim = placements.claimTurn({
+        ...sessionTarget,
+        claimId: "restart-result-claim",
+        runId: "restart-result-run",
+        owner: { kind: "local", environmentId: ENVIRONMENT_ID, ownerEpoch: OWNER_EPOCH },
+      });
+      placements.markWorkspaceResultPending(priorClaim);
+      placements.recordStagedWorkspaceResult(priorClaim, "refs/openclaw/worker-results/missing");
+      placements.clearLocalTurnClaimsAfterRestart();
+      const pending = placements.listPendingWorkspaceResults();
+      expect(pending).toMatchObject([
+        { stagedResultRef: "refs/openclaw/worker-results/missing", workspaceAcceptedAtMs: null },
+      ]);
+      expect(placements.get(SESSION_ID)?.turnClaim).toBeNull();
+
+      // Prove the wait boundary first: a resolved claim wait must not trigger a retry loop.
+      await expect(
+        waitForPendingWorkerResult({ placements, sessionId: SESSION_ID }),
+      ).rejects.toThrow("Workspace recovery is still pending");
+      const runLocal = vi.fn(async () => ({ meta: { durationMs: 1 } }));
+      const provider = createWorkerSessionTurnPlacementProvider({
+        environments: unusedEnvironments(),
+        placements,
+      });
+      await expect(
+        provider.executeTurn({ ...sessionTarget, runId }, turn(runId), runLocal),
+      ).rejects.toThrow("Wait for workspace recovery to finish before retrying");
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(runLocal).not.toHaveBeenCalled();
+      expect(placements.listPendingWorkspaceResults()).toEqual(pending);
+      expect(placements.get(SESSION_ID)?.turnClaim).toBeNull();
+    },
+  );
 
   it("retries admission when a collided claim releases before inspection", async () => {
     seedActivePlacement();

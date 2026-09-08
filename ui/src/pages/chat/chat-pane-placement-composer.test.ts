@@ -60,7 +60,7 @@ describe("chat placement composer presentation", () => {
     expect(result.busyMessage).toBe(busyMessage ?? null);
   });
 
-  it.each(["active", "draining"] as const)(
+  it.each(["active"] as const)(
     "accepts a follow-up while an %s placement reconciles a completed result",
     (state) => {
       const result = presentation(placementSession(state), { workspaceResultReconciling: true });
@@ -75,6 +75,28 @@ describe("chat placement composer presentation", () => {
       );
     },
   );
+
+  it.each([
+    { state: "draining", message: "Finishing session move…" },
+    { state: "reconciling", message: "Finishing session move…" },
+    { state: "active", operation: "reclaimingKey", message: "Stopping session…" },
+    { state: "active", operation: "restartingKey", message: "Restarting session…" },
+    { state: "active", operation: "movingKey", message: "Finishing session move…" },
+    { state: "active", operation: "placementMove", message: "Finishing session move…" },
+  ] as const)("blocks sync sends during $state $operation", ({ state, message, ...scenario }) => {
+    const row = placementSession(state);
+    const operation = "operation" in scenario ? scenario.operation : undefined;
+    if (operation === "placementMove") {
+      row.placementMove = { target: { kind: "gateway" }, updatedAtMs: 1 };
+    }
+    const result = presentation(row, {
+      workspaceResultReconciling: true,
+      ...(operation && operation !== "placementMove" ? { [operation]: row.key } : {}),
+    });
+
+    expect(result.blocksSend).toBe(true);
+    expect(result.busyMessage).toBe(message);
+  });
 
   it("keeps move reconciliation blocked with truthful copy", () => {
     const result = presentation(placementSession("reconciling"));
