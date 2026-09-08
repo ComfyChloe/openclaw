@@ -147,7 +147,7 @@ describe("session run terminal bookkeeping", () => {
     expect(hasSessionProjectionAcceptedFinal(state.runs["run-1"], emptyMessage)).toBe(false);
     const mismatchedMessage = createMessage("assistant", "wrong final", {
       id: "different-assistant-final",
-      seq: 8,
+      seq: 7,
     });
     state = reduceSessionProjection(state, {
       type: "runTerminal",
@@ -180,6 +180,28 @@ describe("session run terminal bookkeeping", () => {
       true,
     );
     expect(reduceSessionProjection(acceptedLaterFinal, laterEvent)).toBe(acceptedLaterFinal);
+  });
+
+  it("recovers a sequence-identified empty final when persisted metadata adds an ID", () => {
+    const emptyMessage = createMessage("assistant", "", { seq: 7 });
+    const deliveredMessage = createMessage("assistant", "eventual final", {
+      id: "assistant-final",
+      seq: 7,
+    });
+    let state = reduceSessionProjection(createSessionProjection(primaryScope), {
+      type: "runTerminal",
+      runId: "run-1",
+      status: "completed",
+      message: emptyMessage,
+    });
+    state = reduceSessionProjection(state, {
+      type: "runTerminal",
+      runId: "run-1",
+      status: "completed",
+      message: deliveredMessage,
+    });
+
+    expect(state.runs["run-1"]?.message).toBe(deliveredMessage);
   });
 
   it("accepts distinct same-run persisted finals and ignores the later final's replay", () => {

@@ -37,6 +37,35 @@ function readPersistedFinalIdentity(message: unknown): string | null {
   return null;
 }
 
+function hasCompatiblePersistedFinalIdentity(currentMessage: unknown, incomingMessage: unknown) {
+  const current = readSessionMessageIdentity(currentMessage);
+  const incoming = readSessionMessageIdentity(incomingMessage);
+  if (!current || !incoming || current.role !== incoming.role) {
+    return false;
+  }
+  if (current.isImported || incoming.isImported) {
+    if (!current.isImported || !incoming.isImported) {
+      return false;
+    }
+    if (current.externalSource && incoming.externalSource) {
+      return current.externalSource === incoming.externalSource;
+    }
+    return (
+      current.sequence !== null &&
+      incoming.sequence !== null &&
+      current.sequence === incoming.sequence
+    );
+  }
+  if (current.id && incoming.id) {
+    return current.id === incoming.id;
+  }
+  return (
+    current.sequence !== null &&
+    incoming.sequence !== null &&
+    current.sequence === incoming.sequence
+  );
+}
+
 function readFinalContentIdentity(message: unknown): string | null {
   const display = readSessionMessageDisplayContent(message);
   if (!display.text && !display.hasNonText) {
@@ -82,7 +111,7 @@ export function canRecoverSessionProjectionFinal(
   }
   const currentIdentity = readPersistedFinalIdentity(currentMessage);
   return (
-    currentIdentity === null || currentIdentity === readPersistedFinalIdentity(incomingMessage)
+    currentIdentity === null || hasCompatiblePersistedFinalIdentity(currentMessage, incomingMessage)
   );
 }
 
