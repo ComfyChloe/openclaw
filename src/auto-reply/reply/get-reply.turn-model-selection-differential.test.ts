@@ -315,7 +315,7 @@ describe("getReplyFromConfig channel model input boundary", () => {
 });
 
 describe("turn model selection reply-path differential", () => {
-  it("projects a raw stored model before directive routing", async () => {
+  it("projects a raw channel model before directive routing", async () => {
     mocks.normalizeProviderModel.mockImplementation(
       ({ context }: { context: { modelId: string } }) =>
         context.modelId === "latest"
@@ -325,17 +325,19 @@ describe("turn model selection reply-path differential", () => {
             : undefined,
     );
     const fixture = {
-      ...TURN_MODEL_DIFFERENTIAL_FIXTURES[0]!,
-      child: {
-        ...TURN_MODEL_DIFFERENTIAL_FIXTURES[0]!.child,
-        providerOverride: TURN_MODEL_SESSION_REF.provider,
-        modelOverride: "latest",
+      ...TURN_MODEL_DIFFERENTIAL_FIXTURES[1]!,
+      modelByChannel: {
+        telegram: { "*": `${TURN_MODEL_SESSION_REF.provider}/latest` },
       },
     };
     const storePath = path.join(state.sessionsDir("main"), "sessions.json");
     const sessionKey = "agent:main:telegram:group:selection";
     const sessionStore = await seedFixtureStore(storePath, sessionKey, fixture);
-    const cfg = createConfig({ storePath, workspaceDir: state.workspaceDir });
+    const cfg = createConfig({
+      storePath,
+      workspaceDir: state.workspaceDir,
+      modelByChannel: fixture.modelByChannel,
+    });
     await expect(
       observeReplySelection({ fixture, cfg, sessionKey, sessionStore }),
     ).resolves.toEqual(turnModelVerdict(TURN_MODEL_SESSION_REF));

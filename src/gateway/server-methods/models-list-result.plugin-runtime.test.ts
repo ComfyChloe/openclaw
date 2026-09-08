@@ -105,7 +105,7 @@ describe("models.list plugin metadata handoff", () => {
           logGateway: { debug: vi.fn() },
         } as unknown as GatewayRequestContext;
         const prepared = await prepareModelsListResult({
-          context,
+          source: { kind: "gateway", context },
           agentId: "main",
           params: { view: "configured" },
           preloadedCatalog: { agentId: "main", config: cfg, snapshot },
@@ -123,7 +123,7 @@ describe("models.list plugin metadata handoff", () => {
     );
   });
 
-  it("keeps prepared owner facts when preloaded-only browse requires full discovery", async () => {
+  it("keeps prepared owner facts for wildcard preloaded-only browse", async () => {
     const cfg = {
       agents: { defaults: { models: { "custom/*": {} } } },
     } as OpenClawConfig;
@@ -143,7 +143,7 @@ describe("models.list plugin metadata handoff", () => {
     });
 
     await buildModelsListResult({
-      context,
+      source: { kind: "gateway", context },
       params: { view: "configured" },
       preloadedCatalog: { agentId: "main", config: cfg, snapshot },
       preloadedOnly: true,
@@ -156,7 +156,7 @@ describe("models.list plugin metadata handoff", () => {
     );
   });
 
-  it("discovers a harness catalog for an explicit configured picker read", async () => {
+  it("does not discover a harness catalog for an ordinary configured picker read", async () => {
     const cfg = { agents: { defaults: { model: "custom/modern" } } } as OpenClawConfig;
     const snapshot: ModelCatalogSnapshot = {
       entries: [catalogEntry("modern")],
@@ -176,14 +176,14 @@ describe("models.list plugin metadata handoff", () => {
     } as unknown as GatewayRequestContext;
 
     await buildModelsListResult({
-      context,
+      source: { kind: "gateway", context },
       params: { view: "configured" },
       preloadedCatalog: { agentId: "main", config: cfg, snapshot },
       catalogProjector: projector,
     });
 
     expect(mocks.prepareHarnessCatalog).toHaveBeenCalledWith(
-      expect.objectContaining({ allowHarnessDiscovery: true, agentId: "main", snapshot }),
+      expect.objectContaining({ allowHarnessDiscovery: false, agentId: "main", snapshot }),
     );
   });
 
@@ -289,14 +289,14 @@ describe("models.list plugin metadata handoff", () => {
             throw new Error("models.list handler missing");
           }
 
-          await handler({
+          const request = handler({
             req: {
               type: "req",
               id: "prepared-registry-models-list",
               method: "models.list",
-              params: { agentId: "main", view: "configured" },
+              params: { agentId: "main", view: "configured", refresh: true },
             },
-            params: { agentId: "main", view: "configured" },
+            params: { agentId: "main", view: "configured", refresh: true },
             respond,
             client: null,
             isWebchatConnect: () => false,
@@ -307,22 +307,30 @@ describe("models.list plugin metadata handoff", () => {
             } as never,
           });
 
+          if (supersedeDuringDiscovery) {
+            await expect(request).rejects.toThrow("Model catalog changed");
+            expect(respond).not.toHaveBeenCalled();
+          } else {
+            await request;
+          }
           expect(preparedRegistry).not.toBe(unrelatedActiveRegistry);
           expect(loadPreparedCatalog).toHaveBeenCalledOnce();
           expect(loadActiveCatalog).not.toHaveBeenCalled();
-          expect(respond).toHaveBeenCalledWith(
-            true,
-            expect.objectContaining({
-              models: [
-                expect.objectContaining({
-                  provider: "custom",
-                  id: "native-model",
-                  available: expectedAvailable,
-                }),
-              ],
-            }),
-            undefined,
-          );
+          if (!supersedeDuringDiscovery) {
+            expect(respond).toHaveBeenCalledWith(
+              true,
+              expect.objectContaining({
+                models: [
+                  expect.objectContaining({
+                    provider: "custom",
+                    id: "native-model",
+                    available: expectedAvailable,
+                  }),
+                ],
+              }),
+              undefined,
+            );
+          }
         } finally {
           restoreActivePluginRegistrySnapshot(previousRegistry);
         }

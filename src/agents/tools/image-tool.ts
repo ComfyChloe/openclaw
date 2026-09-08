@@ -650,9 +650,7 @@ async function runImagePrompt(params: {
       };
       if (
         params.images.length > 1 &&
-        (imageProvider?.describeImages ||
-          imageProvider?.capabilities?.includes("image") ||
-          !imageProvider?.describeImage)
+        (imageProvider?.describeImages || !imageProvider?.describeImage)
       ) {
         const describeImages =
           imageProvider?.describeImages ?? imageToolProviderDeps.describeImagesWithResolvedModel;

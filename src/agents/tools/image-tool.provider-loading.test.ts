@@ -38,6 +38,7 @@ async function executeImage(params: {
   fallbacks?: string[];
   preparedProviders?: MediaUnderstandingProvider[];
   configuredProvider?: string;
+  paths?: string[];
 }) {
   const config: OpenClawConfig = {
     agents: {
@@ -85,7 +86,10 @@ async function executeImage(params: {
   if (!tool) {
     throw new Error("expected configured image tool");
   }
-  return await tool.execute("image-loading", { path: image });
+  return await tool.execute(
+    "image-loading",
+    params.paths ? { paths: params.paths } : { path: image },
+  );
 }
 
 describe("image tool provider loading", () => {
@@ -125,6 +129,35 @@ describe("image tool provider loading", () => {
     expect(resolveProvider.mock.calls.map(([params]) => params.providerId)).toEqual(["selected"]);
     expect(genericDescribe).not.toHaveBeenCalled();
   });
+
+  it.each([false, true])(
+    "uses a single-image provider for each image with prepared=%s",
+    async (prepared) => {
+      const describeImage = vi.fn<NonNullable<MediaUnderstandingProvider["describeImage"]>>(
+        async ({ buffer }) => ({ text: buffer.toString("utf8") }),
+      );
+      const owner: MediaUnderstandingProvider = {
+        id: "selected",
+        capabilities: ["image"],
+        describeImage,
+      };
+      resolveProvider.mockReturnValue(owner);
+      const result = await executeImage({
+        paths: [image, "data:image/png;base64,aW1hZ2UtdHdv"],
+        ...(prepared ? { preparedProviders: [owner] } : {}),
+      });
+
+      expect(describeImage).toHaveBeenCalledTimes(2);
+      expect(describeImage.mock.calls.map(([request]) => request.buffer.toString("utf8"))).toEqual([
+        "image",
+        "image-two",
+      ]);
+      expect(result.content).toEqual([
+        { type: "text", text: "Image 1:\nimage\n\nImage 2:\nimage-two" },
+      ]);
+      expect(genericDescribe).not.toHaveBeenCalled();
+    },
+  );
 
   it("loads the next fallback owner only after the primary fails", async () => {
     const primary = provider("selected");

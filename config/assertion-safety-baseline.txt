@@ -1245,7 +1245,6 @@ extensions/telegram/src/sent-message-cache.ts	2
 extensions/telegram/src/state-migrations.ts	2
 extensions/telegram/src/status-issues.ts	1
 extensions/telegram/src/sticker-cache-store.legacy-state.ts	1
-extensions/telegram/src/sticker-cache.ts	2
 extensions/telegram/src/target-writeback.test-shared.ts	12
 extensions/telegram/src/telegram-ingress-drain-factory.ts	1
 extensions/telegram/src/telegram-ingress-drain.ts	5
@@ -1259,7 +1258,7 @@ extensions/telegram/src/thread-bindings.ts	2
 extensions/telegram/src/topic-name-cache.ts	3
 extensions/telegram/src/update-offset-store.ts	1
 extensions/telegram/src/webhook.ts	1
-extensions/tencent/stream.ts	5
+extensions/tencent/stream.ts	4
 extensions/tlon/src/channel.runtime.ts	3
 extensions/tlon/src/channel.ts	2
 extensions/tlon/src/monitor/approval-runtime.ts	2
@@ -1591,7 +1590,6 @@ src/agents/agent-bundle-mcp-runtime.ts	7
 src/agents/agent-command-restart-recovery.ts	3
 src/agents/agent-command.ts	1
 src/agents/agent-hooks/compaction-safeguard.ts	14
-src/agents/agent-model-discovery.ts	5
 src/agents/agent-project-settings-snapshot.ts	5
 src/agents/agent-run-terminal-delivery.ts	1
 src/agents/agent-run-terminal-error.ts	1
@@ -2467,11 +2465,7 @@ src/commands/gateway-status/helpers.ts	11
 src/commands/message-format.ts	17
 src/commands/message.ts	2
 src/commands/models/fallbacks-shared.ts	2
-src/commands/models/list.model-projection.ts	1
-src/commands/models/list.persisted-catalog.ts	2
 src/commands/models/list.probe.ts	2
-src/commands/models/list.registry.ts	3
-src/commands/models/list.rows.ts	1
 src/commands/models/shared.ts	3
 src/commands/onboard-agent.ts	1
 src/commands/onboard-config.ts	3
@@ -3649,7 +3643,6 @@ src/tui/tui-session-actions.ts	5
 src/tui/tui-session-events.ts	1
 src/tui/tui-session-projection.ts	2
 src/tui/tui-session-run-coordinator.ts	1
-src/tui/tui-stream-assembler.ts	2
 src/tui/tui-task-suggestions.ts	6
 src/tui/tui.ts	5
 src/utils.ts	1
