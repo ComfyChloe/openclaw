@@ -165,17 +165,6 @@ export async function sendGatewayHello(
         GATEWAY_SERVER_CAPS.SYSTEM_AGENT_WIZARD_CANCEL,
         GATEWAY_SERVER_CAPS.SYSTEM_AGENT_SETUP_MODEL_REF,
         GATEWAY_SERVER_CAPS.TASK_SUGGESTIONS_ACCEPT_MODES,
-        ...([
-          "talk.catalog",
-          "talk.client.create",
-          "talk.session.create",
-          "talk.client.toolCall",
-          "talk.client.transcript",
-          "talk.client.close",
-          "talk.client.steer",
-        ].every((method) => gatewayMethods.includes(method))
-          ? [GATEWAY_SERVER_CAPS.TALK_SESSION_TARGET]
-          : []),
       ],
     },
     snapshot,

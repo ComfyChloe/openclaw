@@ -160,24 +160,6 @@ afterEach(async () => {
 });
 
 describe("Talk target preparation through Gateway authorization", () => {
-  it("uses the selected agent for an unqualified chat instead of the ambient Talk owner", async () => {
-    const respond = await dispatch("talk.client.create", {
-      ...createParams,
-      sessionKey: "selected",
-      agentId: "primary",
-    });
-    expect(respond).toHaveBeenCalledWith(true, expect.objectContaining(browserSession), undefined);
-    expect(mocks.bootstrap).toHaveBeenCalledWith(
-      expect.objectContaining({ agentId: "primary", sessionKey: "agent:primary:selected" }),
-    );
-    expect(
-      loadSessionEntry({ agentId: "primary", sessionKey: "agent:primary:selected" })?.sessionId,
-    ).toBeTruthy();
-    expect(
-      loadSessionEntry({ agentId: "voice", sessionKey: "agent:voice:selected" }),
-    ).toBeUndefined();
-  });
-
   it.each(["main", undefined])("uses the configured Talk owner for %s", async (sessionKey) => {
     const respond = await dispatch("talk.client.create", {
       ...createParams,

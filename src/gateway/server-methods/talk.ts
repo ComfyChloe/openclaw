@@ -11,7 +11,6 @@ import {
   missingScopeErrorShape,
   normalizeUiAppearancePreference,
   type TalkSpeakParams,
-  type TalkCatalogParams,
   UI_APPEARANCE_PREFERENCE_KEYS,
   validateTalkCatalogParams,
   validateTalkConfigParams,
@@ -73,7 +72,6 @@ import {
 } from "../../tts/tts.js";
 import { getVoiceProviderConfig, providerMatchesId } from "../../tts/voice-models.js";
 import { ADMIN_SCOPE, READ_SCOPE, TALK_SECRETS_SCOPE } from "../operator-scopes.js";
-import { prepareTalkSessionTarget } from "../talk-session-target.js";
 import { formatForLog } from "../ws-log.js";
 import { respondUnavailable } from "./response.js";
 import { inferSpeechMimeType } from "./speech-mime.js";
@@ -81,8 +79,6 @@ import { talkClientHandlers } from "./talk-client.js";
 import { talkSessionHandlers } from "./talk-session.js";
 import {
   buildTalkRealtimeConfig,
-  resolveTalkRealtimeGatewayRelayLaunch,
-  buildRealtimeVoiceLaunchOptions,
   buildTalkTranscriptionConfig,
   configuredOrFalse,
   listTalkTranscriptionProviders,
@@ -254,9 +250,9 @@ function buildTalkTtsConfig(
   };
 }
 
-function buildTalkCatalog(config: OpenClawConfig, targetAgentId?: string) {
-  // Resolve ownership before provider discovery; unscoped settings reads stay global.
-  const realtimeAgentId = targetAgentId ?? resolveTalkSessionAgentId(config);
+function buildTalkCatalog(config: OpenClawConfig) {
+  // Reject ambiguous ownership before provider discovery loads unrelated plugins.
+  const realtimeAgentId = resolveTalkSessionAgentId(config);
   const talkResolved = resolveActiveTalkProviderConfig(config.talk);
   const activeSpeechProvider = canonicalizeSpeechProviderId(talkResolved?.provider, config);
   const transcriptionConfig = buildTalkTranscriptionConfig(config);
@@ -285,7 +281,7 @@ function buildTalkCatalog(config: OpenClawConfig, targetAgentId?: string) {
     canonicalizeRealtimeVoiceProviderId(realtimeConfig.provider, config),
     () => {
       assertSecretOwnerAvailable("capability", "talk:realtime");
-      const resolution = resolveConfiguredRealtimeVoiceProvider({
+      return resolveConfiguredRealtimeVoiceProvider({
         cfg: config,
         configuredProviderId: realtimeConfig.provider,
         providerConfigs: realtimeConfig.providers,
@@ -293,23 +289,7 @@ function buildTalkCatalog(config: OpenClawConfig, targetAgentId?: string) {
         agentId: realtimeAgentId,
         defaultModel: realtimeConfig.model,
         surface: realtimeSurface,
-      });
-      const launchError =
-        realtimeSurface === "gateway-relay"
-          ? resolveTalkRealtimeGatewayRelayLaunch({
-              ...resolution,
-              cfg: config,
-              launchOptions: buildRealtimeVoiceLaunchOptions({
-                requested: {},
-                defaults: realtimeConfig,
-              }),
-              consultRouting: realtimeConfig.consultRouting,
-            }).error
-          : undefined;
-      if (launchError) {
-        throw new Error(launchError);
-      }
-      return resolution.provider.id;
+      }).provider.id;
     },
   );
   const activeRealtimeProvider = realtimeSelection.activeProvider;
@@ -860,13 +840,7 @@ export const talkHandlers: GatewayRequestHandlers = {
     }
 
     try {
-      const config = context.getRuntimeConfig();
-      const { sessionKey, agentId } = catalogParams as TalkCatalogParams;
-      const target =
-        sessionKey !== undefined || agentId !== undefined
-          ? prepareTalkSessionTarget(config, sessionKey, agentId)
-          : undefined;
-      respond(true, buildTalkCatalog(config, target?.agentId), undefined);
+      respond(true, buildTalkCatalog(context.getRuntimeConfig()), undefined);
     } catch (err) {
       respond(
         false,

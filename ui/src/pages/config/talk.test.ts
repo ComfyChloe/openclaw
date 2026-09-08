@@ -1,30 +1,187 @@
 /* @vitest-environment jsdom */
 
+import type { TalkCatalogResult } from "@openclaw/gateway-protocol";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { OpenClawSchema } from "../../../../src/config/zod-schema.ts";
-import { resolveProviderRawConfig } from "../../../../src/plugin-sdk/provider-selection-runtime.ts";
 import { createDeferred } from "../../../../test/helpers/promise.js";
 import type { GatewayBrowserClient } from "../../api/gateway.ts";
-import type { ApplicationContext } from "../../app/context.ts";
+import type { ApplicationContext, ApplicationGatewaySnapshot } from "../../app/context.ts";
 import type { NativeDeviceSettingsCapability } from "../../app/native-device-settings.ts";
 import { t } from "../../i18n/index.ts";
-import {
-  createConfigServerMock,
-  createGatewayHarness,
-} from "../../lib/config/config-test-harness.ts";
-import { createRuntimeConfigCapability } from "../../lib/config/runtime-config-capability.ts";
 import {
   createIosNativeDeviceSettingsSnapshot,
   createNativeDeviceSettingsSnapshot,
 } from "../../test-helpers/native-device-settings.ts";
-import {
-  createTalkMutationHarness,
-  type TalkPageElement,
-  type TalkMutationHarnessOptions,
-} from "./test-helpers/talk-test-harness.ts";
+import "./talk-page.ts";
 
 const ACTIVE_VOICES = ["", "cove", "spruce", "custom-voice"];
 const DEFAULT_VOICES = ["", "marin", "custom-voice"];
+
+type TalkPageElement = HTMLElement & {
+  context: ApplicationContext;
+  configObject: Record<string, unknown>;
+  updateComplete: Promise<boolean>;
+  changeModel: (model: string | null) => void;
+  changeProvider: (providerId: string | null) => void;
+};
+
+type TalkMutationHarnessOptions = {
+  nativeDeviceSettings?: NativeDeviceSettingsCapability;
+  voiceWakeRequest?: (
+    method: string,
+    params: Record<string, unknown>,
+  ) => Promise<{ triggers: string[] }>;
+  catalogRequest?: (
+    requestIndex: number,
+    catalog: TalkCatalogResult,
+  ) => Promise<TalkCatalogResult> | TalkCatalogResult;
+  configSnapshot?: { hash?: string | null; configRevisionHash?: string | null };
+  activeProvider?: string | null;
+  activeVoiceSelectionPolicy?: "allowlist-default";
+  aliases?: string[];
+  consultRouting?: string | null;
+  defaultModel?: string;
+  model?: string | null;
+  openAIProviderModel?: string;
+  provider?: string | null;
+  transport?: string | null;
+  transports?: TalkCatalogResult["transports"];
+  unavailable?: boolean;
+  voicesByModel?: Record<string, string[]>;
+};
+
+function createTalkMutationHarness(options: TalkMutationHarnessOptions = {}) {
+  const catalog = {
+    modes: ["realtime"],
+    transports: ["gateway-relay", "webrtc"],
+    brains: ["agent-consult"],
+    speech: { providers: [] },
+    transcription: { providers: [] },
+    realtime: {
+      ready: true,
+      activeProvider: options.activeProvider ?? "openai",
+      providers: [
+        {
+          id: "openai",
+          label: "OpenAI",
+          configured: true,
+          aliases: options.aliases ?? [],
+          models: [options.defaultModel ?? "gpt-live-test-canary"],
+          voices: ["marin"],
+          activeVoices: ["cove", "spruce"],
+          activeVoiceSelectionPolicy: options.activeVoiceSelectionPolicy,
+          voicesByModel: options.voicesByModel,
+          transports: options.transports ?? ["gateway-relay"],
+          defaultModel: options.defaultModel ?? "gpt-live-test-canary",
+        },
+        {
+          id: "xai",
+          label: "xAI",
+          configured: true,
+          aliases: [],
+          models: ["grok-voice"],
+          voices: ["ara"],
+          activeVoices: ["xai-active"],
+          transports: ["gateway-relay"],
+          defaultModel: "grok-voice",
+        },
+      ],
+    },
+  } satisfies TalkCatalogResult;
+  let catalogRequestIndex = 0;
+  const request = vi.fn(async (method: string, params: Record<string, unknown>) => {
+    if (method.startsWith("voicewake.") && options.voiceWakeRequest) {
+      return options.voiceWakeRequest(method, params);
+    }
+    if (options.unavailable) {
+      throw new Error("talk.catalog unavailable");
+    }
+    catalogRequestIndex += 1;
+    return await (options.catalogRequest?.(catalogRequestIndex, catalog) ?? catalog);
+  });
+  const snapshot: ApplicationGatewaySnapshot = {
+    client: { request } as unknown as GatewayBrowserClient,
+    phase: "connected",
+    offlineStable: false,
+    canvasPluginSurfaceUrl: null,
+    hello: options.voiceWakeRequest
+      ? {
+          type: "hello-ok",
+          protocol: 4,
+          auth: { role: "operator", scopes: ["operator.admin"] },
+          features: { methods: ["voicewake.get", "voicewake.set"] },
+        }
+      : null,
+    assistantAgentId: "main",
+    sessionKey: "main",
+    lastError: null,
+    lastErrorCode: null,
+  };
+  const gatewayListeners = new Set<() => void>();
+  const gatewayConnection = { gatewayUrl: "wss://gateway.example.test" };
+  const hello = snapshot.hello;
+  const configForm = {
+    talk: {
+      realtime: {
+        provider: options.provider === undefined ? "openai" : options.provider,
+        ...(options.model === null
+          ? {}
+          : { model: options.model === undefined ? "gpt-realtime-2.1" : options.model }),
+        transport: options.transport === undefined ? "gateway-relay" : options.transport,
+        consultRouting: options.consultRouting,
+        providers: options.openAIProviderModel
+          ? { openai: { model: options.openAIProviderModel } }
+          : undefined,
+      },
+    },
+  };
+  const runtimeConfigListeners = new Set<() => void>();
+  const runtimeConfig = {
+    state: {
+      configForm,
+      configSnapshot: options.configSnapshot ?? { hash: "hash" },
+      configLoading: false,
+      configSaving: false,
+      configApplying: false,
+    },
+    patchForm: vi.fn(),
+    removeFormValue: vi.fn(),
+    subscribe: (listener: () => void) => {
+      runtimeConfigListeners.add(listener);
+      return () => runtimeConfigListeners.delete(listener);
+    },
+  };
+  const context = {
+    nativeDeviceSettings: options.nativeDeviceSettings ?? null,
+    gateway: {
+      snapshot,
+      connection: gatewayConnection,
+      subscribe: (listener: () => void) => {
+        gatewayListeners.add(listener);
+        return () => gatewayListeners.delete(listener);
+      },
+    },
+    runtimeConfig,
+  } as unknown as ApplicationContext;
+  const page = document.createElement("openclaw-talk-settings") as TalkPageElement;
+  page.context = context;
+  page.configObject = configForm;
+  document.body.append(page);
+  return {
+    page,
+    request,
+    runtimeConfig,
+    setConfigHash: (hash: string | null) => {
+      runtimeConfig.state.configSnapshot.hash = hash;
+      runtimeConfigListeners.forEach((notify) => notify());
+    },
+    setGatewayConnection: (connected: boolean, gatewayUrl = gatewayConnection.gatewayUrl) => {
+      gatewayConnection.gatewayUrl = gatewayUrl;
+      snapshot.phase = connected ? "connected" : "reconnecting";
+      snapshot.hello = connected ? hello : null;
+      gatewayListeners.forEach((notify) => notify());
+    },
+  };
+}
 
 function readVoiceOptions(page: HTMLElement): string[] {
   return [...page.querySelectorAll("select option")].map(
@@ -509,269 +666,6 @@ describe("Talk device and voice wake settings", () => {
       "es-ES",
       "it-IT",
     ]);
-  });
-});
-
-describe("Talk auth picker save/load boundary", () => {
-  const disposals = new Set<() => void>();
-  afterEach(() => {
-    for (const dispose of disposals) {
-      dispose();
-    }
-  });
-
-  async function mount(
-    server: ReturnType<typeof createConfigServerMock>,
-    cold = false,
-    selectedAuthMethod?: string,
-  ) {
-    const harness = createTalkMutationHarness({
-      aliases: ["openai-preview"],
-      catalogRequest: (_index, catalog) => ({
-        ...catalog,
-        realtime: {
-          ...catalog.realtime,
-          ready: cold ? false : catalog.realtime.ready,
-          providers: catalog.realtime.providers.map((provider) =>
-            provider.id === "openai"
-              ? {
-                  ...provider,
-                  configured: cold ? false : provider.configured,
-                  selectedAuthMethod,
-                  authMethods: [
-                    { id: "oauth", label: "OAuth" },
-                    { id: "api-key", label: "API key" },
-                  ],
-                }
-              : provider,
-          ),
-        },
-      }),
-    });
-    harness.page.remove();
-    const request = vi.fn((method: string, params?: unknown) =>
-      method === "talk.catalog"
-        ? harness.request(method, params as Record<string, unknown>)
-        : server.request(method, params),
-    );
-    const { gateway } = createGatewayHarness({ request } as unknown as GatewayBrowserClient);
-    Object.assign(gateway.snapshot, {
-      assistantAgentId: "chosen",
-      sessionKey: "agent:chosen:thread",
-    });
-    const runtimeConfig = createRuntimeConfigCapability(gateway);
-    const dispose = () => {
-      if (!disposals.delete(dispose)) {
-        return;
-      }
-      harness.page.remove();
-      runtimeConfig.dispose();
-    };
-    disposals.add(dispose);
-    await runtimeConfig.ensureLoaded();
-    harness.page.context = {
-      ...harness.page.context,
-      gateway: { ...gateway, connection: { gatewayUrl: "wss://gateway.example.test" } },
-      runtimeConfig,
-    } as unknown as ApplicationContext;
-    harness.page.configObject = runtimeConfig.state.configForm ?? {};
-    runtimeConfig.subscribe((state) => {
-      harness.page.configObject = state.configForm ?? {};
-    });
-    document.body.append(harness.page);
-    const picker = () =>
-      harness.page.querySelector<HTMLSelectElement>(
-        `select[aria-label="${t("talkPage.auth.title")}"]`,
-      )!;
-    await vi.waitFor(() => expect(picker()?.options.length).toBe(3));
-    return { ...harness, runtimeConfig, picker, dispose, request, snapshot: gateway.snapshot };
-  }
-
-  it.each([
-    { method: "oauth", provider: undefined, cold: true },
-    { method: "api-key", provider: "openai-preview", cold: false },
-    { method: "", provider: "openai-preview", cold: false },
-  ])(
-    "saves and reloads '$method' without replacing unrelated selections",
-    async ({ method, provider, cold }) => {
-      const providers: Record<string, Record<string, unknown>> = {
-        openai: { authMethod: "api-key", model: "provider-model" },
-        ...(provider
-          ? {
-              "openai-preview": { authMethod: "oauth", voice: "provider-voice" },
-              xai: { model: "grok-voice", voice: "ara" },
-            }
-          : {}),
-      };
-      const initial = {
-        agents: { entries: { chosen: {} } },
-        talk: {
-          realtime: {
-            ...(provider ? { provider } : {}),
-            model: "gpt-realtime-2.1",
-            speakerVoice: "spruce",
-            transport: "webrtc",
-            consultRouting: "provider-direct",
-            providers,
-          },
-        },
-      };
-      expect(OpenClawSchema.parse(initial)).toMatchObject(initial);
-      // Only the RPC server is simulated; draft mutation, serialization, save and reload are real UI owners.
-      const server = createConfigServerMock();
-      await server.request("config.set", {
-        raw: JSON.stringify(initial),
-        baseHash: server.currentHash(),
-      });
-      server.submissions.length = 0;
-      const first = await mount(server, cold);
-      expect(first.picker().value).toBe(providers[provider ?? "openai"]!.authMethod);
-      expect(first.picker().disabled).toBe(false);
-      const patch = vi.spyOn(first.runtimeConfig, "patchForm");
-      const remove = vi.spyOn(first.runtimeConfig, "removeFormValue");
-      const baseHash = server.currentHash();
-      first.picker().value = method;
-      first.picker().dispatchEvent(new Event("change", { bubbles: true }));
-      const expected = structuredClone(initial);
-      delete expected.talk.realtime.providers.openai!.authMethod;
-      if (provider) {
-        delete expected.talk.realtime.providers["openai-preview"]!.authMethod;
-      }
-      if (method) {
-        expected.talk.realtime.providers[provider ?? "openai"]!.authMethod = method;
-      }
-      expect(OpenClawSchema.parse(expected)).toMatchObject(expected);
-      expect(first.runtimeConfig.state.configForm).toEqual(expected);
-      expect(remove.mock.calls).toEqual(
-        (provider ? [provider, "openai"] : ["openai"]).map((key) => [
-          ["talk", "realtime", "providers", key, "authMethod"],
-        ]),
-      );
-      expect(patch.mock.calls).toEqual(
-        method
-          ? [[["talk", "realtime", "providers", provider ?? "openai", "authMethod"], method]]
-          : [],
-      );
-      expect(first.snapshot).toMatchObject({
-        assistantAgentId: "chosen",
-        sessionKey: "agent:chosen:thread",
-      });
-      await expect(first.runtimeConfig.save()).resolves.toBe(true);
-      expect(server.submissions).toHaveLength(1);
-      expect(server.submissions[0]?.baseHash).toBe(baseHash);
-      expect(JSON.parse(server.submissions[0]!.raw)).toEqual(expected);
-      first.dispose();
-      const reloaded = await mount(server, cold);
-      expect(reloaded.request).toHaveBeenCalledWith("config.get", {});
-      expect(reloaded.runtimeConfig.state.configForm).toEqual(expected);
-      expect(reloaded.picker().value).toBe(method);
-      expect(server.submissions).toHaveLength(1);
-    },
-  );
-
-  it.each([
-    {
-      provider: "openai-preview",
-      canonicalAuth: "oauth",
-      aliasAuth: undefined,
-      expectedAuth: "oauth",
-    },
-    {
-      provider: "openai-preview",
-      canonicalAuth: "oauth",
-      aliasAuth: "api-key",
-      expectedAuth: "api-key",
-    },
-    { provider: undefined, canonicalAuth: undefined, aliasAuth: "oauth", expectedAuth: "oauth" },
-    { provider: undefined, canonicalAuth: "api-key", aliasAuth: "oauth", expectedAuth: "api-key" },
-    { provider: "openai", canonicalAuth: undefined, aliasAuth: "oauth", expectedAuth: "" },
-  ])(
-    "matches inherited auth and keeps Auto drafts authoritative ($provider/$canonicalAuth/$aliasAuth)",
-    async ({ provider, canonicalAuth, aliasAuth, expectedAuth }) => {
-      const initial = {
-        agents: { entries: { chosen: {} } },
-        talk: {
-          realtime: {
-            ...(provider ? { provider } : {}),
-            model: "gpt-realtime-2.1",
-            speakerVoice: "spruce",
-            transport: "webrtc",
-            consultRouting: "provider-direct",
-            providers: {
-              openai: {
-                model: "provider-model",
-                apiKey: { source: "env", provider: "default", id: "SAVED_TALK_KEY" },
-                ...(canonicalAuth ? { authMethod: canonicalAuth } : {}),
-              },
-              "openai-preview": {
-                voice: "provider-voice",
-                ...(aliasAuth ? { authMethod: aliasAuth } : {}),
-              },
-              xai: { model: "grok-voice", voice: "ara" },
-            },
-          },
-        },
-      };
-      // Exercise the real Gateway config-merge contract, not a mirrored test resolver.
-      expect(
-        resolveProviderRawConfig({
-          providerId: "openai",
-          providerAliases: ["openai-preview"],
-          configuredProviderId: provider,
-          providerConfigs: initial.talk.realtime.providers,
-        }).authMethod ?? "",
-      ).toBe(expectedAuth);
-      const server = createConfigServerMock();
-      await server.request("config.set", {
-        raw: JSON.stringify(initial),
-        baseHash: server.currentHash(),
-      });
-      server.submissions.length = 0;
-      const { page, picker, runtimeConfig, snapshot } = await mount(server, false, expectedAuth);
-      expect(picker().value).toBe(expectedAuth);
-      expect(runtimeConfig.state.configForm).toEqual(initial);
-      expect(runtimeConfig.state.configFormDirty).toBe(false);
-      expect(server.submissions).toHaveLength(0);
-      // The catalog still carries the saved choice; an unsaved Automatic selection wins.
-      picker().value = "";
-      picker().dispatchEvent(new Event("change", { bubbles: true }));
-      await page.updateComplete;
-      const expected = structuredClone(initial);
-      delete expected.talk.realtime.providers.openai.authMethod;
-      delete expected.talk.realtime.providers["openai-preview"].authMethod;
-      expect(picker().value).toBe("");
-      expect(runtimeConfig.state.configForm).toEqual(expected);
-      expect(snapshot).toMatchObject({
-        assistantAgentId: "chosen",
-        sessionKey: "agent:chosen:thread",
-      });
-      expect(server.submissions).toHaveLength(0);
-      await expect(runtimeConfig.save()).resolves.toBe(true);
-      expect(server.submissions).toHaveLength(1);
-      const submission = server.submissions[0];
-      if (!submission) {
-        throw new Error("Expected saved configuration");
-      }
-      expect(JSON.parse(submission.raw)).toEqual(expected);
-    },
-  );
-
-  it("rejects an unsupported option at the selection callback without a config write", async () => {
-    const server = createConfigServerMock();
-    const { picker, runtimeConfig } = await mount(server);
-    expect([...picker().options].map((option) => option.value)).toEqual(["", "oauth", "api-key"]);
-    const before = structuredClone(runtimeConfig.state.configForm);
-    const patch = vi.spyOn(runtimeConfig, "patchForm");
-    const remove = vi.spyOn(runtimeConfig, "removeFormValue");
-    // Simulate a stale/malformed option reaching the same DOM callback; the catalog never advertises it.
-    picker().add(new Option("Unsupported", "unsupported"));
-    picker().value = "unsupported";
-    picker().dispatchEvent(new Event("change", { bubbles: true }));
-    expect(patch).not.toHaveBeenCalled();
-    expect(remove).not.toHaveBeenCalled();
-    expect(runtimeConfig.state.configForm).toEqual(before);
-    expect(runtimeConfig.state.configFormDirty).toBe(false);
-    expect(server.submissions).toHaveLength(0);
   });
 });
 

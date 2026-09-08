@@ -23,19 +23,6 @@ internal data class AudioInputDeviceOption(
   val type: Int,
 )
 
-/** Distinguishes a requested SDK preference from a route verified by AudioRecord. */
-sealed interface AudioInputPreferenceState {
-  data object Inactive : AudioInputPreferenceState
-
-  data class Requested(
-    val key: String?,
-  ) : AudioInputPreferenceState
-
-  data class Applied(
-    val key: String?,
-  ) : AudioInputPreferenceState
-}
-
 /** Owns one recorder and its Bluetooth route for the full capture lifecycle. */
 internal class AndroidAudioInputSession private constructor(
   private val audioManager: AudioManager,
@@ -351,7 +338,7 @@ internal class AndroidAudioInputSession private constructor(
 }
 
 /** Serializes Android's process-wide communication route across overlapping capture cleanup. */
-internal class BluetoothCommunicationRoute {
+private class BluetoothCommunicationRoute {
   private var nextOwner = 0L
   private var latestOwner = 0L
   private var activeOwner: Long? = null
@@ -403,9 +390,9 @@ internal class BluetoothCommunicationRoute {
   }
 }
 
-internal val bluetoothCommunicationRoute = BluetoothCommunicationRoute()
+private val bluetoothCommunicationRoute = BluetoothCommunicationRoute()
 
-internal val externalCommunicationOutputs =
+private val externalCommunicationOutputs =
   setOf(
     AudioDeviceInfo.TYPE_WIRED_HEADSET,
     AudioDeviceInfo.TYPE_WIRED_HEADPHONES,
@@ -435,7 +422,7 @@ internal fun checkAudioRecordReadResult(result: Int): Int {
   throw IllegalStateException("microphone read failed: $label")
 }
 
-internal fun selectBluetoothDevice(
+private fun selectBluetoothDevice(
   devices: List<AudioDeviceInfo>,
   current: AudioDeviceInfo? = null,
 ): AudioDeviceInfo? {
@@ -450,7 +437,7 @@ internal fun selectBluetoothDevice(
     ?.second
 }
 
-internal fun selectBluetoothInput(
+private fun selectBluetoothInput(
   devices: List<AudioDeviceInfo>,
   current: AudioDeviceInfo?,
   communicationDevice: AudioDeviceInfo?,
@@ -466,7 +453,7 @@ internal fun selectBluetoothInput(
   return candidates.singleOrNull()
 }
 
-internal fun selectCommunicationDevice(
+private fun selectCommunicationDevice(
   devices: List<AudioDeviceInfo>,
   input: AudioDeviceInfo,
 ): AudioDeviceInfo? {

@@ -947,9 +947,10 @@ export function extractNativeI18nCandidates(
   surface: NativeI18nSurface,
   repoPath: string,
   source: string,
-  uiCallNames: ReadonlySet<string> = surface === "apple"
-    ? APPLE_BUILTIN_UI_CALLS
-    : ANDROID_BUILTIN_UI_CALLS,
+  uiCallNames: ReadonlySet<string> = new Set([
+    ...APPLE_BUILTIN_UI_CALLS,
+    ...ANDROID_BUILTIN_UI_CALLS,
+  ]),
 ): Candidate[] {
   const entries: Candidate[] = [];
   const patterns: Array<readonly [RegExp, string]> =
@@ -1303,15 +1304,12 @@ export async function collectNativeI18nEntries(): Promise<NativeI18nEntry[]> {
     source: string;
     surface: NativeI18nSurface;
   }> = sources;
-  const uiCallNames: Record<NativeI18nSurface, Set<string>> = {
-    android: new Set(ANDROID_BUILTIN_UI_CALLS),
-    apple: new Set(APPLE_BUILTIN_UI_CALLS),
-  };
+  const uiCallNames = new Set([...APPLE_BUILTIN_UI_CALLS, ...ANDROID_BUILTIN_UI_CALLS]);
   for (const { source, surface } of typedSources) {
     if (surface === "android") {
       for (const match of source.matchAll(ANDROID_COMPOSABLE_FUNCTION)) {
         if (match[1]) {
-          uiCallNames[surface].add(match[1]);
+          uiCallNames.add(match[1]);
         }
       }
       continue;
@@ -1319,13 +1317,13 @@ export async function collectNativeI18nEntries(): Promise<NativeI18nEntry[]> {
     for (const pattern of [APPLE_VIEW_TYPE, APPLE_VIEW_FUNCTION, APPLE_ALERT_FUNCTION]) {
       for (const match of source.matchAll(pattern)) {
         if (match[1]) {
-          uiCallNames[surface].add(match[1]);
+          uiCallNames.add(match[1]);
         }
       }
     }
   }
   const entries = typedSources.flatMap(({ repoPath, source, surface }) =>
-    extractNativeI18nCandidates(surface, repoPath, source, uiCallNames[surface]),
+    extractNativeI18nCandidates(surface, repoPath, source, uiCallNames),
   );
   return assignNativeI18nIds(entries);
 }

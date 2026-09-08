@@ -1637,7 +1637,8 @@ private fun QrCameraPreview(
   DisposableEffect(context, lifecycleOwner, scanner, previewView) {
     scanActive.set(true)
     val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
-    var binding: AutoCloseable? = null
+    var cameraProvider: ProcessCameraProvider? = null
+    var preview: Preview? = null
     var analysis: ImageAnalysis? = null
     var disposed = false
     val listener =
@@ -1683,15 +1684,14 @@ private fun QrCameraPreview(
             analysisUseCase.clearAnalyzer()
             return@Runnable
           }
-          val acquired =
-            ai.openclaw.app.node
-              .bindCameraUseCases(provider, lifecycleOwner, selector, previewUseCase, analysisUseCase)
+          provider.bindToLifecycle(lifecycleOwner, selector, previewUseCase, analysisUseCase)
           if (disposed) {
             analysisUseCase.clearAnalyzer()
-            acquired.close()
+            provider.unbind(previewUseCase, analysisUseCase)
             return@Runnable
           }
-          binding = acquired
+          cameraProvider = provider
+          preview = previewUseCase
           analysis = analysisUseCase
         } catch (_: Exception) {
           analysisUseCase.clearAnalyzer()
@@ -1704,7 +1704,10 @@ private fun QrCameraPreview(
       disposed = true
       scanActive.set(false)
       analysis?.clearAnalyzer()
-      binding?.close()
+      val boundUseCases = listOfNotNull<UseCase>(preview, analysis)
+      if (boundUseCases.isNotEmpty()) {
+        cameraProvider?.unbind(*boundUseCases.toTypedArray())
+      }
     }
   }
 

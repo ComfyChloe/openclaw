@@ -161,14 +161,16 @@ class CameraCaptureManager(
       val capture = ImageCapture.Builder().build()
       val selector = resolveCameraSelector(provider, facing, deviceId)
 
-      val binding = bindCameraUseCases(provider, owner, selector, capture)
+      provider.unbindAll()
+      // Bind only the still capture use case; CameraX owns camera open/close through the lifecycle owner.
+      provider.bindToLifecycle(owner, selector, capture)
 
       val (bytes, orientation) =
         try {
           capture.takeJpegWithExif(context.mainExecutor(), context.cacheDir)
         } finally {
           // The JPEG bytes are self-contained; release CameraX before decoding and recompressing them.
-          binding.close()
+          provider.unbind(capture)
         }
       val decoded =
         BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
@@ -270,14 +272,14 @@ class CameraCaptureManager(
         }
       }
 
-      var binding: AutoCloseable? = null
+      provider.unbindAll()
       CameraClipSession(
-        unbind = { binding?.close() },
+        unbind = { provider.unbind(preview, videoCapture) },
         deleteTemporaryFile = { file ->
           check(!file.exists() || file.delete()) { "failed to delete temporary camera clip" }
         },
       ).use { session ->
-        binding = bindCameraUseCases(provider, owner, selector, preview, videoCapture)
+        provider.bindToLifecycle(owner, selector, preview, videoCapture)
 
         // Give camera pipeline time to initialize before recording
         kotlinx.coroutines.delay(1_500)
@@ -317,26 +319,6 @@ class CameraCaptureManager(
           hasAudio = includeAudio,
         )
       }
-    }
-
-  /** Talk owns only its preview use case; node capture and the QR scanner cannot steal it. */
-  internal suspend fun openTalkPreview(
-    view: androidx.camera.view.PreviewView,
-    facing: String,
-    isCurrent: () -> Boolean,
-  ): TalkCameraPreview =
-    withContext(Dispatchers.Main.immediate) {
-      ensureCameraPermission()
-      val owner = lifecycleOwner ?: error("Camera is not ready")
-      val provider = context.cameraProvider()
-      check(isCurrent()) { "Talk camera request expired" }
-      val preview =
-        androidx.camera.core.Preview
-          .Builder()
-          .build()
-      preview.setSurfaceProvider(view.surfaceProvider)
-      val binding = bindCameraUseCases(provider, owner, resolveCameraSelector(provider, facing, null), preview)
-      TalkCameraPreview(view, binding, isCurrent)
     }
 
   private fun parseFacing(params: JsonObject?): String? {

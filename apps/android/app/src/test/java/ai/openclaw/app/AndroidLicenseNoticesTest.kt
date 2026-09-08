@@ -119,7 +119,6 @@ class AndroidLicenseNoticesTest {
         "ts-dedent",
         "uuid",
         "venn.js",
-        "WebRTC",
       ),
       licenses.map { license -> license.title },
     )

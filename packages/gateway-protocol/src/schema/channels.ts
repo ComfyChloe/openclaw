@@ -192,7 +192,6 @@ const VoiceIdString = Type.String({ pattern: "^[A-Za-z0-9_-]{1,128}$" });
 
 /** Creates a browser-facing Talk client session. */
 export const TalkClientCreateParamsSchema = closedObject({
-  agentId: Type.Optional(NonEmptyString),
   sessionKey: Type.Optional(NonEmptyString),
   voiceSessionId: Type.Optional(VoiceIdString),
   provider: Type.Optional(Type.String()),
@@ -219,7 +218,6 @@ export const TalkClientCreateParamsSchema = closedObject({
 
 /** Tool-call request from a browser/client session back into the agent runtime. */
 export const TalkClientToolCallParamsSchema = closedObject({
-  agentId: Type.Optional(NonEmptyString),
   sessionKey: NonEmptyString,
   voiceSessionId: Type.Optional(VoiceIdString),
   callId: NonEmptyString,
@@ -230,7 +228,6 @@ export const TalkClientToolCallParamsSchema = closedObject({
 
 /** One finalized transcript item from a client-owned Talk session. */
 export const TalkClientTranscriptParamsSchema = closedObject({
-  agentId: Type.Optional(NonEmptyString),
   sessionKey: NonEmptyString,
   voiceSessionId: VoiceIdString,
   entryId: VoiceIdString,
@@ -241,7 +238,6 @@ export const TalkClientTranscriptParamsSchema = closedObject({
 
 /** Logical close for a client-owned Talk session. */
 export const TalkClientCloseParamsSchema = closedObject({
-  agentId: Type.Optional(NonEmptyString),
   sessionKey: NonEmptyString,
   voiceSessionId: VoiceIdString,
 });
@@ -261,7 +257,6 @@ export const TalkClientToolCallResultSchema = closedObject({
 
 /** Text steering request for a Talk session bound to an agent turn. */
 export const TalkClientSteerParamsSchema = closedObject({
-  agentId: Type.Optional(NonEmptyString),
   sessionKey: NonEmptyString,
   text: NonEmptyString,
   mode: Type.Optional(TalkAgentControlModeSchema),
@@ -294,7 +289,6 @@ export const TalkAgentControlResultSchema = closedObject({
 
 /** Creates a gateway-managed Talk session for realtime, transcription, or relay use. */
 export const TalkSessionCreateParamsSchema = closedObject({
-  agentId: Type.Optional(NonEmptyString),
   sessionKey: Type.Optional(Type.String()),
   spawnedBy: Type.Optional(NonEmptyString),
   provider: Type.Optional(Type.String()),
@@ -349,7 +343,6 @@ export const TalkSessionSubmitToolResultParamsSchema = closedObject({
 
 /** Steers a managed Talk session by session id rather than transcript key. */
 export const TalkSessionSteerParamsSchema = closedObject({
-  agentId: Type.Optional(NonEmptyString),
   sessionId: NonEmptyString,
   sessionKey: Type.Optional(NonEmptyString),
   text: NonEmptyString,
@@ -361,11 +354,8 @@ export const TalkSessionCloseParamsSchema = closedObject({
   sessionId: NonEmptyString,
 });
 
-/** Optional Talk target; an empty request retains the configured global catalog. */
-export const TalkCatalogParamsSchema = closedObject({
-  sessionKey: Type.Optional(NonEmptyString),
-  agentId: Type.Optional(NonEmptyString),
-});
+/** Empty request payload for reading configured Talk provider capabilities. */
+export const TalkCatalogParamsSchema = closedObject({});
 
 /** One provider entry in the Talk capability catalog. */
 const TalkCatalogProviderSchema = closedObject({
@@ -464,10 +454,6 @@ export const TalkSessionOkResultSchema = closedObject({
 const BrowserRealtimeWebRtcSdpSessionSchema = closedObject({
   provider: NonEmptyString,
   authMethod: Type.Optional(Type.Union([Type.Literal("oauth"), Type.Literal("api-key")])),
-  controlSource: Type.Optional(
-    Type.Union([Type.Literal("delegation"), Type.Literal("transcript")]),
-  ),
-  transcriptOwner: Type.Optional(Type.Union([Type.Literal("gateway"), Type.Literal("client")])),
   transport: Type.Literal("webrtc"),
   voiceSessionId: NonEmptyString,
   clientSecret: NonEmptyString,
