@@ -1,7 +1,7 @@
 import type { AgentIdentityResult, AgentsListResult, GatewaySessionRow } from "../../api/types.ts";
 import { deriveAvatarInitial, resolveAgentAvatarUrl } from "../avatar.ts";
 import { isSessionRunActive } from "../session-run-state.ts";
-import { buildAgentMainSessionKey, parseAgentSessionKey } from "../sessions/session-key.ts";
+import { buildAgentMainSessionKey, resolveUiSessionRowAgentId } from "../sessions/session-key.ts";
 import { normalizeAgentLabel, resolveAgentTextAvatar, selectableAgentsList } from "./display.ts";
 
 /** Shared identity, main-chat preview, and activity ordering for agent rosters. */
@@ -10,13 +10,16 @@ export function agentRosterCards(
   rows: readonly GatewaySessionRow[],
   identityFor: (id: string) => AgentIdentityResult | null = () => null,
 ) {
-  return (roster ? selectableAgentsList(roster).agents : [])
-    .map((agent) => {
+  if (!roster) {
+    return [];
+  }
+  return selectableAgentsList(roster)
+    .agents.map((agent) => {
       const identity = identityFor(agent.id);
       const name = normalizeAgentLabel(agent, identity);
       const mainKey = buildAgentMainSessionKey({ agentId: agent.id, mainKey: roster?.mainKey });
       const sessions = rows.filter(
-        (row) => (row.agentId ?? parseAgentSessionKey(row.key)?.agentId) === agent.id,
+        (row) => resolveUiSessionRowAgentId(row, roster.defaultId) === agent.id,
       );
       const recent = sessions.reduce<GatewaySessionRow | undefined>(
         (latest, row) => (!latest || (row.updatedAt ?? 0) > (latest.updatedAt ?? 0) ? row : latest),
@@ -33,6 +36,7 @@ export function agentRosterCards(
         fallback: resolveAgentTextAvatar(agent, identity) ?? deriveAvatarInitial(name),
         mainKey,
         activeNow: sessions.some(isSessionRunActive),
+        unreadCount: sessions.filter((row) => row.unread && !row.archived).length,
         lastActiveAt: recent?.updatedAt ?? 0,
         preview: (main ?? recent)?.lastMessagePreview,
       };

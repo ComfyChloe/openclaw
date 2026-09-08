@@ -60,7 +60,7 @@ type PersonHeaders = {
   selfProfileId?: string;
 };
 
-function renderSessionSection(params: {
+export function renderSessionSection(params: {
   host: SidebarSessionListHost;
   section: RenderableSessionSection;
   personHeaders: PersonHeaders | undefined;
@@ -124,9 +124,9 @@ function renderSessionSection(params: {
     method: "sessions.groups.put",
     requiredScope: "operator.write",
   });
-  // Person/project sections are derived, not stored: dropping a session on
+  // Person/project/agent sections are derived, not stored: dropping a session on
   // them cannot persist anything, so they take no drags at all.
-  const derivedSection = Boolean(personOwner || section.project);
+  const derivedSection = Boolean(personOwner || section.project || section.id.startsWith("agent:"));
   const sectionDropEnabled = groupWriteAccess.allowed && !derivedSection;
   const sectionClass = [
     "sidebar-recent-sessions__group",
@@ -567,7 +567,7 @@ function renderSessionListBody(params: {
   `;
 }
 
-function renderSessionListToolbar(host: SidebarSessionListHost) {
+function renderSessionListToolbar(host: SidebarSessionListHost, extra: unknown = nothing) {
   const newSessionAccess = host.readNewSessionAccess();
   const filtered = host.sessionOwnerFilterActive || host.sessionsStatusFilter !== "active";
   return html`
@@ -587,6 +587,7 @@ function renderSessionListToolbar(host: SidebarSessionListHost) {
       >
         ${icons.listFilter}
       </button>
+      ${extra}
       ${renderNewSessionLink({
         basePath: host.basePath,
         agentId: host.expandedAgentId(),
@@ -608,6 +609,35 @@ export function renderSessionList(params: {
   catalogRenderer: SessionCatalogGroupsRenderer | null;
 }) {
   const { host } = params;
+  return renderSessionListFrame(
+    host,
+    html`
+      <div class="sidebar-recent-sessions">
+        ${renderSessionListBody({
+          host,
+          sections: params.sections,
+          nativeSessionsHaveMore: params.nativeSessionsHaveMore,
+          catalogs: params.catalogs,
+          catalogRenderer: params.catalogRenderer,
+        })}
+        ${renderRosterLoadMore(host, params.sections, params.nativeSessionsHaveMore)}
+        ${
+          host.sessionsStatusFilter === "archived" && params.empty
+            ? html`<span class="sidebar-session-empty-hint"
+                >${t("sessionsView.noArchivedSessions")}</span
+              >`
+            : nothing
+        }
+      </div>
+    `,
+  );
+}
+
+export function renderSessionListFrame(
+  host: SidebarSessionListHost,
+  body: unknown,
+  toolbarExtra: unknown = nothing,
+) {
   const hiddenMainSessionKey = host.mainSessionRow()?.key;
   return html`
     <section
@@ -618,7 +648,7 @@ export function renderSessionList(params: {
       @dragleave=${(event: DragEvent) => host.handleSessionListDragLeave(event)}
       @drop=${(event: DragEvent) => host.handleSessionListDrop(event)}
     >
-      ${renderSessionListToolbar(host)}
+      ${renderSessionListToolbar(host, toolbarExtra)}
       ${hiddenMainSessionKey ? renderChildSessionLoadError(host, hiddenMainSessionKey) : nothing}
       ${
         host.sessionData.sessionMutationError
@@ -643,23 +673,7 @@ export function renderSessionList(params: {
             `
           : nothing
       }
-      <div class="sidebar-recent-sessions">
-        ${renderSessionListBody({
-          host,
-          sections: params.sections,
-          nativeSessionsHaveMore: params.nativeSessionsHaveMore,
-          catalogs: params.catalogs,
-          catalogRenderer: params.catalogRenderer,
-        })}
-        ${renderRosterLoadMore(host, params.sections, params.nativeSessionsHaveMore)}
-        ${
-          host.sessionsStatusFilter === "archived" && params.empty
-            ? html`<span class="sidebar-session-empty-hint"
-                >${t("sessionsView.noArchivedSessions")}</span
-              >`
-            : nothing
-        }
-      </div>
+      ${body}
     </section>
   `;
 }

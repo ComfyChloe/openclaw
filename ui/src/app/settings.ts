@@ -225,6 +225,7 @@ export type UiSettings = {
   navCollapsed: boolean; // Collapsible sidebar state
   navWidth: number; // Sidebar width when expanded (240–400px)
   sidebarAgentsMode?: "chip" | "roster";
+  sidebarCollapsedAgentIds?: string[];
   sidebarEntries: string[]; // Ordered routes, plugin navigation, and pinned sessions below Home
   sidebarLiveActivity?: boolean; // Latest activity under running sidebar sessions (default true)
   chatMessageMaxWidth?: string; // Browser-local centered chat transcript max width
@@ -574,6 +575,7 @@ export function loadUiPreferences(targetGatewayUrl?: string): UiPreferences {
           ? parsed.navWidth
           : defaults.navWidth,
       sidebarAgentsMode: parsed.sidebarAgentsMode === "roster" ? "roster" : "chip",
+      sidebarCollapsedAgentIds: normalizeUniqueTrimmedStringList(parsed.sidebarCollapsedAgentIds),
       sidebarEntries:
         normalizeSidebarEntries(parsedRecord.sidebarEntries) ??
         migratedSidebarEntries ??
@@ -736,6 +738,11 @@ function persistSettings(next: UiSettings, options: { selectGateway?: boolean } 
       : {}),
     navWidth: next.navWidth, // Persist size, not visibility: shared localStorage leaks across tabs.
     sidebarAgentsMode: next.sidebarAgentsMode === "roster" ? "roster" : "chip",
+    ...(next.sidebarCollapsedAgentIds?.length
+      ? {
+          sidebarCollapsedAgentIds: normalizeUniqueTrimmedStringList(next.sidebarCollapsedAgentIds),
+        }
+      : {}),
     sidebarEntries: next.sidebarEntries,
     ...(next.sidebarLiveActivity === false ? { sidebarLiveActivity: false } : {}),
     ...(normalizeChatMessageMaxWidth(next.chatMessageMaxWidth)

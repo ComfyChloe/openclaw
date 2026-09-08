@@ -484,6 +484,7 @@ export function renderSidebarSessionSortMenuForController(controller: SidebarMen
     position,
     trigger: controller.sessionSortMenuTrigger,
     grouping: host.effectiveSessionsGrouping(),
+    rosterMode: host.sidebarAgentsMode === "roster",
     sortMode: host.effectiveSessionSortMode(),
     peopleSortAvailable: host.sessionPeopleSortAvailable(),
     statusFilter: host.sessionsStatusFilter,

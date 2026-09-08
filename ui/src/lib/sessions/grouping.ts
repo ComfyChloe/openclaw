@@ -33,6 +33,7 @@ export type SessionRowGroup = {
 
 export type SidebarSessionSection<Row> = {
   id:
+    | `agent:${string}`
     | "pinned"
     | "ungrouped"
     | "groups"

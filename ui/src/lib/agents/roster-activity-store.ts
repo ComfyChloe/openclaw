@@ -1,4 +1,5 @@
-import type { GatewaySessionRow, SessionsListResult } from "../../api/types.ts";
+import type { GatewayEventFrame } from "../../api/gateway.ts";
+import type { AgentsListResult, SessionsListResult } from "../../api/types.ts";
 import type {
   ApplicationContext,
   ApplicationGateway,
@@ -8,6 +9,11 @@ import { t } from "../../i18n/index.ts";
 import { formatUiError } from "../format-error.ts";
 import { createGatewayConnectionLifecycle } from "../gateway-connection-lifecycle.ts";
 import { createSessionEventRefreshCoordinator } from "../sessions/event-refresh-coordinator.ts";
+import {
+  appendSessionResults,
+  readSessionChangedEvent,
+  reconcileSessionChanged,
+} from "../sessions/reconcile.ts";
 import { createSessionEventSubscriptionOwner } from "../sessions/session-event-subscription.ts";
 import { buildSessionListParams } from "../sessions/session-requests.ts";
 import { selectableAgentsList } from "./display.ts";
@@ -16,6 +22,8 @@ import { agentRosterCards } from "./roster-activity.ts";
 type RosterContext = Pick<ApplicationContext, "gateway" | "agents" | "agentIdentity">;
 type RosterActivitySnapshot = {
   readonly cards: ReadonlyArray<Readonly<ReturnType<typeof agentRosterCards>[number]>>;
+  readonly result: SessionsListResult | null;
+  readonly involvingMe: boolean;
   readonly loading: boolean;
   readonly error: string | null;
   readonly subscriptionError: string | null;
@@ -23,6 +31,8 @@ type RosterActivitySnapshot = {
 
 const emptySnapshot: RosterActivitySnapshot = {
   cards: [],
+  result: null,
+  involvingMe: false,
   loading: false,
   error: null,
   subscriptionError: null,
@@ -45,6 +55,8 @@ class RosterActivityStore {
   private readonly lifecycle = createGatewayConnectionLifecycle({ client: null, phase: "stopped" });
   private abort: AbortController | null = null;
   private cleanup: (() => void) | null = null;
+  private agents: AgentsListResult | undefined;
+  private involvingMe = false;
   private readonly events = createSessionEventSubscriptionOwner({
     isCurrent: (scope) => this.lifecycle.isCurrent(scope),
     onError: (_scope, subscriptionError) => this.publish({ ...this.current, subscriptionError }),
@@ -68,14 +80,7 @@ class RosterActivityStore {
     if (this.listeners.size === 1) {
       const { gateway } = this.context;
       const stopGateway = gateway.subscribe((snapshot) => this.applyGateway(snapshot));
-      const stopEvents = gateway.subscribeEvents((event) => {
-        if (
-          this.lifecycle.capture() &&
-          (event.event === "sessions.changed" || event.event === "session.message")
-        ) {
-          this.refreshEvents.schedule();
-        }
-      });
+      const stopEvents = gateway.subscribeEvents((event) => this.applyEvent(event));
       this.cleanup = () => {
         stopGateway();
         stopEvents();
@@ -100,12 +105,61 @@ class RosterActivityStore {
     }
   }
 
+  private publishResult(result: SessionsListResult | null) {
+    this.publish({
+      ...this.current,
+      result,
+      cards: agentRosterCards(
+        this.agents,
+        result?.sessions.filter((row) => row.archived !== true) ?? [],
+        (id) => this.context.agentIdentity.get(id),
+      ),
+    });
+  }
+
+  private applyEvent(event: GatewayEventFrame) {
+    if (
+      !this.lifecycle.capture() ||
+      (event.event !== "sessions.changed" && event.event !== "session.message")
+    ) {
+      return;
+    }
+    const info = readSessionChangedEvent(event.payload);
+    const reconciled = reconcileSessionChanged(this.current.result, event.payload, {
+      archivedFilter: "all",
+    });
+    if (reconciled.result !== this.current.result) {
+      this.publishResult(reconciled.result);
+    }
+    const ended =
+      info?.hasActiveRun === false || (info?.status != null && info.status !== "running");
+    // Streaming messages do not invalidate the roster. A terminal snapshot can
+    // replace a known member just as in the primary session catalog.
+    if (
+      event.event === "session.message" &&
+      (!ended || (reconciled.row && info?.archived !== true && !this.involvingMe))
+    ) {
+      return;
+    }
+    this.refreshEvents.schedule();
+  }
+
+  setInvolvingMe(involvingMe: boolean) {
+    if (this.involvingMe === involvingMe) {
+      return;
+    }
+    this.involvingMe = involvingMe;
+    this.publish({ ...this.current, result: null, involvingMe });
+    void this.refresh();
+  }
+
   private reset() {
     this.abort?.abort();
     this.abort = null;
     this.events.reset();
     this.refreshEvents.reset();
-    this.publish(emptySnapshot);
+    this.agents = undefined;
+    this.publish({ ...emptySnapshot, involvingMe: this.involvingMe });
   }
 
   private applyGateway(snapshot: ApplicationGatewaySnapshot) {
@@ -138,25 +192,34 @@ class RosterActivityStore {
       const agents = selectableAgentsList(raw);
       await this.context.agentIdentity.ensure(agents.agents.map((agent) => agent.id));
       signal.throwIfAborted();
-      const sessions: GatewaySessionRow[] = [];
+      let result: SessionsListResult | null = null;
       let offset = 0;
-      // Bound every refresh to three pages (300 recent sessions), including previews.
+      // One shared window: at most 300 rows, with Gateway-pinned rows first.
+      // Include archives so the sidebar's status filter needs no second loader.
       for (let page = 0; page < 3; page += 1) {
-        const result = await scope.client.request<SessionsListResult>(
+        const next = await scope.client.request<SessionsListResult>(
           "sessions.list",
-          buildSessionListParams({ includeLastMessage: true, limit: 100, offset }),
+          buildSessionListParams({
+            includeDerivedTitles: true,
+            includeLastMessage: true,
+            archivedFilter: "all",
+            involvingMe: this.involvingMe,
+            limit: 100,
+            offset,
+          }),
           { signal },
         );
         signal.throwIfAborted();
-        sessions.push(...result.sessions);
-        if (!result.hasMore || result.sessions.length === 0) {
+        result = result ? appendSessionResults(result, next) : next;
+        if (!next.hasMore || next.sessions.length === 0) {
           break;
         }
-        offset = result.nextOffset ?? offset + result.sessions.length;
+        offset = next.nextOffset ?? offset + next.sessions.length;
       }
+      this.agents = agents;
+      this.publishResult(result);
       this.publish({
         ...this.current,
-        cards: agentRosterCards(agents, sessions, (id) => this.context.agentIdentity.get(id)),
         loading: false,
       });
     } catch (error) {
@@ -164,6 +227,7 @@ class RosterActivityStore {
         this.publish({
           ...this.current,
           cards: [],
+          result: null,
           loading: false,
           error: formatUiError(error, t("agentsHome.loadFailed")),
         });

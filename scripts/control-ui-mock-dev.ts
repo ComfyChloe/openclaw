@@ -66,6 +66,7 @@ type CliOptions = {
     | "code-fences"
     | "dashboards"
     | "goal"
+    | "sidebar-roster"
     | "swarm"
     | "update-available"
     | "update-blocked"
@@ -369,6 +370,7 @@ function parseFixture(value: string | undefined): CliOptions["fixture"] {
     value !== "code-fences" &&
     value !== "dashboards" &&
     value !== "goal" &&
+    value !== "sidebar-roster" &&
     value !== "swarm" &&
     value !== "update-available" &&
     value !== "update-blocked" &&
@@ -1413,6 +1415,7 @@ async function createChatPickerScenario(
       avatar:
         "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAIElEQVR4nGN4nhWCFTEQkPj64w8ag5AEPqPgiDgdmAgA9YRzYZfFh50AAAAASUVORK5CYII=",
       preview: "I am organizing the next steps for the sample project.",
+      sessionLabels: ["Project next steps", "Weekly review"],
     },
     {
       id: "forge",
@@ -1422,6 +1425,7 @@ async function createChatPickerScenario(
       avatar:
         "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAIElEQVR4nGMInfMAK2IgIPH1xx80BiEJfEbBEXE6MBEAgkh9AfK4IAAAAAAASUVORK5CYII=",
       preview: "The sample dashboard is ready for your review.",
+      sessionLabels: ["Sample dashboard", "Build notes"],
     },
     {
       id: "scout",
@@ -1431,6 +1435,7 @@ async function createChatPickerScenario(
       avatar:
         "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAIElEQVR4nGN4vc0NK2IgIPH1xx80BiEJfEbBEXE6MBEAqnKB0ZTY3IwAAAAASUVORK5CYII=",
       preview: "I found three useful approaches for the research outline.",
+      sessionLabels: ["Research outline", "Source notes"],
     },
     {
       id: "bloom",
@@ -1440,6 +1445,7 @@ async function createChatPickerScenario(
       avatar:
         "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAIElEQVR4nGPI2NqGFTEQkPj64w8ag5AEPqPgiDgdmAgAoqhy8cqD9UUAAAAASUVORK5CYII=",
       preview: "The welcome guide now has a shorter opening and clear examples.",
+      sessionLabels: ["Welcome guide", "Story ideas"],
     },
   ] as const;
   const selfProfile: UserProfile = {
@@ -1806,14 +1812,31 @@ async function createChatPickerScenario(
     tokenBudget: 300_000,
     continuationTurns: 3,
   };
-  const sessions = [
-    ...rosterAgents.slice(1).map((agent, index) =>
-      sessionRow(`agent:${agent.id}:main`, agent.name, rosterTime - (index + 1) * 720_000, {
-        agentId: agent.id,
-        isMain: true,
-        lastMessagePreview: agent.preview,
-      }),
-    ),
+  const rosterSessions = rosterAgents.flatMap((agent, index) => [
+    sessionRow(`agent:${agent.id}:main`, agent.name, rosterTime - (index + 1) * 720_000, {
+      agentId: agent.id,
+      isMain: true,
+      lastMessagePreview: agent.preview,
+    }),
+    ...agent.sessionLabels.map((label, sessionIndex) => {
+      const working = agent.id === "forge" && sessionIndex === 0;
+      return sessionRow(
+        `agent:${agent.id}:sample-${sessionIndex + 1}`,
+        label,
+        rosterTime - (index + 1) * 60_000 - sessionIndex * 5_000,
+        {
+          agentId: agent.id,
+          pinned: sessionIndex === 0,
+          lastMessagePreview: agent.preview,
+          unread: agent.id === "scout" && sessionIndex === 1,
+          hasActiveRun: working,
+          ...(working ? { activeRunIds: ["mock-forge-dashboard"], status: "running" } : {}),
+        },
+      );
+    }),
+  ]);
+  const gallerySessions = [
+    ...rosterSessions.filter((row) => !row.key.startsWith("agent:main:")),
     ...activitySessions,
     ...dashboardGallerySessions,
     ...(fixture === "workboard"
@@ -1971,6 +1994,7 @@ async function createChatPickerScenario(
       labelPrefix: "Long running session",
     }),
   ];
+  const sessions = fixture === "sidebar-roster" ? rosterSessions : gallerySessions;
   const archivedSessions = [
     sessionRow("agent:main:archived-launch-notes", "Archived launch notes", baseTime - 86_400_000, {
       archived: true,
@@ -2056,11 +2080,20 @@ async function createChatPickerScenario(
     workboardEnabled: fixture === "workboard",
   });
   const historyMessages =
-    fixture === "attachments"
-      ? buildChatAttachmentHistory(baseTime)
-      : fixture === "code-fences"
-        ? buildCodeFenceChatHistory(baseTime)
-        : buildScrollableChatHistory(baseTime);
+    fixture === "sidebar-roster"
+      ? [
+          chatHistoryMessage("user", "Help me organize the sample project.", rosterTime - 120_000),
+          chatHistoryMessage(
+            "assistant",
+            "The project outline is ready. Forge is building the sample dashboard, Scout is reviewing sources, and Bloom is drafting the welcome guide.",
+            rosterTime - 60_000,
+          ),
+        ]
+      : fixture === "attachments"
+        ? buildChatAttachmentHistory(baseTime)
+        : fixture === "code-fences"
+          ? buildCodeFenceChatHistory(baseTime)
+          : buildScrollableChatHistory(baseTime);
   const planInFlightRun = {
     runId: PLAN_DEMO_RUN_ID,
     text: "",
@@ -2123,7 +2156,7 @@ async function createChatPickerScenario(
       },
     ],
   } satisfies SystemChangesListResult;
-  return {
+  const scenario: ControlUiMockGatewayScenario = {
     assistantAgentId: "main",
     assistantName: "Molty",
     defaultAgentId: "main",
@@ -2200,7 +2233,10 @@ async function createChatPickerScenario(
     sessionGroups: ["Research"],
     sessionTranscripts: {
       ...backgroundTasks.sessionTranscripts,
-      "agent:main:main": { messages: historyMessages, inFlightRun: planInFlightRun },
+      "agent:main:main": {
+        messages: historyMessages,
+        ...(fixture === "sidebar-roster" ? {} : { inFlightRun: planInFlightRun }),
+      },
     },
     // Lights up the footer facepile and who's-online roster; the email-only
     // entry keeps the roster's no-display-name row exercised.
@@ -3151,7 +3187,11 @@ async function createChatPickerScenario(
             ...searchPrefixes("claude-sonnet-4-6"),
             ...searchPrefixes("anthropic"),
           ]),
-          ...buildSessionListCases([...sessions, ...archivedSessions], {}, MOCK_SESSION_OWNERS),
+          ...buildSessionListCases(
+            fixture === "sidebar-roster" ? sessions : [...sessions, ...archivedSessions],
+            {},
+            MOCK_SESSION_OWNERS,
+          ),
         ],
       },
       "sessions.search": { results: [] },
@@ -3234,6 +3274,16 @@ async function createChatPickerScenario(
     workspace: "/Users/demo/Projects/openclaw",
     workspaceGit: true,
   };
+  if (fixture === "sidebar-roster") {
+    scenario.methodResponses = {
+      ...scenario.methodResponses,
+      "sessions.catalog.list": { catalogs: [] },
+    };
+    scenario.sessions = rosterSessions;
+    scenario.repeatingSessionEvents = { events: [] };
+    scenario.sessionGroups = [];
+  }
+  return scenario;
 }
 
 function escapeScriptContent(script: string): string {
@@ -3342,6 +3392,7 @@ async function createMockGatewayPlugin(
     name: "openclaw-control-ui-mock-gateway",
     transformIndexHtml(html) {
       const rosterPreferenceScript = `<script data-openclaw-sidebar-roster>
+        ${fixture === "sidebar-roster" ? 'localStorage.setItem("openclaw:control-ui:community-invite", JSON.stringify({ dismissedAtMs: Date.now() }));' : ""}
         if (new URLSearchParams(location.search).get("sidebarAgents") === "roster") {
           const gatewayUrl = window["__OPENCLAW_NATIVE_CONTROL_AUTH__"].gatewayUrl;
           const key = "openclaw.control.settings.v1:" + gatewayUrl;

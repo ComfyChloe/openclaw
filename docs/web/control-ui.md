@@ -58,18 +58,25 @@ main session. Working agents appear first, followed by the most recently active.
 agent creation flow when available, or agent settings otherwise. `/agents` now
 opens the roster; agent configuration remains at `/settings/agents`.
 
-For a compact roster above your sessions, enable **Show all agents in the sidebar**
-in the agent switcher. This browser preference is off by default. The roster's
-**See all** link opens `/agents`; its header switch control reopens the menu so
-you can turn the mode off. See [Sidebar navigation](/web/control-ui/sessions-and-sidebar#sidebar-navigation)
-for row details and sorting.
+To browse sessions across agents, enable **Show all agents in the sidebar** in the
+agent switcher. This browser preference is off by default. Sessions appear under
+collapsible agent headers, with working agents first and then the most recently
+active. Each header shows activity and unread state, opens the agent's main chat,
+and offers **+** to start a session with that agent. Selecting a session switches
+the active agent; the chip above remains the context indicator and agent switcher.
+**See all** in the **Sessions** header opens `/agents`. See
+[Sidebar navigation](/web/control-ui/sessions-and-sidebar#sidebar-navigation) for
+group controls and filtering.
 
 Activity and previews on the page and sidebar roster refresh on session events
 and Gateway reconnects. When both are visible, they share one activity window and
 one refresh, so opening **See all** does not duplicate requests. Activity loading
-stops when neither roster is visible. Each refresh reads at most 300 recent sessions; older
-sessions outside that window do not contribute to the activity summaries. When a main session is absent from the window,
-its agent's most recent session supplies the preview.
+stops when neither roster is visible. Each refresh reads at most 300 sessions
+across agents, loading pinned sessions first and then the most recent sessions.
+Pinned sessions count toward that limit; sessions outside the window do not appear
+in the grouped sidebar or contribute to activity summaries, except that the open
+conversation remains visible so direct links keep a selected row. When a main session
+is absent from the window, its agent's most recent session supplies the preview.
 
 ## What each page covers
 
