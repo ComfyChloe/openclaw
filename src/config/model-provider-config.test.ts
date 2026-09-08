@@ -1,8 +1,10 @@
 import { setCurrentManifestModelIdNormalizationPolicies } from "@openclaw/model-catalog-core/provider-model-id-normalization";
 import { describe, expect, it, vi } from "vitest";
+import { resolveAgentModelConfigValue } from "./model-input.js";
 import {
   resolveMergedModelProviderModels,
   createModelProviderRouteOverrideResolver,
+  findProviderModelConfig,
 } from "./model-provider-config.js";
 import type { ModelDefinitionConfig } from "./types.models.js";
 
@@ -79,7 +81,81 @@ describe("resolveMergedModelProviderModels", () => {
   });
 });
 
+describe("findProviderModelConfig", () => {
+  it("uses only same-provider legacy config spellings without changing the row id", () => {
+    const legacy = model(" CUSTOM/model ", {
+      api: "openai-responses",
+      baseUrl: "https://host.example.test/v1",
+      headers: { "x-route": "legacy" },
+    });
+    expect(findProviderModelConfig([legacy], "custom", "model")).toEqual(legacy);
+    expect(findProviderModelConfig([legacy], "custom", "CUSTOM/model")).toEqual(legacy);
+    expect(findProviderModelConfig([legacy], "other", "model")).toBeUndefined();
+    expect(findProviderModelConfig([legacy], "custom", "Model")).toBeUndefined();
+    expect(legacy.id).toBe(" CUSTOM/model ");
+  });
+
+  it.each(["model", "latest"])("keeps the %s row ahead of legacy config spellings", (id) => {
+    setCurrentManifestModelIdNormalizationPolicies(
+      new Map([["custom", { aliases: { latest: "model" } }]]),
+    );
+    try {
+      const legacy = model("custom/model", {
+        api: "openai-responses",
+        baseUrl: "https://host.example.test/v1",
+        headers: { "x-route": "legacy" },
+        input: ["text", "image"],
+      });
+      const exact = model(id, { headers: {}, input: ["text"] });
+      expect(findProviderModelConfig([legacy, exact], "custom", "model")).toEqual(exact);
+      expect(findProviderModelConfig([legacy, exact], "custom", "custom/model")).toEqual(legacy);
+    } finally {
+      setCurrentManifestModelIdNormalizationPolicies(undefined);
+    }
+  });
+
+  it("keeps full-ref agent settings separate from raw provider config aliases", () => {
+    const settings: Record<string, { contextTokens?: number }> = {
+      "custom/model": {},
+      "custom/custom/model": { contextTokens: 8192 },
+    };
+    expect(
+      resolveAgentModelConfigValue(settings, "custom", "model", (entry) => entry.contextTokens),
+    ).toBeUndefined();
+    expect(
+      resolveAgentModelConfigValue(
+        settings,
+        "custom",
+        "custom/model",
+        (entry) => entry.contextTokens,
+      ),
+    ).toBe(8192);
+  });
+});
+
 describe("createModelProviderRouteOverrideResolver", () => {
+  it.each([false, true])("keeps legacy header overrides behind exact rows (exact=%s)", (exact) => {
+    const resolve = createModelProviderRouteOverrideResolver({
+      provider: "custom",
+      authoredConfig: {
+        models: {
+          providers: {
+            custom: {
+              baseUrl: "",
+              models: [
+                model("custom/model", { headers: { "x-route": "legacy" } }),
+                ...(exact ? [model("model", { headers: {} })] : []),
+              ],
+            },
+          },
+        },
+      },
+    });
+    expect([resolve("model"), resolve("custom/model"), resolve("model")]).toEqual(
+      exact ? ["none", "present", "none"] : ["present", "present", "present"],
+    );
+  });
+
   it.each([false, true])(
     "keeps cached alias-chain queries independent (reversed=%s)",
     (reverse) => {

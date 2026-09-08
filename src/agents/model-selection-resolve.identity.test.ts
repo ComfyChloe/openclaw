@@ -54,6 +54,19 @@ describe("allowed model prepared identities", () => {
     ).toHaveProperty("error");
   });
 
+  it("keeps bare input and policy in the parsing provider when another provider owns the default", () => {
+    expect(
+      resolveAllowedModelRefCore({
+        cfg: { agents: { defaults: { modelPolicy: { allow: ["middle"] } } } },
+        catalog: [...catalog, { provider: "other", id: "middle", name: "Other middle" }],
+        manifestPlugins,
+        raw: "middle",
+        defaultProvider: "custom",
+        defaultRef: { provider: "other", model: "middle" },
+      }),
+    ).toEqual({ ref: { provider: "custom", model: "middle" }, key: "custom/middle" });
+  });
+
   it.each(["zai", "z.ai", "z-ai"])(
     "keeps %s source-prefix compatibility and exact catalog identity",
     (provider) => {

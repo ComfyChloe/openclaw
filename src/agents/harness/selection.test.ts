@@ -2414,7 +2414,7 @@ describe("selectAgentHarness", () => {
     );
   });
 
-  it("keeps namespaced model transport isolated in harness capability checks", () => {
+  it("keeps exact configured model transport isolated in harness capability checks", () => {
     const config = {
       models: {
         providers: {
@@ -2427,6 +2427,7 @@ describe("selectAgentHarness", () => {
                 api: "openai-completions",
                 headers: { "x-model-route": "custom" },
               },
+              { id: "gpt-5.5", headers: {} },
             ],
           },
         },

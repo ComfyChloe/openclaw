@@ -3076,6 +3076,34 @@ describe("resolveModel", () => {
     expect(result.model?.input).toEqual(["text", "image"]);
   });
 
+  it.each(["vision-model", "custom/vision-model"])(
+    "applies legacy provider config transport while preserving selected id %s",
+    async (modelId) => {
+      const cfg = makeProviderConfig("custom", {
+        baseUrl: "",
+        models: [
+          {
+            ...makeModel(" custom/vision-model "),
+            api: "openai-responses",
+            baseUrl: "https://host.example.test/v1",
+            headers: { "x-model-route": "legacy" },
+            input: ["text", "image"],
+          },
+        ],
+      });
+      const result = await resolveModelForTest("custom", modelId, state.agentDir(), cfg);
+      expect(result.error).toBeUndefined();
+      expectRecordFields(result.model, {
+        provider: "custom",
+        id: modelId,
+        api: "openai-responses",
+        baseUrl: "https://host.example.test/v1",
+        headers: { "x-model-route": "legacy" },
+        input: ["text", "image"],
+      });
+    },
+  );
+
   it("preserves the exact selected namespaced model and its image input", async () => {
     const cfg = makeProviderConfig("custom", {
       baseUrl: "http://localhost:9000",
@@ -3421,6 +3449,7 @@ describe("resolveModel", () => {
                   ...makeModel(`${namespace}/vision-model`),
                   input: ["text", "image"],
                 },
+                ...(namespace === "custom" ? [makeModel("vision-model")] : []),
               ],
             },
           },
@@ -3471,7 +3500,7 @@ describe("resolveModel", () => {
     });
   });
 
-  it("keeps namespaced configured metadata off a discovered sibling model", async () => {
+  it("keeps exact configured metadata authoritative for a discovered sibling model", async () => {
     mockMinimalModelDiscovery("custom", "vision-model", { input: ["text"] });
     const cfg = makeOpenClawConfigFixture({
       models: {
@@ -3484,6 +3513,7 @@ describe("resolveModel", () => {
                 ...makeModel("custom/vision-model"),
                 input: ["text", "image"],
               },
+              makeModel("vision-model"),
             ],
           },
         },

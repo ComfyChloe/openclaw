@@ -220,7 +220,7 @@ describe("gateway agent auth refresh dispatch", () => {
         payload: { status: "ok" },
       });
       expect(agentCommandCallsFor(admittedRunId)[0]?.[4]).toMatchObject({
-        config: before.runtime?.config,
+        snapshot: { config: before.runtime?.config },
         pluginGeneration: before.runtime?.pluginGeneration,
       });
       expect(dispatchedSnapshots.get(admittedRunId) === admittedSnapshot).toBe(true);
@@ -238,7 +238,7 @@ describe("gateway agent auth refresh dispatch", () => {
         payload: { status: "ok" },
       });
       expect(agentCommandCallsFor(subsequentRunId)[0]?.[4]).toMatchObject({
-        config: after?.config,
+        snapshot: { config: after?.config },
         pluginGeneration: after?.pluginGeneration,
       });
       expect(admittedSnapshots.length).toBe(2);
@@ -347,7 +347,7 @@ describe("gateway agent auth refresh dispatch", () => {
       const affectedCalls = agentCommandCallsFor(waitingRunId);
       expect(affectedCalls).toHaveLength(1);
       expect(affectedCalls[0]?.[4]).toMatchObject({
-        config: after?.config,
+        snapshot: { config: after?.config },
         pluginGeneration: after?.pluginGeneration,
       });
       const subsequent = sendAgentRpc(gatewaySuite.ws, {

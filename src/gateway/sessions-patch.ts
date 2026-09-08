@@ -20,8 +20,10 @@ import {
 import type { ModelCatalogEntry } from "../agents/model-catalog.js";
 import { splitTrailingAuthProfile } from "../agents/model-ref-profile.js";
 import {
+  buildModelAliasIndex,
   resolveAllowedModelRef,
   resolveDefaultModelForAgent,
+  resolveModelRefFromString,
   resolveSubagentConfiguredModelSelection,
 } from "../agents/model-selection.js";
 import { resolveEffectiveAgentRuntime } from "../agents/thinking-runtime.js";
@@ -101,13 +103,26 @@ export function resolveSessionPatchModelSelection(params: {
   | { ok: true; provider: string; model: string; profile?: string; isDefault: boolean }
   | { ok: false; error: string } {
   const { model: modelWithoutProfile, profile } = splitTrailingAuthProfile(params.raw);
-  const resolved = resolveAllowedModelRef({
+  const selectionScope = {
     cfg: params.cfg,
     agentId: params.agentId,
+    defaultProvider: params.defaultProvider,
+    resolvedModelCatalog: params.catalog,
+  };
+  const subagentDefaultRef =
+    params.subagentModelHint !== undefined
+      ? resolveModelRefFromString({
+          ...selectionScope,
+          raw: params.subagentModelHint,
+          aliasIndex: buildModelAliasIndex(selectionScope),
+        })?.ref
+      : undefined;
+  const resolved = resolveAllowedModelRef({
+    ...selectionScope,
     catalog: params.catalog,
     raw: modelWithoutProfile,
-    defaultProvider: params.defaultProvider,
-    defaultModel: params.subagentModelHint ?? params.defaultModel,
+    defaultModel: params.subagentModelHint === undefined ? params.defaultModel : undefined,
+    defaultRef: subagentDefaultRef,
   });
   if ("error" in resolved) {
     return { ok: false, error: resolved.error };

@@ -62,6 +62,7 @@ vi.mock("../prepared-model-runtime.js", () => ({
             },
           ],
         },
+        modelCatalog: { entries: [], routeVariants: [] },
         createStores: () => ({}),
       },
       release: vi.fn(),

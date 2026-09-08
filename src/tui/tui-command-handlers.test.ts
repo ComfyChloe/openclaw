@@ -3298,7 +3298,7 @@ describe("tui command handlers", () => {
     expect(addSystem).toHaveBeenCalledWith("fast mode: auto");
   });
 
-  it("uses canonical model refs in the model selector", async () => {
+  it("preserves provider-local namespaces in the model selector", async () => {
     const listModels = vi.fn().mockResolvedValue([
       {
         provider: "openrouter",
@@ -3306,7 +3306,7 @@ describe("tui command handlers", () => {
         name: "OpenRouter Auto",
       },
     ]);
-    const patchSession = vi.fn().mockResolvedValue({ model: "openrouter/auto" });
+    const patchSession = vi.fn().mockResolvedValue({ model: "openrouter/openrouter/auto" });
     const refreshSessionInfo = vi.fn().mockResolvedValue(undefined);
     const applySessionInfoFromPatch = vi.fn();
     const { handleCommand, openOverlay, closeOverlay } = createHarness({
@@ -3320,17 +3320,20 @@ describe("tui command handlers", () => {
 
     expect(listModels).toHaveBeenCalledWith({ agentId: "main" });
     const selector = firstMockArg(openOverlay, "openOverlay") as SelectableOverlay;
-    expect(selector?.items?.[0]?.value).toBe("openrouter/auto");
-    expect(selector?.items?.[0]?.label).toBe("openrouter/auto");
+    expect(selector?.items?.[0]?.value).toBe("openrouter/openrouter/auto");
+    expect(selector?.items?.[0]?.label).toBe("openrouter/openrouter/auto");
 
-    selector?.onSelect?.({ value: "openrouter/auto", label: "openrouter/auto" });
+    selector?.onSelect?.({
+      value: "openrouter/openrouter/auto",
+      label: "openrouter/openrouter/auto",
+    });
     await flushAsyncSelect();
 
     expect(patchSession).toHaveBeenCalledWith({
       key: "agent:main:main",
-      model: "openrouter/auto",
+      model: "openrouter/openrouter/auto",
     });
-    expect(applySessionInfoFromPatch).toHaveBeenCalledWith({ model: "openrouter/auto" });
+    expect(applySessionInfoFromPatch).toHaveBeenCalledWith({ model: "openrouter/openrouter/auto" });
     expect(refreshSessionInfo).toHaveBeenCalledTimes(1);
     expect(closeOverlay).toHaveBeenCalledTimes(1);
   });

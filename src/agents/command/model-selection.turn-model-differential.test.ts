@@ -316,7 +316,7 @@ describe("turn model selection command-path differential", () => {
                   : rawSession
                     ? "latest"
                     : "middle",
-              ...(rawSession ? {} : { modelOverrideSource: "user" as const }),
+              modelOverrideSource: rawSession ? ("auto" as const) : ("user" as const),
               ...(source === "resolved session"
                 ? { modelOverrideRouteResolution: "resolved" as const }
                 : {}),

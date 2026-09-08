@@ -12,7 +12,7 @@ import {
   resolvePrimaryStringValue,
 } from "@openclaw/normalization-core/string-coerce";
 import { modelKey } from "../shared/model-key.js";
-import { findProviderModelConfig } from "./model-provider-config.js";
+import { resolveMergedModelProviderModels } from "./model-provider-config.js";
 import type { AgentModelEntryConfig } from "./types.agent-defaults.js";
 import type { AgentModelConfig, AgentToolModelConfig } from "./types.agents-shared.js";
 
@@ -69,7 +69,11 @@ export function resolveAgentModelConfigValue<T, TValue>(
       ? [{ id: ref.modelId, value: candidateValue }]
       : [];
   });
-  return findProviderModelConfig(candidates, providerId, modelId)?.value;
+  // These full-ref settings keys do not inherit provider-row legacy prefix spellings.
+  return resolveMergedModelProviderModels({
+    models: candidates,
+    normalizeModelId: (id) => normalizeConfiguredProviderCatalogModelId(providerId, id.trim()),
+  }).get(modelId)?.value;
 }
 
 /** Returns the primary model ref from either string or object-style agent model config. */

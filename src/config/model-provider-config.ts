@@ -10,14 +10,15 @@ type MergedModelProviderEntry = {
   providerConfig: ModelProviderConfig;
 };
 
-/** Read exact-row fields and inherited omissions without renormalizing the selected identity. */
+/** Read provider config overrides without renormalizing the selected identity. */
 export function findProviderModelConfig<T extends { id?: string }>(
   models: readonly T[] | undefined,
   provider: string,
   modelId: string,
 ): T | undefined {
-  return resolveMergedModelProviderModels({
+  return resolveRawProviderModelConfigs({
     models,
+    provider,
     normalizeModelId: (id) => normalizeConfiguredProviderCatalogModelId(provider, id.trim()),
   }).get(modelId);
 }
@@ -139,6 +140,29 @@ export function resolveMergedModelProviderModels<T extends { id?: string }>(para
   return models;
 }
 
+/** Legacy provider-prefix spellings are config fallbacks, never catalog identities. */
+function resolveRawProviderModelConfigs<T extends { id?: string }>(params: {
+  models: readonly T[] | undefined;
+  provider: string;
+  normalizeModelId: (modelId: string) => string | undefined;
+}): ReadonlyMap<string, T> {
+  const models = new Map(resolveMergedModelProviderModels(params));
+  const provider = normalizeProviderId(params.provider);
+  for (const model of params.models ?? []) {
+    const id = model.id?.trim() ?? "";
+    const slash = id.indexOf("/");
+    if (slash <= 0 || normalizeProviderId(id.slice(0, slash)) !== provider) {
+      continue;
+    }
+    const legacyId = id.slice(slash + 1).trim();
+    // An exact or declared-equivalent row owns even its omitted and empty fields.
+    if (legacyId && !models.has(legacyId)) {
+      models.set(legacyId, models.get(id) ?? model);
+    }
+  }
+  return models;
+}
+
 function hasNonEmptyRecord(value: unknown): boolean {
   const record = readRecord(value);
   return record !== undefined && Object.keys(record).length > 0;
@@ -203,8 +227,9 @@ export function createModelProviderRouteOverrideResolver(params: {
     // Only authored rows need input normalization. Resolved targets retain their
     // identity unless the provider explicitly supplies catalog equivalence.
     const canonicalModelId = canonicalize(modelId);
-    const configuredModel = (configuredModels ??= resolveMergedModelProviderModels({
+    const configuredModel = (configuredModels ??= resolveRawProviderModelConfigs({
       models: providerConfig.models,
+      provider: params.provider,
       normalizeModelId: normalizeConfiguredModelId,
     })).get(canonicalModelId);
     return configuredModel &&

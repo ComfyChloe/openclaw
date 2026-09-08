@@ -2592,7 +2592,7 @@ describe("createTelegramBot", () => {
       name: "resets overrides when selecting the configured default model",
       callbackId: "cbq-model-default-1",
       callbackData: "mdl_sel_anthropic/claude-opus-4-6",
-      defaultModel: "claude-opus-4-6",
+      defaultModel: "anthropic/claude-opus-4-6",
       configuredModels: { "anthropic/claude-opus-4-6": {} },
       messageId: 16,
       storeLabel: "model-default",

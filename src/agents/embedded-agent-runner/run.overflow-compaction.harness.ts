@@ -26,6 +26,7 @@ import type { FailoverReason } from "../failover/signal.js";
 import { clearAgentHarnesses, registerAgentHarness } from "../harness/registry.js";
 import type { AgentHarnessAttemptParams } from "../harness/types.js";
 import type { ResolvedProviderAuth } from "../model-auth-runtime-shared.js";
+import type { ModelCatalogSnapshot } from "../model-catalog.types.js";
 import type { AgentRuntimePlan } from "../runtime-plan/types.js";
 import { makeAttemptResult } from "./run.overflow-compaction.fixture.js";
 import type { RunEmbeddedAgentInternalParams } from "./run/internal-params.js";
@@ -194,6 +195,7 @@ export const mockedBuildAgentRuntimePlan = vi.fn<() => AgentRuntimePlan>(buildMo
 export const mockedAcquireAgentRunPreparedModelRuntime = vi.fn(
   async (input: Record<string, unknown>) => {
     const pluginRegistry = getActivePluginRegistry();
+    const modelCatalog: ModelCatalogSnapshot = { entries: [], routeVariants: [] };
     return {
       snapshot: {
         agentId: input.agentId,
@@ -207,6 +209,7 @@ export const mockedAcquireAgentRunPreparedModelRuntime = vi.fn(
             }
           : undefined,
         metadataSnapshot: { ...emptyPluginMetadataSnapshot, workspaceDir: input.workspaceDir },
+        modelCatalog,
         createStores: () => ({ authStorage: {}, modelRegistry: {} }),
       },
       release: vi.fn(),

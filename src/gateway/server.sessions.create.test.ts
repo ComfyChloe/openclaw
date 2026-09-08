@@ -2614,7 +2614,7 @@ test.each([
     agentDiscoveryMock.models = [
       { id: "gpt-5.6-luna", name: "GPT 5.6 Luna", provider: "openai" },
       { id: "gpt-5.6-sol", name: "GPT 5.6 Sol", provider: "openai" },
-      { id: "sonnet-4.6", name: "Sonnet 4.6", provider: "anthropic" },
+      { id: "claude-sonnet-4-6", name: "Sonnet 4.6", provider: "anthropic" },
     ];
     if (catalogTarget) {
       const registry = createEmptyPluginRegistry();

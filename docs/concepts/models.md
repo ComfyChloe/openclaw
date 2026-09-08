@@ -292,6 +292,8 @@ Without a scope flag, selections change only the current session. `agents.defaul
 - Provider IDs are normalized to lowercase. Model IDs retain their provider-local namespace and casing, except for aliases explicitly supported by that provider. For a custom provider named `custom`, model IDs `model` and `custom/model` are distinct: select them as `custom/model` and `custom/custom/model`. Status and fallback notices show the full ref.
 - Configured catalogs resolve provider aliases when they are built. Selecting one of those resulting model IDs preserves it when configuration is saved and loaded again. Retired-model migrations still apply.
 
+For compatibility, a raw `models.providers.<provider>.models[]` row whose ID starts with that same provider prefix can supply configuration overrides for the bare local ID when no exact or provider-declared equivalent row exists. For example, an `openai/example` row under provider `openai` can supply the API, base URL, and headers for selected model `example`. An explicit `example` row takes precedence, including omitted or empty override fields. Catalog IDs and selected model IDs stay distinct, and this fallback does not apply to `agents.*.models` settings keys.
+
 Full command behavior and config: [Slash commands](/tools/slash-commands).
 
 ## CLI

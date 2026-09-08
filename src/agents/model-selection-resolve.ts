@@ -46,6 +46,8 @@ export function resolveAllowedModelRefCore(
     raw: string;
     defaultProvider: string;
     defaultModel?: string;
+    /** Resolved authorization default, separate from raw-input parsing. */
+    defaultRef?: ModelRef;
     agentId?: string;
   } & ModelManifestNormalizationContext,
 ):
@@ -53,32 +55,24 @@ export function resolveAllowedModelRefCore(
   | {
       error: string;
     } {
-  const normalization = {
+  const selectionScope = {
+    cfg: params.cfg,
+    agentId: params.agentId,
+    defaultProvider: params.defaultProvider,
     manifestPlugins: params.manifestPlugins,
     resolvedModelCatalog: params.resolvedModelCatalog ?? params.catalog,
   };
-  const aliasIndex = buildModelAliasIndex({
-    cfg: params.cfg,
-    defaultProvider: params.defaultProvider,
-    agentId: params.agentId,
-    ...normalization,
-  });
   return resolveAllowedModelRefFromAliasIndex({
-    cfg: params.cfg,
+    ...selectionScope,
     raw: params.raw,
-    defaultProvider: params.defaultProvider,
-    agentId: params.agentId,
-    aliasIndex,
-    ...normalization,
+    aliasIndex: buildModelAliasIndex(selectionScope),
     getStatus: (ref) =>
       getModelRefStatus({
-        cfg: params.cfg,
+        ...selectionScope,
         catalog: params.catalog,
         ref,
-        defaultProvider: params.defaultProvider,
         defaultModel: params.defaultModel,
-        agentId: params.agentId,
-        ...normalization,
+        defaultRef: params.defaultRef,
       }),
   });
 }
