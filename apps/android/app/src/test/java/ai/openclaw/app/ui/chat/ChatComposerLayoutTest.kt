@@ -61,12 +61,14 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.rememberCompositionContext
 import androidx.compose.ui.AbsoluteAlignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.toPixelMap
+import androidx.compose.ui.platform.AbstractComposeView
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalView
@@ -145,15 +147,21 @@ import androidx.window.layout.WindowInfoTracker
 import androidx.window.layout.WindowInfoTrackerDecorator
 import androidx.window.layout.WindowLayoutInfo
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.FlowCollector
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.job
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -204,6 +212,8 @@ class ChatComposerLayoutTest {
   private var observedBottomInsets: Pair<Int, Int>? = null
   private lateinit var renderedDensity: Density
   private val sheetFeatures = SheetFeatures()
+  private lateinit var branchRootView: AbstractComposeView
+  private lateinit var branchRootEffectJob: Job
 
   @Before
   @SuppressLint("RestrictedApi")
@@ -1864,6 +1874,514 @@ class ChatComposerLayoutTest {
         bitmap.recycle()
       }
     }
+
+  @Test
+  @Config(qualifiers = "w800dp-h800dp-mdpi", instrumentedPackages = ["ai.openclaw.app.AndroidScreenshotFixture"])
+  fun branchSheetSurfaceAndLastRowStayInSafePanes() = assertBranchPanes(LayoutDirection.Ltr)
+
+  @Test
+  @Config(qualifiers = "w800dp-h800dp-mdpi", instrumentedPackages = ["ai.openclaw.app.AndroidScreenshotFixture"])
+  fun branchSheetSurfaceAndLastRowStayInRtlSafePanes() = assertBranchPanes(LayoutDirection.Rtl)
+
+  @Test
+  @Config(qualifiers = "w800dp-h800dp-mdpi", instrumentedPackages = ["ai.openclaw.app.AndroidScreenshotFixture"])
+  fun branchSheetRealRowSwitchesTheLiteralFixture() =
+    withBranchRequests { _, calls, _ ->
+      openBranchSheet()
+      branchRow(2).assertIsEnabled().performTouchInput {
+        down(center)
+        up()
+      }
+      composeRule.waitUntil {
+        controller.messages.value
+          .lastOrNull()
+          ?.entryId == "android-screenshot-branch-02" &&
+          !controller.sessionBranchSwitching.value
+      }
+      composeRule.onNode(isDialog()).assertDoesNotExist()
+      val request = calls.single { it.method == "sessions.branches.switch" }
+      assertEquals(JsonPrimitive(AndroidScreenshotFixture.mainSessionKey), request.params["sessionKey"])
+      assertEquals(JsonPrimitive("main"), request.params["agentId"])
+      assertEquals(JsonPrimitive("android-screenshot-branch-02"), request.params["leafEntryId"])
+      assertEquals(
+        "android-screenshot-branch-02",
+        controller.sessionBranches.value
+          .single { it.active }
+          .leafEntryId,
+      )
+    }
+
+  private fun assertBranchPanes(direction: LayoutDirection) =
+    withBranchRequests(direction = direction) { _, _, _ ->
+      val editor = composeRule.onNode(hasSetTextAction())
+      editor.performTextReplacement("branch reading draft")
+      editor.performSemanticsAction(SemanticsActions.SetSelection) { assertTrue(it(2, 7, false)) }
+      val editorId = editor.fetchSemanticsNode().id
+      val dialog = openBranchSheet()
+      val cases =
+        listOf(
+          emptyList<DisplayFeature>() to Rect(0, 0, 800, 800),
+          listOf(testFold(Rect(240, 0, 260, 800))) to Rect(260, 0, 800, 800),
+          listOf(testFold(Rect(390, 0, 410, 800))) to
+            if (direction == LayoutDirection.Rtl) Rect(410, 0, 800, 800) else Rect(0, 0, 390, 800),
+          listOf(testFold(Rect(0, 390, 800, 410))) to Rect(0, 0, 800, 390),
+          listOf(testFold(Rect(0, 150, 800, 800))) to Rect(0, 0, 800, 150),
+        )
+      var listId: Int? = null
+      for ((features, pane) in cases) {
+        composeRule.runOnIdle { runBlocking { sheetFeatures.publish(features) } }
+        composeRule.waitForIdle()
+        val surface = effortSheetSurfaceBounds(dialog)
+        assertTrue("Actual Branch Material Surface $surface must fit Activity pane $pane", pane.contains(surface))
+        assertTrue("Safe remaps keep the native branch window", dialog === ShadowDialog.getLatestDialog())
+        val list = branchList()
+        if (listId != null) {
+          assertEquals(listId, list.fetchSemanticsNode().id)
+          assertTrue(
+            "A safe remap must retain reading position before any new scroll",
+            list.fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange].value() > 0f,
+          )
+        }
+        list.performScrollToNode(hasText("Release plan 12"))
+        branchRow(12).assertIsDisplayed()
+        listId = list.fetchSemanticsNode().id
+        assertTrue(list.fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange].value() > 0f)
+      }
+      composeRule.runOnIdle { dialog.onBackPressedDispatcher.onBackPressed() }
+      composeRule.onNode(isDialog()).assertDoesNotExist()
+      editor.assertTextEquals("branch reading draft")
+      assertEquals(editorId, editor.fetchSemanticsNode().id)
+      assertEquals(TextRange(2, 7), editor.fetchSemanticsNode().config[SemanticsProperties.TextSelectionRange])
+    }
+
+  @Test
+  @Config(qualifiers = "w800dp-h800dp-mdpi", instrumentedPackages = ["ai.openclaw.app.AndroidScreenshotFixture"])
+  fun branchOpeningRejectsHeldTouchAfterUnsafeRecovery() = assertTerminalBranchInput(keyboard = false)
+
+  @Test
+  @Config(qualifiers = "w800dp-h800dp-mdpi", instrumentedPackages = ["ai.openclaw.app.AndroidScreenshotFixture"])
+  fun branchOpeningRejectsHeldEnterAfterUnsafeRecovery() = assertTerminalBranchInput(keyboard = true)
+
+  private fun assertTerminalBranchInput(keyboard: Boolean) =
+    withBranchRequests { _, calls, _ ->
+      val old = openBranchSheet()
+      val row = branchRow(2).assertIsEnabled().assertIsDisplayed()
+      val bounds = row.getUnclippedBoundsInRoot()
+      val x = (bounds.left.value + bounds.right.value) / 2
+      val y = (bounds.top.value + bounds.bottom.value) / 2
+      if (keyboard) {
+        composeRule.runOnIdle { assertTrue(sheetComposeView(old).requestFocusFromTouch()) }
+        row.performSemanticsAction(SemanticsActions.RequestFocus) { assertTrue(it()) }
+        row.assertIsFocused()
+      }
+      val time = SystemClock.uptimeMillis()
+      composeRule.mainClock.autoAdvance = false
+      composeRule.runOnUiThread {
+        if (keyboard) {
+          assertTrue(checkNotNull(old.window).decorView.dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ENTER)))
+        } else {
+          assertTrue(sheetTouch(old, MotionEvent.ACTION_DOWN, x, y, time, time))
+        }
+        val deliveries = sheetFeatures.deliveries
+        runBlocking {
+          sheetFeatures.publish(listOf(testFold(Rect(0, 0, 800, 800))))
+          sheetFeatures.publish(emptyList())
+        }
+        assertEquals(deliveries + 2, sheetFeatures.deliveries)
+        assertTrue("Release reaches the still-attached original branch window", old.isShowing)
+        if (keyboard) {
+          checkNotNull(old.window).decorView.dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_ENTER))
+        } else {
+          sheetTouch(old, MotionEvent.ACTION_UP, x, y, time, time + 40)
+        }
+      }
+      composeRule.mainClock.autoAdvance = true
+      composeRule.waitForIdle()
+      assertEquals("Recovered geometry cannot authorize A's held input", 0, calls.count { it.method == "sessions.branches.switch" })
+      composeRule.onNode(isDialog()).assertDoesNotExist()
+      val fresh = openBranchSheet()
+      assertNotSame(old.window, fresh.window)
+      branchRow(2).performTouchInput {
+        down(center)
+        up()
+      }
+      composeRule.waitUntil {
+        controller.messages.value
+          .lastOrNull()
+          ?.entryId == "android-screenshot-branch-02"
+      }
+      composeRule.onNode(isDialog()).assertDoesNotExist()
+      assertEquals(1, calls.count { it.method == "sessions.branches.switch" })
+    }
+
+  @Test
+  @Config(qualifiers = "w800dp-h800dp-mdpi", instrumentedPackages = ["ai.openclaw.app.AndroidScreenshotFixture"])
+  fun branchOpeningRejectsQueuedSelectionAcrossAuthoritativeAba() = assertStaleBranchTarget(refresh = false, aba = true)
+
+  @Test
+  @Config(qualifiers = "w800dp-h800dp-mdpi", instrumentedPackages = ["ai.openclaw.app.AndroidScreenshotFixture"])
+  fun branchOpeningRejectsQueuedRefreshAcrossAuthoritativeAba() = assertStaleBranchTarget(refresh = true, aba = true)
+
+  @Test
+  @Config(qualifiers = "w800dp-h800dp-mdpi", instrumentedPackages = ["ai.openclaw.app.AndroidScreenshotFixture"])
+  fun branchOpeningRejectsQueuedSelectionAfterSessionChange() = assertStaleBranchTarget(refresh = false, aba = false)
+
+  @Test
+  @Config(qualifiers = "w800dp-h800dp-mdpi", instrumentedPackages = ["ai.openclaw.app.AndroidScreenshotFixture"])
+  fun branchOpeningRejectsQueuedRefreshAfterSessionChange() = assertStaleBranchTarget(refresh = true, aba = false)
+
+  private fun assertStaleBranchTarget(
+    refresh: Boolean,
+    aba: Boolean,
+  ) = withBranchRequests { model, calls, _ ->
+    val action =
+      if (refresh) {
+        composeRule.onNodeWithContentDescription(nativeString("Chat actions")).performClick()
+        checkNotNull(
+          composeRule
+            .onNodeWithText(nativeString("Switch branch"))
+            .fetchSemanticsNode()
+            .config[SemanticsActions.OnClick]
+            .action,
+        )
+      } else {
+        openBranchSheet()
+        checkNotNull(branchRow(2).fetchSemanticsNode().config[SemanticsActions.OnClick].action)
+      }
+    val before = controller.selectionGeneration.value
+    val original = controller.sessionKey.value
+    composeRule.mainClock.autoAdvance = false
+    composeRule.runOnUiThread {
+      val beforeDispatch = calls.toList()
+      val operation = queueBranchAction(action)
+      assertEquals("The tested operation must still be queued before the owner changes", beforeDispatch, calls.toList())
+      // Main.immediate would publish inline on Main; keep real selection work on IO.
+      runBlocking(Dispatchers.IO) {
+        withTimeout(5_000) {
+          controller.switchSession("agent:main:branch-other", "main")
+          if (aba) controller.switchSession(original, "main")
+          while (controller.historyLoading.value || controller.sessionBranchesLoading.value) delay(1)
+          if (aba) controller.sessionBranches.first { it.size == 12 }
+        }
+      }
+      assertTrue(controller.selectionGeneration.value > before)
+      val authoritative = controller.selectionGeneration.value
+
+      fun assertMirrorGap() {
+        assertEquals("The authoritative generation must remain fixed during dispatch", authoritative, controller.selectionGeneration.value)
+        assertEquals("The displayed generation must still lag during dispatch", before, model.chatSelectionGeneration.value)
+      }
+      assertMirrorGap()
+      if (aba) {
+        assertEquals(original, controller.sessionKey.value)
+        assertTrue(controller.sessionBranches.value.any { it.leafEntryId == "android-screenshot-branch-02" && !it.active })
+      }
+      calls.clear()
+      val forbiddenMethod = if (refresh) "sessions.branches.list" else "sessions.branches.switch"
+      runBlocking {
+        withTimeout(5_000) {
+          while (true) {
+            assertMirrorGap()
+            composeRule.mainClock.advanceTimeBy(0, ignoreFrameDuration = true)
+            assertMirrorGap()
+            if (calls.any { it.method == forbiddenMethod }) break
+            if (operation.isCompleted) {
+              assertFalse("The queued operation must finish normally, not be canceled before admission", operation.isCancelled)
+              break
+            }
+            delay(1)
+          }
+        }
+      }
+      assertMirrorGap()
+      assertEquals(
+        "The queued opening cannot borrow the new owner or ABA generation",
+        0,
+        calls.count { it.method == forbiddenMethod },
+      )
+    }
+    composeRule.mainClock.autoAdvance = true
+    composeRule.waitForIdle()
+    composeRule.onNode(isDialog()).assertDoesNotExist()
+  }
+
+  @Test
+  @Config(qualifiers = "w800dp-h800dp-mdpi", instrumentedPackages = ["ai.openclaw.app.AndroidScreenshotFixture"])
+  fun branchOpeningRejectsSavedSelectionAfterUnsafeRecovery() =
+    withBranchRequests { _, calls, _ ->
+      val old = openBranchSheet()
+      val select = checkNotNull(branchRow(2).fetchSemanticsNode().config[SemanticsActions.OnClick].action)
+      composeRule.mainClock.autoAdvance = false
+      composeRule.runOnUiThread {
+        runBlocking {
+          sheetFeatures.publish(listOf(testFold(Rect(0, 0, 800, 800))))
+          sheetFeatures.publish(emptyList())
+        }
+        assertTrue(old.isShowing)
+        select()
+      }
+      composeRule.mainClock.autoAdvance = true
+      composeRule.waitForIdle()
+      assertEquals(0, calls.count { it.method == "sessions.branches.switch" })
+      composeRule.onNode(isDialog()).assertDoesNotExist()
+      val fresh = openBranchSheet()
+      assertTrue("Explicit reopening creates a usable branch window", fresh.isShowing)
+      assertNotSame(old.window, fresh.window)
+      branchRow(2).assertIsEnabled()
+    }
+
+  @Test
+  @Config(qualifiers = "w800dp-h800dp-mdpi", instrumentedPackages = ["ai.openclaw.app.AndroidScreenshotFixture"])
+  fun branchOpeningRefreshesAndDismissesWithoutAdmin() =
+    withBranchRequests { model, calls, _ ->
+      composeRule.runOnIdle { runtimeScopes().value = listOf("operator.read") }
+      composeRule.waitUntil { "operator.admin" !in model.operatorScopes.value }
+      val old = openBranchSheet()
+      val read = calls.single { it.method == "sessions.branches.list" }
+      assertEquals(JsonPrimitive(AndroidScreenshotFixture.mainSessionKey), read.params["sessionKey"])
+      assertEquals(JsonPrimitive("main"), read.params["agentId"])
+      branchRow(2).assertIsNotEnabled()
+      composeRule.runOnIdle { old.onBackPressedDispatcher.onBackPressed() }
+      composeRule.onNode(isDialog()).assertDoesNotExist()
+      assertEquals(0, calls.count { it.method == "sessions.branches.switch" })
+    }
+
+  @Test
+  @Config(qualifiers = "w800dp-h800dp-mdpi", instrumentedPackages = ["ai.openclaw.app.AndroidScreenshotFixture"])
+  fun branchSelectionRechecksAuthoritativeEligibilityBeforeQueuedDispatch() =
+    withBranchRequests { _, calls, _ ->
+      val cases = listOf("admin", "loading", "active", "missing", "switching")
+      for (condition in cases) {
+        val dialog = openBranchSheet()
+        val select = checkNotNull(branchRow(2).fetchSemanticsNode().config[SemanticsActions.OnClick].action)
+        val branches = controller.sessionBranches.value
+        composeRule.mainClock.autoAdvance = false
+        composeRule.runOnUiThread {
+          val beforeDispatch = calls.toList()
+          assertTrue(select())
+          assertEquals("The tested selection must still be queued before eligibility changes", beforeDispatch, calls.toList())
+          when (condition) {
+            "admin" -> {
+              runtimeScopes().value = listOf("operator.read")
+            }
+
+            "loading" -> {
+              controllerFlow<Boolean>("_sessionBranchesLoading").value = true
+            }
+
+            "switching" -> {
+              controllerFlow<Boolean>("_sessionBranchSwitching").value = true
+            }
+
+            "active" -> {
+              controllerFlow<List<ai.openclaw.app.chat.SessionBranch>>("_sessionBranches").value =
+                branches.map { it.copy(active = it.leafEntryId == "android-screenshot-branch-02") }
+            }
+
+            "missing" -> {
+              controllerFlow<List<ai.openclaw.app.chat.SessionBranch>>("_sessionBranches").value =
+                branches.filterNot { it.leafEntryId == "android-screenshot-branch-02" }
+            }
+          }
+        }
+        composeRule.mainClock.autoAdvance = true
+        composeRule.waitForIdle()
+        assertEquals("Queued selection must recheck $condition", 0, calls.count { it.method == "sessions.branches.switch" })
+        composeRule.runOnIdle {
+          runtimeScopes().value = listOf("operator.admin")
+          controllerFlow<Boolean>("_sessionBranchesLoading").value = false
+          controllerFlow<Boolean>("_sessionBranchSwitching").value = false
+          controllerFlow<List<ai.openclaw.app.chat.SessionBranch>>("_sessionBranches").value = branches
+          dialog.onBackPressedDispatcher.onBackPressed()
+        }
+        composeRule.onNode(isDialog()).assertDoesNotExist()
+      }
+      openBranchSheet()
+      branchRow(2).assertIsEnabled().performClick()
+      composeRule.waitUntil {
+        controller.messages.value
+          .lastOrNull()
+          ?.entryId == "android-screenshot-branch-02"
+      }
+      assertEquals(1, calls.count { it.method == "sessions.branches.switch" })
+    }
+
+  @Test
+  @Config(qualifiers = "w800dp-h800dp-mdpi", instrumentedPackages = ["ai.openclaw.app.AndroidScreenshotFixture"])
+  fun branchOpeningPreservesAdmittedSwitchAndReplacementWindow() =
+    withBranchRequests(hold = "sessions.branches.switch") { _, calls, release ->
+      val old = openBranchSheet()
+      branchRow(2).performClick()
+      composeRule.waitUntil { calls.any { it.method == "sessions.branches.switch" } }
+      composeRule.runOnUiThread {
+        runBlocking {
+          sheetFeatures.publish(listOf(testFold(Rect(0, 0, 800, 800))))
+          sheetFeatures.publish(emptyList())
+        }
+      }
+      composeRule.waitForIdle()
+      composeRule.onNode(isDialog()).assertDoesNotExist()
+      val fresh = openBranchSheet()
+      assertNotSame(old.window, fresh.window)
+      assertTrue("The admitted switch remains in flight while B is open", controller.sessionBranchSwitching.value)
+      branchRow(2).assertIsNotEnabled()
+      val reads = calls.count { it.method == "sessions.branches.list" }
+      composeRule.runOnIdle { release.complete(Unit) }
+      composeRule.waitUntil { !controller.sessionBranchSwitching.value }
+      composeRule.waitForIdle()
+      val switched = calls.single { it.method == "sessions.branches.switch" }
+      assertEquals(JsonPrimitive(AndroidScreenshotFixture.mainSessionKey), switched.params["sessionKey"])
+      assertEquals(JsonPrimitive("main"), switched.params["agentId"])
+      assertEquals(JsonPrimitive("android-screenshot-branch-02"), switched.params["leafEntryId"])
+      assertEquals(
+        "android-screenshot-branch-02",
+        controller.messages.value
+          .last()
+          .entryId,
+      )
+      assertEquals("Only the controller performs post-switch reconciliation", reads + 1, calls.count { it.method == "sessions.branches.list" })
+      assertTrue("Completion retires only its origin, never replacement B", fresh.isShowing)
+    }
+
+  private fun branchRow(index: Int) = composeRule.onNode(hasText("Release plan ${index.toString().padStart(2, '0')}") and hasClickAction() and hasAnyAncestor(isDialog()))
+
+  private fun branchList() = composeRule.onNode(hasScrollAction() and hasAnyAncestor(isDialog()))
+
+  private fun openBranchSheet(): ComponentDialog {
+    composeRule.onNodeWithContentDescription(nativeString("Chat actions")).performClick()
+    composeRule.onNodeWithText(nativeString("Switch branch")).assertIsEnabled().performClick()
+    composeRule.waitUntil { !controller.sessionBranchesLoading.value }
+    composeRule.onNode(isDialog()).assertExists()
+    branchRow(2).assertIsDisplayed()
+    return checkNotNull(ShadowDialog.getLatestDialog()) as ComponentDialog
+  }
+
+  private fun showBranchChat(direction: LayoutDirection = LayoutDirection.Ltr): MainViewModel {
+    closeNodeRuntimeTestFixture(runtime)
+    AndroidScreenshotFixture.configure(AndroidScreenshotScene.Branches)
+    runtime = NodeRuntime(app, prefs, NodeRuntimeMode.ScreenshotFixture)
+    controller =
+      NodeRuntime::class.java
+        .getDeclaredField("chat")
+        .apply { isAccessible = true }
+        .get(runtime) as ChatController
+    setApplicationRuntime(runtime)
+    prefs.gatewayRegistry.upsert(
+      GatewayRegistryEntry(stableId = AndroidScreenshotFixture.gatewayId, kind = GatewayRegistryEntryKind.MANUAL, name = "Test gateway"),
+    )
+    prefs.gatewayRegistry.setActive(AndroidScreenshotFixture.gatewayId)
+    val model =
+      showChat(
+        viewportWidth = 720.dp,
+        viewportHeight = { 720.dp },
+        expectedMessageCount = 2,
+        layoutDirection = { direction },
+        scene = AndroidScreenshotScene.Branches,
+      )
+    composeRule.waitUntil {
+      model.chatSessionBranches.value.size == 12 && model.chatOutboxPresentationRestored.value && !model.chatSessionBranchesLoading.value
+    }
+    assertEquals(0, controller.pendingRunCount.value)
+    return model
+  }
+
+  private data class BranchRequest(
+    val method: String,
+    val params: JsonObject,
+  )
+
+  private fun branchEffectJobs(): Set<Job> {
+    val jobs = mutableSetOf<Job>()
+
+    fun collect(parent: Job) {
+      for (child in parent.children) {
+        if (jobs.add(child)) collect(child)
+      }
+    }
+    collect(branchRootEffectJob)
+    return jobs
+  }
+
+  private fun queueBranchAction(action: () -> Boolean): Job {
+    val before = branchEffectJobs()
+    assertTrue(action())
+    val added = branchEffectJobs() - before
+    val operations = added.filter { job -> job.children.none { it in added } }
+    assertEquals("The real callback must queue one unambiguous new operation Job", 1, operations.size)
+    return operations.single().also {
+      assertFalse("The captured operation must still be queued", it.isCompleted)
+    }
+  }
+
+  private fun disposeBranchFixture(
+    release: CompletableDeferred<Unit>,
+    observedJobs: Collection<Job>,
+  ) {
+    val children = branchEffectJobs()
+    try {
+      composeRule.runOnUiThread { branchRootView.disposeComposition() }
+    } finally {
+      release.complete(Unit)
+      composeRule.mainClock.autoAdvance = true
+    }
+    composeRule.waitUntil(timeoutMillis = 5_000) {
+      children.all { it.isCompleted } && observedJobs.all { it.isCompleted }
+    }
+    println("Branch fixture cleanup completed: ${children.size} root descendants, ${observedJobs.size} observed RPC jobs")
+  }
+
+  private fun withBranchRequests(
+    hold: String? = null,
+    direction: LayoutDirection = LayoutDirection.Ltr,
+    assertions: (MainViewModel, ConcurrentLinkedQueue<BranchRequest>, CompletableDeferred<Unit>) -> Unit,
+  ) {
+    val model = showBranchChat(direction)
+    val calls = ConcurrentLinkedQueue<BranchRequest>()
+    val observedJobs = ConcurrentLinkedQueue<Job>()
+    val release = CompletableDeferred<Unit>()
+    val field = ChatController::class.java.getDeclaredField("requestGatewayForGateway").apply { isAccessible = true }
+
+    @Suppress("UNCHECKED_CAST")
+    val original = field.get(controller) as suspend (String, String, String?) -> String
+    val request: suspend (String, String, String?) -> String = { gateway, method, params ->
+      if (method.startsWith("sessions.branches.")) {
+        observedJobs.add(currentCoroutineContext().job)
+        assertEquals(AndroidScreenshotFixture.gatewayId, gateway)
+        calls.add(BranchRequest(method, Json.parseToJsonElement(checkNotNull(params)).jsonObject))
+        if (method == hold) release.await()
+      }
+      original(gateway, method, params)
+    }
+    var primaryFailure: Throwable? = null
+    try {
+      field.set(controller, request)
+      assertions(model, calls, release)
+    } catch (failure: Throwable) {
+      primaryFailure = failure
+      throw failure
+    } finally {
+      val cleanupFailure = runCatching { disposeBranchFixture(release, observedJobs) }.exceptionOrNull()
+      val restoreFailure = runCatching { field.set(controller, original) }.exceptionOrNull()
+      if (cleanupFailure != null && restoreFailure != null) cleanupFailure.addSuppressed(restoreFailure)
+      (cleanupFailure ?: restoreFailure)?.let { failure ->
+        if (primaryFailure != null) primaryFailure.addSuppressed(failure) else throw failure
+      }
+    }
+  }
+
+  @Suppress("UNCHECKED_CAST")
+  private fun runtimeScopes() =
+    NodeRuntime::class.java
+      .getDeclaredField("_operatorScopes")
+      .apply { isAccessible = true }
+      .get(runtime) as MutableStateFlow<List<String>>
+
+  @Suppress("UNCHECKED_CAST")
+  private fun <T> controllerFlow(name: String) =
+    ChatController::class.java
+      .getDeclaredField(name)
+      .apply { isAccessible = true }
+      .get(controller) as MutableStateFlow<T>
 
   @Test
   @Config(qualifiers = "w800dp-h800dp-mdpi")
@@ -3675,14 +4193,23 @@ class ChatComposerLayoutTest {
     viewportOffset: () -> IntOffset = { IntOffset.Zero },
     layoutDirection: () -> LayoutDirection = { LayoutDirection.Ltr },
     restorationTester: StateRestorationTester? = null,
+    scene: AndroidScreenshotScene = AndroidScreenshotScene.Chat,
   ): MainViewModel {
     val viewModel = MainViewModel(app, prefs, SavedStateHandle())
     viewModelStore.put("chat", viewModel)
-    viewModel.enterScreenshotFixtureMode(AndroidScreenshotScene.Chat)
+    viewModel.enterScreenshotFixtureMode(scene)
     val setContent = restorationTester?.let { it::setContent } ?: composeRule::setContent
     setContent {
       val currentActivity = requireNotNull(LocalActivity.current)
       SideEffect { chatActivity = currentActivity }
+      if (scene == AndroidScreenshotScene.Branches) {
+        val rootContext = rememberCompositionContext()
+        val rootView = LocalView.current
+        SideEffect {
+          branchRootEffectJob = checkNotNull(rootContext.effectCoroutineContext[Job])
+          branchRootView = generateSequence(rootView) { it.parent as? View }.filterIsInstance<AbstractComposeView>().single()
+        }
+      }
       if (useChatShell) {
         val activity = requireNotNull(LocalActivity.current)
         val view = LocalView.current

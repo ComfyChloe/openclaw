@@ -1640,6 +1640,26 @@ class MainViewModel private constructor(
 
   suspend fun switchChatSessionBranch(leafEntryId: String): Boolean = ensureRuntime().switchChatSessionBranch(leafEntryId)
 
+  internal fun isCurrentChatBranchTarget(
+    owner: ChatComposerOwner,
+    selectionGeneration: Long,
+  ): Boolean {
+    val runtime = runtimeRef.value ?: return false
+    return runtime.chatSelectionGeneration.value == selectionGeneration && currentChatComposerOwner() == owner
+  }
+
+  internal fun canSwitchChatSessionBranch(
+    owner: ChatComposerOwner,
+    selectionGeneration: Long,
+    leafEntryId: String,
+  ): Boolean {
+    val runtime = runtimeRef.value ?: return false
+    return isCurrentChatBranchTarget(owner, selectionGeneration) &&
+      operatorScopesAllowAdmin(runtime.operatorScopes.value) &&
+      !runtime.chatSessionBranchesLoading.value && !runtime.chatSessionBranchSwitching.value &&
+      runtime.chatSessionBranches.value.any { it.leafEntryId == leafEntryId && !it.active }
+  }
+
   suspend fun listWorkspaceFiles(
     path: String?,
     offset: Int? = null,
