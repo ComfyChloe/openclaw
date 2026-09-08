@@ -2,24 +2,24 @@ package ai.openclaw.app.ui
 
 import ai.openclaw.app.MainViewModel
 import ai.openclaw.app.ui.chat.ChatScreen
-import ai.openclaw.app.ui.chat.rememberChatRealtimeTalkLauncher
 import ai.openclaw.app.ui.chat.TalkCameraControls
-import androidx.compose.foundation.layout.Column
+import ai.openclaw.app.ui.chat.rememberChatRealtimeTalkLauncher
+import ai.openclaw.app.ui.design.ClawScaffold
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.ui.Modifier
-import ai.openclaw.app.ui.design.ClawScaffold
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.window.layout.DisplayFeature
 
@@ -48,35 +48,41 @@ internal fun UnifiedChatShellScreen(
       TalkStatusRow(talkModeEnabled, talkHasFailure, talkStatus)
       TalkCameraControls(viewModel)
       Box(Modifier.weight(1f)) {
-    ChatScreen(
-      viewModel = viewModel,
-      talkActive = talkModeEnabled,
-      showSidebarButton = showSidebarButton,
-      onOpenSidebar = onOpenSidebar,
-      onToggleTalk = {
-        if (talkModeEnabled) {
-          viewModel.setTalkModeEnabled(false)
-        } else {
-          startTalk()
-        }
-      },
-      onOpenDashboard = onOpenDashboard,
-      onOpenGatewaySettings = onOpenGatewaySettings,
-      onOpenProvidersModels = onOpenProvidersModels,
-      tabletopPanes = tabletopPanes,
-      features = features,
-    )
+        ChatScreen(
+          viewModel = viewModel,
+          talkActive = talkModeEnabled,
+          showSidebarButton = showSidebarButton,
+          onOpenSidebar = onOpenSidebar,
+          onToggleTalk = {
+            if (talkModeEnabled) {
+              viewModel.setTalkModeEnabled(false)
+            } else {
+              startTalk()
+            }
+          },
+          onOpenDashboard = onOpenDashboard,
+          onOpenGatewaySettings = onOpenGatewaySettings,
+          onOpenProvidersModels = onOpenProvidersModels,
+          tabletopPanes = tabletopPanes,
+          features = features,
+        )
       }
     }
   }
 }
 
 @Composable
-internal fun TalkStatusRow(enabled: Boolean, hasFailure: Boolean, status: String) {
-  if (enabled || hasFailure) Text(
-    text = status,
-    style = MaterialTheme.typography.labelSmall,
-    color = if (hasFailure) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
-    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp),
-  )
+internal fun TalkStatusRow(
+  enabled: Boolean,
+  hasFailure: Boolean,
+  status: String,
+) {
+  if (enabled || hasFailure) {
+    Text(
+      text = status,
+      style = MaterialTheme.typography.labelSmall,
+      color = if (hasFailure) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+      modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp),
+    )
+  }
 }

@@ -36,7 +36,11 @@ internal fun bindCameraUseCases(
   }
   return AutoCloseable {
     if (activeCameraBinding === token) {
-      try { provider.unbind(*useCases) } finally { activeCameraBinding = null }
+      try {
+        provider.unbind(*useCases)
+      } finally {
+        activeCameraBinding = null
+      }
     }
   }
 }
@@ -49,35 +53,41 @@ internal class TalkCameraPreview(
 ) : AutoCloseable {
   private var closed = false
 
-  suspend fun captureMessage(maxMessageBytes: Int): String = withContext(Dispatchers.Main.immediate) {
-    check(!closed && isCurrent()) { "Talk camera is no longer active" }
-    check(view.previewStreamState.value == PreviewView.StreamState.STREAMING) { "Camera preview is not ready; try again" }
-    val bitmap = view.bitmap ?: error("Camera preview has no current image")
-    try {
-      val envelopeBytes = talkCameraImageMessage("").toByteArray(Charsets.UTF_8).size
-      val jpegBudget = ((maxMessageBytes - envelopeBytes) / 4) * 3
-      check(jpegBudget > 0) { "Realtime image message budget is too small" }
-      val result = JpegSizeLimiter.compressToLimit(
-        initialWidth = bitmap.width,
-        initialHeight = bitmap.height,
-        startQuality = 80,
-        maxBytes = jpegBudget,
-        encode = { width, height, quality ->
-          val image = if (width == bitmap.width && height == bitmap.height) bitmap else Bitmap.createScaledBitmap(bitmap, width, height, true)
-          try {
-            ByteArrayOutputStream().use { output ->
-              check(image.compress(Bitmap.CompressFormat.JPEG, quality, output)) { "Could not encode camera image" }
-              output.toByteArray()
-            }
-          } finally { if (image !== bitmap) image.recycle() }
-        },
-      )
-      val message = talkCameraImageMessage(Base64.encodeToString(result.bytes, Base64.NO_WRAP))
-      check(message.toByteArray(Charsets.UTF_8).size <= maxMessageBytes) { "Camera image exceeds the Realtime message budget" }
-      check(!closed && isCurrent()) { "Talk camera changed during capture" }
-      message
-    } finally { bitmap.recycle() }
-  }
+  suspend fun captureMessage(maxMessageBytes: Int): String =
+    withContext(Dispatchers.Main.immediate) {
+      check(!closed && isCurrent()) { "Talk camera is no longer active" }
+      check(view.previewStreamState.value == PreviewView.StreamState.STREAMING) { "Camera preview is not ready; try again" }
+      val bitmap = view.bitmap ?: error("Camera preview has no current image")
+      try {
+        val envelopeBytes = talkCameraImageMessage("").toByteArray(Charsets.UTF_8).size
+        val jpegBudget = ((maxMessageBytes - envelopeBytes) / 4) * 3
+        check(jpegBudget > 0) { "Realtime image message budget is too small" }
+        val result =
+          JpegSizeLimiter.compressToLimit(
+            initialWidth = bitmap.width,
+            initialHeight = bitmap.height,
+            startQuality = 80,
+            maxBytes = jpegBudget,
+            encode = { width, height, quality ->
+              val image = if (width == bitmap.width && height == bitmap.height) bitmap else Bitmap.createScaledBitmap(bitmap, width, height, true)
+              try {
+                ByteArrayOutputStream().use { output ->
+                  check(image.compress(Bitmap.CompressFormat.JPEG, quality, output)) { "Could not encode camera image" }
+                  output.toByteArray()
+                }
+              } finally {
+                if (image !== bitmap) image.recycle()
+              }
+            },
+          )
+        val message = talkCameraImageMessage(Base64.encodeToString(result.bytes, Base64.NO_WRAP))
+        check(message.toByteArray(Charsets.UTF_8).size <= maxMessageBytes) { "Camera image exceeds the Realtime message budget" }
+        check(!closed && isCurrent()) { "Talk camera changed during capture" }
+        message
+      } finally {
+        bitmap.recycle()
+      }
+    }
 
   override fun close() {
     if (closed) return
@@ -86,14 +96,25 @@ internal class TalkCameraPreview(
   }
 }
 
-internal fun talkCameraImageMessage(base64: String): String = buildJsonObject {
-  put("type", "conversation.item.create")
-  put("item", buildJsonObject {
-    put("type", "message")
-    put("role", "user")
-    put("content", JsonArray(listOf(buildJsonObject {
-      put("type", "input_image")
-      put("image_url", "data:image/jpeg;base64,$base64")
-    })))
-  })
-}.toString()
+internal fun talkCameraImageMessage(base64: String): String =
+  buildJsonObject {
+    put("type", "conversation.item.create")
+    put(
+      "item",
+      buildJsonObject {
+        put("type", "message")
+        put("role", "user")
+        put(
+          "content",
+          JsonArray(
+            listOf(
+              buildJsonObject {
+                put("type", "input_image")
+                put("image_url", "data:image/jpeg;base64,$base64")
+              },
+            ),
+          ),
+        )
+      },
+    )
+  }.toString()

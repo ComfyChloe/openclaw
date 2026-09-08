@@ -18,10 +18,19 @@ internal fun createTestTalkRealtimeClient(
   isCurrent: () -> Boolean = { true },
   supportsCamera: Boolean = false,
   onRecoverableError: (String) -> Unit = {},
-): TalkRealtimeClient = TalkRealtimeClient(
-  context, scope, lease, sessionKey, coordinator, isCurrent,
-  supportsCamera = supportsCamera,
-  onStatus = onStatus, onTranscript = onTranscript, onFailure = onFailure,
-  onRecoverableError = onRecoverableError,
-  preferredAudioInputDevice = preferredAudioInputDevice, onInputRequested = onInputRequested,
-)
+): TalkRealtimeClient =
+  TalkRealtimeClient(
+    context,
+    scope,
+    lease,
+    sessionKey,
+    coordinator,
+    isCurrent,
+    supportsCamera = supportsCamera,
+    onStatus = onStatus,
+    onTranscript = onTranscript,
+    onFailure = onFailure,
+    onRecoverableError = onRecoverableError,
+    preferredAudioInputDevice = preferredAudioInputDevice,
+    onInputRequested = onInputRequested,
+  )

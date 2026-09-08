@@ -6,10 +6,10 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.put
 import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.put
 import java.util.Locale
 
 internal data class TalkModeGatewayConfigState(
@@ -85,8 +85,9 @@ internal class TalkWireTarget(
   private val fields: JsonObject by lazy {
     require(sessionKey.isNotBlank() && (agentId == null || agentId.isNotBlank())) { "Talk target is empty" }
     val parts = sessionKey.split(':', limit = 3)
-    val scoped = parts.size == 3 && parts[0] == "agent" &&
-      Regex("[A-Za-z0-9][A-Za-z0-9_-]{0,63}").matches(parts[1]) && parts[2].isNotBlank()
+    val scoped =
+      parts.size == 3 && parts[0] == "agent" &&
+        Regex("[A-Za-z0-9][A-Za-z0-9_-]{0,63}").matches(parts[1]) && parts[2].isNotBlank()
     require(!sessionKey.startsWith("agent:") || scoped) { "Talk session key is malformed" }
     require(!scoped || agentId == null || parts[1].equals(agentId, ignoreCase = true)) { "Talk session owner does not match the selected agent" }
     require(lease.supportsTalkSessionTarget || agentId == null || scoped) { "This Gateway cannot safely target this chat; select an agent-scoped chat or update the Gateway" }
@@ -96,17 +97,26 @@ internal class TalkWireTarget(
     }
   }
 
-  fun parameters(method: String, raw: String?): String? {
+  fun parameters(
+    method: String,
+    raw: String?,
+  ): String? {
     if (method !in keyedMethods) return raw
-    val body = kotlinx.serialization.json.Json.parseToJsonElement(raw ?: "{}") as? JsonObject ?: error("Invalid Talk request")
+    val body =
+      kotlinx.serialization.json.Json
+        .parseToJsonElement(raw ?: "{}") as? JsonObject ?: error("Invalid Talk request")
     require(body["sessionKey"] == null || body["sessionKey"] == JsonPrimitive(sessionKey)) { "Talk request changed its captured chat" }
     require(body["agentId"] == null || (agentId != null && body["agentId"] == JsonPrimitive(agentId))) { "Talk request changed its captured agent" }
     if (method == "talk.catalog" && !lease.supportsTalkSessionTarget) return "{}"
     return JsonObject(body.filterKeys { it != "sessionKey" && it != "agentId" } + fields).toString()
   }
 
-  suspend fun request(method: String, raw: String?, timeoutMs: Long = 15_000, withEnqueue: (() -> Unit) -> Unit = { it() }): String =
-    lease.request(method, parameters(method, raw), timeoutMs, withEnqueue)
+  suspend fun request(
+    method: String,
+    raw: String?,
+    timeoutMs: Long = 15_000,
+    withEnqueue: (() -> Unit) -> Unit = { it() },
+  ): String = lease.request(method, parameters(method, raw), timeoutMs, withEnqueue)
 
   private companion object {
     val keyedMethods = setOf("talk.catalog", "talk.client.create", "talk.session.create", "talk.client.toolCall", "talk.client.transcript", "talk.client.close", "talk.client.steer")
@@ -139,10 +149,11 @@ internal fun resolveAndroidRealtimeRoute(
 internal fun selectedAndroidRealtimeProvider(catalog: JsonObject?): JsonObject {
   val group = catalog?.get("realtime").asObjectOrNull() ?: error("Gateway did not return realtime Talk capabilities")
   val active = group["activeProvider"].asStringOrNull() ?: error("No realtime Talk provider is selected")
-  val selected = (group["providers"] as? JsonArray)?.mapNotNull { it.asObjectOrNull() }?.firstOrNull { provider ->
-    provider["id"].asStringOrNull() == active ||
-      (provider["aliases"] as? JsonArray)?.any { it.asStringOrNull() == active } == true
-  } ?: error("Gateway selected an unavailable Talk provider")
+  val selected =
+    (group["providers"] as? JsonArray)?.mapNotNull { it.asObjectOrNull() }?.firstOrNull { provider ->
+      provider["id"].asStringOrNull() == active ||
+        (provider["aliases"] as? JsonArray)?.any { it.asStringOrNull() == active } == true
+    } ?: error("Gateway selected an unavailable Talk provider")
   return selected
 }
 

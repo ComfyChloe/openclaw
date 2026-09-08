@@ -521,17 +521,30 @@ class TalkSettingsPage extends OpenClawLightDomElement {
   }
 
   private changeAuthMethod(method: string) {
-    if (this.mutationDisabled) return;
+    if (this.mutationDisabled) {
+      return;
+    }
     const provider = selectedTalkProviderOption(this.catalog, this.liveSelection());
-    if (!provider || (method && !provider.authMethods?.some((choice) => choice.id === method))) return;
+    if (!provider || (method && !provider.authMethods?.some((choice) => choice.id === method))) {
+      return;
+    }
     const keys = this.selectedProviderConfigKeys();
     // Only this provider's credential policy changes. Auto provider/model/transport remain untouched.
     for (const key of keys) {
-      this.context.runtimeConfig.removeFormValue(["talk", "realtime", "providers", key, "authMethod"]);
+      this.context.runtimeConfig.removeFormValue([
+        "talk",
+        "realtime",
+        "providers",
+        key,
+        "authMethod",
+      ]);
     }
-    if (method) this.context.runtimeConfig.patchForm(
-      ["talk", "realtime", "providers", keys[0] ?? provider.id, "authMethod"], method,
-    );
+    if (method) {
+      this.context.runtimeConfig.patchForm(
+        ["talk", "realtime", "providers", keys[0] ?? provider.id, "authMethod"],
+        method,
+      );
+    }
   }
 
   private changeVoice(voice: string | null) {

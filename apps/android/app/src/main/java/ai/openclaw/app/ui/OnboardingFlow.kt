@@ -1683,7 +1683,9 @@ private fun QrCameraPreview(
             analysisUseCase.clearAnalyzer()
             return@Runnable
           }
-          val acquired = ai.openclaw.app.node.bindCameraUseCases(provider, lifecycleOwner, selector, previewUseCase, analysisUseCase)
+          val acquired =
+            ai.openclaw.app.node
+              .bindCameraUseCases(provider, lifecycleOwner, selector, previewUseCase, analysisUseCase)
           if (disposed) {
             analysisUseCase.clearAnalyzer()
             acquired.close()

@@ -41,13 +41,14 @@ internal fun TalkCameraControls(viewModel: MainViewModel) {
   var error by remember(callId) { mutableStateOf(false) }
   var permissionCall by remember { mutableStateOf<String?>(null) }
   val preview = remember(callId) { PreviewView(context).apply { scaleType = PreviewView.ScaleType.FIT_CENTER } }
-  val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-    if (permissionCall != null && permissionCall == viewModel.talkCameraCallId.value) {
-      enabled = granted
-      error = !granted
+  val permission =
+    rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+      if (permissionCall != null && permissionCall == viewModel.talkCameraCallId.value) {
+        enabled = granted
+        error = !granted
+      }
+      permissionCall = null
     }
-    permissionCall = null
-  }
   LaunchedEffect(callId, enabled, facing, preview) {
     if (!enabled) return@LaunchedEffect
     var binding: AutoCloseable? = null
@@ -78,8 +79,10 @@ internal fun TalkCameraControls(viewModel: MainViewModel) {
           permission.launch(Manifest.permission.CAMERA)
         }
       }) { Text(if (enabled) nativeString("Turn camera off") else nativeString("Turn camera on")) }
-      if (enabled) TextButton(onClick = { facing = if (facing == "front") "back" else "front" }) {
-        Text(if (facing == "front") nativeString("Use back camera") else nativeString("Use front camera"))
+      if (enabled) {
+        TextButton(onClick = { facing = if (facing == "front") "back" else "front" }) {
+          Text(if (facing == "front") nativeString("Use back camera") else nativeString("Use front camera"))
+        }
       }
     }
     if (error) Text(nativeString("Camera unavailable. Allow camera access and close other camera views, then try again."))

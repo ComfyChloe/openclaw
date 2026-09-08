@@ -23,8 +23,9 @@ export function prepareTalkSessionTarget(
   requestedAgentId?: string,
 ): PreparedTalkSessionTarget {
   const requestedKey = normalizeOptionalString(requestedSessionKey);
-  const owner = normalizeOptionalString(requestedAgentId)
-    ? resolveConfiguredAgentId(cfg, requestedAgentId)
+  const requestedAgent = normalizeOptionalString(requestedAgentId);
+  const owner = requestedAgent
+    ? resolveConfiguredAgentId(cfg, requestedAgent)
     : resolveTalkSessionAgentId(cfg, requestedKey ?? "main");
   const sessionKey = requestedKey ?? resolveAgentMainSessionKey({ cfg, agentId: owner });
   const { agentId, canonicalKey, storePath } = resolveTalkSessionStorageTarget(

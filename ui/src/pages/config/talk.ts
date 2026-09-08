@@ -310,13 +310,20 @@ function renderGptLiveRow(props: TalkViewProps) {
 
 function renderAuthRow(props: TalkViewProps) {
   const provider = selectedTalkProviderOption(props.catalog, props.selection);
-  if (!provider?.authMethods?.length) return nothing;
-  const entry = talkProviderConfigKeys(props.selection, provider)
-    .map((key) => props.selection.providerEntries[key]).find((value) => value !== undefined);
+  if (!provider?.authMethods?.length) {
+    return nothing;
+  }
+  // Explicit selection inherits only canonical config; Auto also inherits alias defaults.
+  const keys = talkProviderConfigKeys(props.selection, provider).filter(
+    (key) => !props.selection.provider || key === props.selection.provider || key === provider.id,
+  );
+  const authMethod = keys
+    .map((key) => props.selection.providerEntries[key]?.authMethod)
+    .find((value) => value != null);
   return renderSettingsSelectRow({
     title: t("talkPage.auth.title"),
     description: t("talkPage.auth.description"),
-    value: entry ? entry.authMethod ?? "" : provider.selectedAuthMethod ?? "",
+    value: keys.length > 0 ? (authMethod ?? "") : (provider.selectedAuthMethod ?? ""),
     options: [
       { value: "", label: t("talkPage.auth.auto") },
       ...provider.authMethods.map(({ id, label }) => ({ value: id, label })),

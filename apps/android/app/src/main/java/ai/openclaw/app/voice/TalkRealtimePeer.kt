@@ -162,9 +162,15 @@ internal class TalkRealtimePeer(
           checkCurrent(createdPeer)
           // RFC 8841: absent max-message-size is 64 KiB; zero means unbounded.
           // Keep our own 64 KiB ceiling even when the remote endpoint allows more.
-          maxMessageBytes = answer.lineSequence().firstOrNull { it.startsWith("a=max-message-size:") }
-            ?.substringAfter(":")?.trim()?.toLongOrNull()?.takeIf { it > 0 }
-            ?.coerceAtMost(65_536)?.toInt() ?: 65_536
+          maxMessageBytes = answer
+            .lineSequence()
+            .firstOrNull { it.startsWith("a=max-message-size:") }
+            ?.substringAfter(":")
+            ?.trim()
+            ?.toLongOrNull()
+            ?.takeIf { it > 0 }
+            ?.coerceAtMost(65_536)
+            ?.toInt() ?: 65_536
           val remoteSet = CompletableDeferred<Unit>()
           createdPeer.setRemoteDescription(SdpResult(set = remoteSet), SessionDescription(SessionDescription.Type.ANSWER, answer))
           remoteSet.await()

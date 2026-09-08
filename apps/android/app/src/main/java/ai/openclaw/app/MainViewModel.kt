@@ -622,8 +622,11 @@ class MainViewModel private constructor(
   val talkModeHasFailure: StateFlow<Boolean> = runtimeState(initial = false) { it.talkModeHasFailure }
   internal val talkCameraCallId: StateFlow<String?> = runtimeState(initial = null) { it.talkCameraCallId }
 
-  internal suspend fun openTalkCamera(callId: String, view: androidx.camera.view.PreviewView, facing: String): AutoCloseable =
-    ensureRuntime().openTalkCamera(callId, view, facing)
+  internal suspend fun openTalkCamera(
+    callId: String,
+    view: androidx.camera.view.PreviewView,
+    facing: String,
+  ): AutoCloseable = ensureRuntime().openTalkCamera(callId, view, facing)
 
   val chatSessionKey: StateFlow<String> = runtimeState(initial = "main") { it.chatSessionKey }
   internal val chatPermissionSettingsAvailable: StateFlow<Boolean> = runtimeState(initial = false) { it.chatPermissionSettingsAvailable }

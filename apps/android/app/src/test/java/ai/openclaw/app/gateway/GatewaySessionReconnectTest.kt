@@ -2066,44 +2066,57 @@ class GatewaySessionReconnectTest {
     }
 
   @Test
-  fun talkCapabilityIsCapturedBeforeReadyAndCannotMoveToReplacementLease() = runBlocking {
-    val pending = AtomicReference(CompletableDeferred<Pair<WebSocket, String>>())
-    val captured = ConcurrentLinkedQueue<GatewaySession.RequestLease>()
-    lateinit var harness: ReconnectHarness
-    val server = startGatewayServer(Json) { socket, id, method ->
-      if (method == "connect") pending.get().complete(socket to id)
-      else socket.send("""{"type":"res","id":"$id","ok":true,"payload":{}}""")
-    }
-    harness = createReconnectHarness(onConnected = { captured.add(checkNotNull(harness.session.captureRequestLease())) })
-    val leases = mutableListOf<GatewaySession.RequestLease>()
-    try {
-      for (index in 0..2) {
-        if (index > 0) {
-          harness.session.disconnectAndJoin()
-          pending.set(CompletableDeferred())
+  fun talkCapabilityIsCapturedBeforeReadyAndCannotMoveToReplacementLease() =
+    runBlocking {
+      val pending = AtomicReference(CompletableDeferred<Pair<WebSocket, String>>())
+      val captured = ConcurrentLinkedQueue<GatewaySession.RequestLease>()
+      lateinit var harness: ReconnectHarness
+      val server =
+        startGatewayServer(Json) { socket, id, method ->
+          if (method == "connect") {
+            pending.get().complete(socket to id)
+          } else {
+            socket.send("""{"type":"res","id":"$id","ok":true,"payload":{}}""")
+          }
         }
-        connectNodeSession(harness.session, server.server.port)
-        val (socket, id) = withTimeout(LIFECYCLE_TEST_TIMEOUT_MS) { pending.get().await() }
-        assertNull("No lease before the physical hello is ready", harness.session.captureRequestLease())
-        socket.send(connectResponseFrame(id,
-          methods = if (index == 2) null else setOf("talk.catalog", "talk.client.create", "talk.session.create", "talk.client.toolCall", "talk.client.transcript", "talk.client.close", "talk.client.steer"),
-          capabilities = if (index == 0) setOf("talk-session-target-v1") else emptySet()))
-        withTimeout(LIFECYCLE_TEST_TIMEOUT_MS) { while (captured.isEmpty()) delay(1) }
-        leases.add(captured.remove())
-        assertEquals(index == 0, leases.last().supportsTalkSessionTarget)
+      harness = createReconnectHarness(onConnected = { captured.add(checkNotNull(harness.session.captureRequestLease())) })
+      val leases = mutableListOf<GatewaySession.RequestLease>()
+      try {
+        for (index in 0..2) {
+          if (index > 0) {
+            harness.session.disconnectAndJoin()
+            pending.set(CompletableDeferred())
+          }
+          connectNodeSession(harness.session, server.server.port)
+          val (socket, id) = withTimeout(LIFECYCLE_TEST_TIMEOUT_MS) { pending.get().await() }
+          assertNull("No lease before the physical hello is ready", harness.session.captureRequestLease())
+          socket.send(
+            connectResponseFrame(
+              id,
+              methods = if (index == 2) null else setOf("talk.catalog", "talk.client.create", "talk.session.create", "talk.client.toolCall", "talk.client.transcript", "talk.client.close", "talk.client.steer"),
+              capabilities = if (index == 0) setOf("talk-session-target-v1") else emptySet(),
+            ),
+          )
+          withTimeout(LIFECYCLE_TEST_TIMEOUT_MS) { while (captured.isEmpty()) delay(1) }
+          leases.add(captured.remove())
+          assertEquals(index == 0, leases.last().supportsTalkSessionTarget)
+        }
+        assertTrue(leases.first().supportsTalkSessionTarget)
+        assertFalse(leases.first().isCurrent())
+        val old =
+          ai.openclaw.app.voice
+            .TalkWireTarget(leases.first(), "agent:work:captured", "work")
+        val replacement =
+          ai.openclaw.app.voice
+            .TalkWireTarget(leases.last(), "agent:other:new", "other")
+        assertTrue(Json.parseToJsonElement(old.parameters("talk.client.close", "{}")!!).jsonObject.containsKey("agentId"))
+        assertFalse(Json.parseToJsonElement(replacement.parameters("talk.client.close", "{}")!!).jsonObject.containsKey("agentId"))
+        assertTrue(runCatching { old.request("talk.client.close", "{}") }.isFailure)
+        assertFalse(server.requestFrames.any { it["method"]?.jsonPrimitive?.content == "talk.client.close" })
+      } finally {
+        shutdownReconnectHarness(harness, server)
       }
-      assertTrue(leases.first().supportsTalkSessionTarget)
-      assertFalse(leases.first().isCurrent())
-      val old = ai.openclaw.app.voice.TalkWireTarget(leases.first(), "agent:work:captured", "work")
-      val replacement = ai.openclaw.app.voice.TalkWireTarget(leases.last(), "agent:other:new", "other")
-      assertTrue(Json.parseToJsonElement(old.parameters("talk.client.close", "{}")!!).jsonObject.containsKey("agentId"))
-      assertFalse(Json.parseToJsonElement(replacement.parameters("talk.client.close", "{}")!!).jsonObject.containsKey("agentId"))
-      assertTrue(runCatching { old.request("talk.client.close", "{}") }.isFailure)
-      assertFalse(server.requestFrames.any { it["method"]?.jsonPrimitive?.content == "talk.client.close" })
-    } finally {
-      shutdownReconnectHarness(harness, server)
     }
-  }
 
   private fun createReconnectHarness(
     onConnected: () -> Unit = {},

@@ -42,11 +42,11 @@ internal data class TalkRealtimeSnapshot(
 internal class TalkRealtimeClient(
   context: Context,
   scope: CoroutineScope,
-  private val lease: GatewaySession.RequestLease,
-  private val sessionKey: String,
+  lease: GatewaySession.RequestLease,
+  sessionKey: String,
   private val agent: RealtimeAgentCoordinator,
   private val isCurrent: () -> Boolean,
-  private val agentId: String? = null,
+  agentId: String? = null,
   private val supportsCamera: Boolean = false,
   private val onStatus: (String) -> Unit,
   private val onTranscript: (String, String, Boolean) -> Unit,
@@ -134,27 +134,31 @@ internal class TalkRealtimeClient(
       check(!closed && isCurrent()) { "Realtime call stopped" }
       val params =
         buildJsonObject {
-          put("sessionKey", sessionKey)
-              agentId?.let { put("agentId", it) }
           put("mode", "realtime")
           put("transport", "webrtc")
           put("brain", "agent-consult")
-          put("capabilities", JsonArray(buildList {
-            add(JsonPrimitive("voice-transcript"))
-            if (supportsCamera) add(JsonPrimitive("camera-frame"))
-          }))
+          put(
+            "capabilities",
+            JsonArray(
+              buildList {
+                add(JsonPrimitive("voice-transcript"))
+                if (supportsCamera) add(JsonPrimitive("camera-frame"))
+              },
+            ),
+          )
         }
       // An accepted create can finish after Stop; retain its bounded ACK so its allocation is closed.
-      val payload = withContext(NonCancellable) {
-        wireTarget.request("talk.client.create", params.toString(), 30_000) { enqueue ->
-          if (closed || !isCurrent()) throw GatewayRequestNotEnqueued("realtime call stopped")
-          enqueue()
+      val payload =
+        withContext(NonCancellable) {
+          wireTarget.request("talk.client.create", params.toString(), 30_000) { enqueue ->
+            if (closed || !isCurrent()) throw GatewayRequestNotEnqueued("realtime call stopped")
+            enqueue()
+          }
         }
-      }
       val result = json.parseToJsonElement(payload) as? JsonObject ?: error("Invalid realtime session")
       voiceSessionId = result.string("voiceSessionId") ?: error("Gateway returned no voice session")
       try {
-        check(!closed && isCurrent() && lease.isCurrent()) { "Realtime call stopped during setup" }
+        check(!closed && isCurrent() && wireTarget.lease.isCurrent()) { "Realtime call stopped during setup" }
         check(result.string("transport") == "webrtc") { "Gateway returned an unsupported Talk transport" }
         check(result["clientControl"] == null) { "Client-owned Talk control was not negotiated" }
         gatewayTranscripts = result.string("transcriptOwner") == "gateway"
@@ -179,18 +183,18 @@ internal class TalkRealtimeClient(
             ?.mapValues { (_, value) ->
               (value as? JsonPrimitive)?.content ?: error("Invalid offer header")
             }.orEmpty()
-        val route = lease.realtimeOfferRoute(offerUrl)
+        val route = wireTarget.lease.realtimeOfferRoute(offerUrl)
         val voiceId = checkNotNull(voiceSessionId)
         agent.beginSession(
           RealtimeAgentSession(
             voiceId,
-            sessionKey,
+            wireTarget.sessionKey,
             clientTransport(),
-            agentId = agentId,
+            agentId = wireTarget.agentId,
           ),
         )
         peer.start { offer -> route.exchange(secret, headers, offer) }
-        check(!closed && isCurrent() && lease.isCurrent()) { "Realtime call replaced during setup" }
+        check(!closed && isCurrent() && wireTarget.lease.isCurrent()) { "Realtime call replaced during setup" }
         if (!closed) {
           started = true
           snapshot = resolvedSnapshot
@@ -203,17 +207,27 @@ internal class TalkRealtimeClient(
     }
 
   private fun handleProviderEvent(payload: String) {
-    if (!lease.isCurrent() || (closed && closing?.isCompleted != false) || (!closed && !isCurrent())) return
+    if (!wireTarget.lease.isCurrent() || (closed && closing?.isCompleted != false) || (!closed && !isCurrent())) return
     val event = runCatching { json.parseToJsonElement(payload) as? JsonObject }.getOrNull() ?: return fail("Invalid realtime event")
     // Physical close drains accepted speech to its original target, but retired callbacks
     // must never start tools on the manager's replacement coordinator session.
-    if (closed && event.string("type") !in setOf(
-      "input_audio_buffer.committed", "conversation.item.added", "conversation.item.created",
-      "conversation.item.done", "response.output_item.done",
-      "conversation.item.input_audio_transcription.completed",
-      "response.output_audio_transcript.done", "response.audio_transcript.done", "response.output_text.done",
-      "turn.done", "conversation.item.input_audio_transcription.failed",
-    )) return
+    if (closed && event.string("type") !in
+      setOf(
+        "input_audio_buffer.committed",
+        "conversation.item.added",
+        "conversation.item.created",
+        "conversation.item.done",
+        "response.output_item.done",
+        "conversation.item.input_audio_transcription.completed",
+        "response.output_audio_transcript.done",
+        "response.audio_transcript.done",
+        "response.output_text.done",
+        "turn.done",
+        "conversation.item.input_audio_transcription.failed",
+      )
+    ) {
+      return
+    }
     // Older Gateways omit controlSource. Only discriminating wire events establish
     // control semantics; session.updated is shared and cannot prove GA support.
     if (outputControl == null) {
@@ -382,7 +396,10 @@ internal class TalkRealtimeClient(
         else -> "Listening"
       },
     )
-    error?.let { Log.w("TalkRealtime", it); onRecoverableError(it) }
+    error?.let {
+      Log.w("TalkRealtime", it)
+      onRecoverableError(it)
+    }
   }
 
   private fun remember(
@@ -471,8 +488,6 @@ internal class TalkRealtimeClient(
           wireTarget.request(
             "talk.client.transcript",
             buildJsonObject {
-              put("sessionKey", sessionKey)
-              agentId?.let { put("agentId", it) }
               put("voiceSessionId", voiceId)
               put("entryId", orderedEntryId)
               put("role", role)
@@ -505,40 +520,42 @@ internal class TalkRealtimeClient(
     manager: ai.openclaw.app.node.CameraCaptureManager,
     view: androidx.camera.view.PreviewView,
     facing: String,
-  ): AutoCloseable = withContext(Dispatchers.Main.immediate) {
-    check(cameraCallId != null && isCurrent()) { "This Talk call does not support camera input" }
-    val operation = ++cameraOperation
-    camera?.close()
-    camera = null
-    val acquired = manager.openTalkPreview(view, facing) { !closed && isCurrent() && cameraOperation == operation }
-    if (closed || !isCurrent() || cameraOperation != operation) {
-      acquired.close()
-      error("Talk camera request expired")
-    }
-    camera = acquired
-    AutoCloseable {
-      if (camera === acquired) {
-        cameraOperation++
-        camera = null
+  ): AutoCloseable =
+    withContext(Dispatchers.Main.immediate) {
+      check(cameraCallId != null && isCurrent()) { "This Talk call does not support camera input" }
+      val operation = ++cameraOperation
+      camera?.close()
+      camera = null
+      val acquired = manager.openTalkPreview(view, facing) { !closed && isCurrent() && cameraOperation == operation }
+      if (closed || !isCurrent() || cameraOperation != operation) {
+        acquired.close()
+        error("Talk camera request expired")
       }
-      acquired.close()
+      camera = acquired
+      AutoCloseable {
+        if (camera === acquired) {
+          cameraOperation++
+          camera = null
+        }
+        acquired.close()
+      }
     }
-  }
 
   private suspend fun describeView(callId: String) {
     val current = camera
     val operation = cameraOperation
-    val result = try {
-      check(supportsCamera && current != null) { "Camera is off; enable it in Talk first" }
-      val message = current.captureMessage(peer.maxMessageBytes)
-      check(!closed && isCurrent() && camera === current && cameraOperation == operation) { "Camera changed before the image could be sent" }
-      peer.send(message)
-      buildJsonObject { put("text", "One current camera image was attached.") }
-    } catch (error: kotlinx.coroutines.CancellationException) {
-      throw error
-    } catch (_: Exception) {
-      buildJsonObject { put("error", "Camera image unavailable. Enable the camera and wait for its preview, then try again.") }
-    }
+    val result =
+      try {
+        check(supportsCamera && current != null) { "Camera is off; enable it in Talk first" }
+        val message = current.captureMessage(peer.maxMessageBytes)
+        check(!closed && isCurrent() && camera === current && cameraOperation == operation) { "Camera changed before the image could be sent" }
+        peer.send(message)
+        buildJsonObject { put("text", "One current camera image was attached.") }
+      } catch (error: kotlinx.coroutines.CancellationException) {
+        throw error
+      } catch (_: Exception) {
+        buildJsonObject { put("error", "Camera image unavailable. Enable the camera and wait for its preview, then try again.") }
+      }
     if (!closed && isCurrent()) submitToolResult(callId, result)
   }
 
@@ -547,19 +564,28 @@ internal class TalkRealtimeClient(
     result: JsonObject,
   ) = withContext(Dispatchers.Main.immediate) {
     if (closed || !isCurrent() || !toolBatch.beginSend(callId)) return@withContext
-    fun encode(value: JsonObject) = buildJsonObject {
-      put("type", "conversation.item.create")
-      put("item", buildJsonObject {
-        put("type", "function_call_output")
-        put("call_id", callId)
-        put("output", value.toString())
-      })
-    }.toString()
+
+    fun encode(value: JsonObject) =
+      buildJsonObject {
+        put("type", "conversation.item.create")
+        put(
+          "item",
+          buildJsonObject {
+            put("type", "function_call_output")
+            put("call_id", callId)
+            put("output", value.toString())
+          },
+        )
+      }.toString()
     try {
-      val output = encode(result).let { message ->
-        if (message.toByteArray(Charsets.UTF_8).size <= peer.maxMessageBytes) message
-        else encode(buildJsonObject { put("error", "Tool result exceeds the Realtime message budget") })
-      }
+      val output =
+        encode(result).let { message ->
+          if (message.toByteArray(Charsets.UTF_8).size <= peer.maxMessageBytes) {
+            message
+          } else {
+            encode(buildJsonObject { put("error", "Tool result exceeds the Realtime message budget") })
+          }
+        }
       peer.send(output)
       if (toolBatch.complete(callId) == true) sendResponse()
     } catch (error: kotlinx.coroutines.CancellationException) {
@@ -663,8 +689,6 @@ internal class TalkRealtimeClient(
                 wireTarget.request(
                   "talk.client.close",
                   buildJsonObject {
-                    put("sessionKey", sessionKey)
-              agentId?.let { put("agentId", it) }
                     put("voiceSessionId", voiceId)
                   }.toString(),
                   5_000,

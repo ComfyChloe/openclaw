@@ -48,7 +48,16 @@ class TalkRealtimeClientTest {
       for (key in listOf("opaque", "main", "global", "unknown")) {
         val result = runCatching { TalkWireTarget(lease, key, "work").parameters("talk.client.create", "{}") }
         assertEquals(modern, result.isSuccess)
-        if (modern) assertEquals(key, Json.parseToJsonElement(result.getOrThrow()!!).jsonObject.getValue("sessionKey").jsonPrimitive.content)
+        if (modern) {
+          assertEquals(
+            key,
+            Json
+              .parseToJsonElement(result.getOrThrow()!!)
+              .jsonObject
+              .getValue("sessionKey")
+              .jsonPrimitive.content,
+          )
+        }
       }
     }
   }

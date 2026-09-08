@@ -386,7 +386,7 @@ export function createOpenAIRealtimeTestSupport<T extends FakeWebSocketLike>(dep
       };
     } = {},
   ) {
-    const session: RealtimeVoiceBrowserSession = {
+    const session: Extract<RealtimeVoiceBrowserSession, { transport: "webrtc" }> = {
       provider: "openai" as const,
       transport: "webrtc" as const,
       clientSecret: "quicksilver-token",
@@ -394,7 +394,7 @@ export function createOpenAIRealtimeTestSupport<T extends FakeWebSocketLike>(dep
       ...overrides.session,
     };
     const createBrowserSession = vi.fn(
-      async (_request: unknown, _auth: unknown): Promise<RealtimeVoiceBrowserSession> => session,
+      async (_request: unknown, _auth: unknown): Promise<typeof session> => session,
     );
     const cancelBrowserSession = vi.fn(async (_session: RealtimeVoiceBrowserSession) => undefined);
     const broker = {

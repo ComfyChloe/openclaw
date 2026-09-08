@@ -36,13 +36,15 @@ Status and list are read-only. Setting a voice requires the message-channel owne
 
 Client-owned realtime Talk normally forwards provider tool calls through `talk.client.toolCall` instead of calling `chat.send` directly. GPT-Live WebRTC sessions delegate on a Gateway-owned sideband, and the Gateway binds each delegation to the browser or Gateway-relay Talk session that owns it. Backend WebSocket bridges use the normal relay consult path. While a realtime consult is active, clients can call `talk.client.steer` or `talk.session.steer` to classify spoken input as `status`, `steer`, `cancel`, or `followup`; this includes GPT-Live delegations. Accepted steering queues into the active embedded run; rejected steering returns a reason such as `no_active_run`, `not_streaming`, or `compacting`. A newer GPT-Live spoken task also supersedes the running delegation.
 
-`force-agent-consult` requires a compatible Gateway-relay configuration.
-Client-session creation rejects this policy instead of permitting direct replies
-or silently changing an explicit transport. When transport is unset, the existing
-client fallback to Gateway relay remains available, and catalog readiness checks
-that relay route, including its authentication and consultation requirements.
-GPT-Live delegates natively and does not support forced transcript consultations.
-Unsupported combinations are not reported ready.
+`force-agent-consult` routes finalized user transcripts through OpenClaw on a
+compatible Gateway relay. Client-owned sessions do not enforce this setting:
+WebRTC and provider-WebSocket calls keep provider-directed replies and tool calls,
+without rejecting creation solely because forced consultation is configured or
+rewriting the selected transport. A ready client route is not proof of forced
+agent consultation. To require transcript-triggered consultation, select a
+compatible Gateway-relay configuration with its required authentication.
+GPT-Live delegates natively and does not support forced transcript consultations
+on the relay.
 
 Thin audio clients can request `gateway-control-v1` in
 `talk.client.create.capabilities`. OpenAI GA Realtime requires a Platform API
@@ -455,7 +457,7 @@ and unlisted GPT-Live routes remain Platform-key-only.
 | `realtime.model`                         | provider default                            | Realtime voice model. Overrides `realtime.providers.<id>.model` when both are set — the same precedence `talk.client.create` applies at session time.                                                                                                                |
 | `realtime.transport`                     | -                                           | `webrtc`: client-owned on Android, iOS, and browsers; Watch uses Gateway control. Android treats explicit `webrtc` as strict. `gateway-relay` and `provider-websocket` select Gateway relay on Android. Unset transport uses capability-driven Auto; see Android UI. |
 | `realtime.brain`                         | -                                           | `agent-consult` routes realtime tool calls through Gateway policy; `direct-tools` is legacy direct-tool compatibility; `none` is for transcription/external orchestration.                                                                                           |
-| `realtime.consultRouting`                | -                                           | `provider-direct` preserves the provider's direct reply when it skips `openclaw_agent_consult`; `force-agent-consult` routes finalized user transcripts through OpenClaw instead.                                                                                    |
+| `realtime.consultRouting`                | -                                           | `provider-direct` preserves direct replies when the provider skips `openclaw_agent_consult`; on a compatible Gateway relay, `force-agent-consult` routes finalized user transcripts through OpenClaw. Client-owned transports do not enforce forced consultation.    |
 | `realtime.instructions`                  | -                                           | Appends provider-facing system instructions to OpenClaw's built-in realtime prompt.                                                                                                                                                                                  |
 
 `talk.catalog` exposes canonical provider ids and registry aliases, each provider's valid modes/transports/brain strategies/realtime audio formats/capability flags, and the runtime-selected readiness result. First-party Talk clients should read that catalog instead of maintaining provider aliases locally; treat an older Gateway that omits group readiness as unverified rather than definitively unconfigured. Streaming transcription providers are discovered through `talk.catalog.transcription`; the current Gateway relay uses the Voice Call streaming provider config until a dedicated Talk transcription config surface ships.
@@ -505,10 +507,12 @@ Watch background behavior. See [Watch setup and limits](/platforms/ios#standalon
   when the relay-model hint permits it. Each Create request validates the same
   target and Gateway-owned authentication policy. Saved choices and negotiated
   target fields are not rewritten or downgraded after an error.
-- `force-agent-consult` needs a compatible Gateway-relay configuration.
-  Client-owned creation rejects it; explicit WebRTC does not silently downgrade.
-  Auto can recover only under the conditions above. GPT-Live uses native delegation
-  and does not support forced transcript consultations.
+- `force-agent-consult` is enforced only by a compatible Gateway relay, not by
+  client-owned WebRTC. Configuring it alone neither rejects a client-owned call
+  nor switches that call to relay; provider-directed replies remain possible.
+  Explicit WebRTC stays strict, and Auto recovery keeps the conditions above.
+  GPT-Live uses native delegation and does not support forced transcript
+  consultations on the relay.
 - The selected **agent and chat**, selection generation, and physical Gateway lease
   belong to the call through transcript and close cleanup. Changing agent/chat,
   disconnecting, or stopping Talk retires that call; late work cannot move to its

@@ -457,7 +457,11 @@ class TalkModeManagerTest {
 
   @Test
   fun duplicateFinalForPendingTalkRunDoesNotStartAllResponseTts() {
-    val manager = createManager(currentChatTarget = { ai.openclaw.app.chat.ChatComposerOwner("gateway", "main", "agent:main:selected") })
+    val manager =
+      createManager(currentChatTarget = {
+        ai.openclaw.app.chat
+          .ChatComposerOwner("gateway", "main", "agent:main:selected")
+      })
     val final = CompletableDeferred<Boolean>()
 
     manager.ttsOnAllResponses = true
@@ -491,7 +495,9 @@ class TalkModeManagerTest {
   @Test
   fun unsolicitedFinalUsesSelectedChatAndRejectsMainForeignAndLateFinals() {
     val owner = SupervisorJob()
-    var target: ai.openclaw.app.chat.ChatComposerOwner? = ai.openclaw.app.chat.ChatComposerOwner("gateway", "main", "agent:main:selected")
+    var target: ai.openclaw.app.chat.ChatComposerOwner? =
+      ai.openclaw.app.chat
+        .ChatComposerOwner("gateway", "main", "agent:main:selected")
     val manager = createManager(scope = CoroutineScope(owner + StandardTestDispatcher()), currentChatTarget = { target })
     try {
       manager.ttsOnAllResponses = true
@@ -2646,7 +2652,6 @@ class TalkModeManagerTest {
       }
     }
 
-
   @Test
   fun autoRecoveryPreservesPushToTalkReservationUntilRelease() =
     runBlocking {
@@ -2748,124 +2753,181 @@ class TalkModeManagerTest {
       }
     }
 
-
-
   @Test
-  fun catalogAndCreateUseTheSameCapturedChatTarget() = runBlocking {
-    val target = ai.openclaw.app.chat.ChatComposerOwner("fixture-gateway", "work", "agent:work:readiness")
-    val observed = ConcurrentLinkedQueue<JsonObject>()
-    withStartedTalk(currentChatTarget = { target }, interceptRequest = { request, _ ->
-      if (request["method"]?.jsonPrimitive?.content in listOf("talk.catalog", "talk.session.create")) observed.add(request)
-      false
-    }) {
-      assertEquals(listOf("talk.catalog", "talk.session.create"), observed.map { it.getValue("method").jsonPrimitive.content })
-      for (request in observed) {
-        val params = request.getValue("params").jsonObject
-        assertEquals(JsonPrimitive(target.agentId), params["agentId"])
-        assertEquals(JsonPrimitive(target.sessionKey), params["sessionKey"])
+  fun catalogAndCreateUseTheSameCapturedChatTarget() =
+    runBlocking {
+      val target =
+        ai.openclaw.app.chat
+          .ChatComposerOwner("fixture-gateway", "work", "agent:work:readiness")
+      val observed = ConcurrentLinkedQueue<JsonObject>()
+      withStartedTalk(currentChatTarget = { target }, interceptRequest = { request, _ ->
+        if (request["method"]?.jsonPrimitive?.content in listOf("talk.catalog", "talk.session.create")) observed.add(request)
+        false
+      }) {
+        assertEquals(listOf("talk.catalog", "talk.session.create"), observed.map { it.getValue("method").jsonPrimitive.content })
+        for (request in observed) {
+          val params = request.getValue("params").jsonObject
+          assertEquals(JsonPrimitive(target.agentId), params["agentId"])
+          assertEquals(JsonPrimitive(target.sessionKey), params["sessionKey"])
+        }
       }
     }
-  }
 
   @Test
   @Config(shadows = [StartupPeerFactory::class, StartupPeerFactoryBuilder::class, StartupPeerConnection::class, StartupDataChannel::class, StartupMediaTrack::class, StartupMediaSource::class])
-  fun errorOwnerPublishesRecoverableClientErrorsWithoutEndingOrResumingPtt() = runBlocking {
-    StartupPeerConnection.reset()
-    StartupDataChannel.reset()
-    var answered = false
-    withStartedTalk(serveOffer = true, responseForRequest = { request, _ ->
-      when (request["method"]?.jsonPrimitive?.content) {
-        "talk.config" -> """{"config":{"talk":{"realtime":{"transport":"webrtc"}}}}"""
-        "talk.catalog" -> """{"realtime":{"activeProvider":"openai","providers":[{"id":"openai","transports":["webrtc"]}]}}"""
-        "talk.client.create" -> """{"provider":"openai","transport":"webrtc","voiceSessionId":"error-owner","clientSecret":"fixture","offerUrl":"/fixture-offer","model":"gpt-realtime-2.1","voice":"alloy","controlSource":"transcript"}"""
-        else -> null
+  fun errorOwnerPublishesRecoverableClientErrorsWithoutEndingOrResumingPtt() =
+    runBlocking {
+      StartupPeerConnection.reset()
+      StartupDataChannel.reset()
+      var answered = false
+      withStartedTalk(serveOffer = true, responseForRequest = { request, _ ->
+        when (request["method"]?.jsonPrimitive?.content) {
+          "talk.config" -> """{"config":{"talk":{"realtime":{"transport":"webrtc"}}}}"""
+          "talk.catalog" -> """{"realtime":{"activeProvider":"openai","providers":[{"id":"openai","transports":["webrtc"]}]}}"""
+          "talk.client.create" -> """{"provider":"openai","transport":"webrtc","voiceSessionId":"error-owner","clientSecret":"fixture","offerUrl":"/fixture-offer","model":"gpt-realtime-2.1","voice":"alloy","controlSource":"transcript"}"""
+          else -> null
+        }
+      }, duringStart = { _, _ ->
+        if (!answered && StartupPeerConnection.offer != null) {
+          answered = true
+          StartupPeerConnection.offer!!.onCreateSuccess(org.webrtc.SessionDescription(org.webrtc.SessionDescription.Type.OFFER, "v=0"))
+          StartupDataChannel.open()
+        }
+      }) { proof ->
+        val client = readPrivateField(proof.manager, "realtimeClient") as TalkRealtimeClient
+        val peer = readPrivateField(client, "peer")!!
+        val before = listOf(proof.manager.isListening.value, proof.manager.isSpeaking.value, proof.manager.awaitingAgent.value)
+        StartupDataChannel.message("""{"type":"error","error":{"message":"fixture-private-detail"}}""")
+        proof.scheduler.runCurrent()
+        assertTrue(
+          proof.manager.statusText.value
+            .contains("Recoverable provider event error"),
+        )
+        assertFalse(
+          proof.manager.statusText.value
+            .contains("fixture-private-detail"),
+        )
+        assertEquals(before, listOf(proof.manager.isListening.value, proof.manager.isSpeaking.value, proof.manager.awaitingAgent.value))
+        assertTrue(proof.manager.isEnabled.value)
+        assertFalse(proof.manager.hasFailure.value)
+        val pause = proof.scope.async { proof.manager.prepareRealtimeCapturePause("error-ptt", null)() }
+        proof.scheduler.runCurrent()
+        pause.await()
+        val pausedOwner = readPrivateField(proof.manager, "realtimeCapturePause")
+        StartupDataChannel.message("""{"type":"conversation.item.input_audio_transcription.failed","item_id":"speech"}""")
+        proof.scheduler.runCurrent()
+        assertTrue(
+          proof.manager.statusText.value
+            .contains("Recoverable input transcription error"),
+        )
+        assertEquals(pausedOwner, readPrivateField(proof.manager, "realtimeCapturePause"))
+        assertEquals(listOf(false, false), listOf(readPrivateField(peer, "captureEnabled"), readPrivateField(peer, "playbackEnabled")))
+        assertTrue(proof.manager.isEnabled.value)
+        assertFalse(proof.manager.hasFailure.value)
+        proof.manager.resumeRealtimeCaptureAfterPushToTalk("error-ptt")
+        proof.scheduler.runCurrent()
+        assertEquals(true, readPrivateField(peer, "captureEnabled"))
+        assertTrue(
+          proof.manager.statusText.value
+            .contains("Listening"),
+        )
+        @Suppress("UNCHECKED_CAST")
+        val retiredError = readPrivateField(client, "onRecoverableError") as (String) -> Unit
+        proof.manager.stopAllCapture()
+        val stoppedStatus = proof.manager.statusText.value
+        retiredError("late error from retired call")
+        assertEquals(stoppedStatus, proof.manager.statusText.value)
+        assertFalse(proof.manager.isEnabled.value)
       }
-    }, duringStart = { _, _ ->
-      if (!answered && StartupPeerConnection.offer != null) {
-        answered = true
-        StartupPeerConnection.offer!!.onCreateSuccess(org.webrtc.SessionDescription(org.webrtc.SessionDescription.Type.OFFER, "v=0"))
-        StartupDataChannel.open()
-      }
-    }) { proof ->
-      val client = readPrivateField(proof.manager, "realtimeClient") as TalkRealtimeClient
-      val peer = readPrivateField(client, "peer")!!
-      val before = listOf(proof.manager.isListening.value, proof.manager.isSpeaking.value, proof.manager.awaitingAgent.value)
-      StartupDataChannel.message("""{"type":"error","error":{"message":"fixture-private-detail"}}""")
-      proof.scheduler.runCurrent()
-      assertTrue(proof.manager.statusText.value.contains("Recoverable provider event error"))
-      assertFalse(proof.manager.statusText.value.contains("fixture-private-detail"))
-      assertEquals(before, listOf(proof.manager.isListening.value, proof.manager.isSpeaking.value, proof.manager.awaitingAgent.value))
-      assertTrue(proof.manager.isEnabled.value)
-      assertFalse(proof.manager.hasFailure.value)
-      val pause = proof.scope.async { proof.manager.prepareRealtimeCapturePause("error-ptt", null)() }
-      proof.scheduler.runCurrent()
-      pause.await()
-      val pausedOwner = readPrivateField(proof.manager, "realtimeCapturePause")
-      StartupDataChannel.message("""{"type":"conversation.item.input_audio_transcription.failed","item_id":"speech"}""")
-      proof.scheduler.runCurrent()
-      assertTrue(proof.manager.statusText.value.contains("Recoverable input transcription error"))
-      assertEquals(pausedOwner, readPrivateField(proof.manager, "realtimeCapturePause"))
-      assertEquals(listOf(false, false), listOf(readPrivateField(peer, "captureEnabled"), readPrivateField(peer, "playbackEnabled")))
-      assertTrue(proof.manager.isEnabled.value)
-      assertFalse(proof.manager.hasFailure.value)
-      proof.manager.resumeRealtimeCaptureAfterPushToTalk("error-ptt")
-      proof.scheduler.runCurrent()
-      assertEquals(true, readPrivateField(peer, "captureEnabled"))
-      assertTrue(proof.manager.statusText.value.contains("Listening"))
-      @Suppress("UNCHECKED_CAST")
-      val retiredError = readPrivateField(client, "onRecoverableError") as (String) -> Unit
-      proof.manager.stopAllCapture()
-      val stoppedStatus = proof.manager.statusText.value
-      retiredError("late error from retired call")
-      assertEquals(stoppedStatus, proof.manager.statusText.value)
-      assertFalse(proof.manager.isEnabled.value)
     }
-  }
 
   @Test fun talkTargetLegacyRelayWithoutCapability() = verifyTalkWireTarget(null, false)
+
   @Test fun talkTargetLegacyRelayWithEmptyCapabilities() = verifyTalkWireTarget("[]", false)
+
   @Test fun talkTargetLegacyGlobalCatalogCannotBlockAuto() = verifyTalkWireTarget(null, false, advisoryMissing = true)
+
   @Test
   @Config(shadows = [StartupPeerFactory::class, StartupPeerFactoryBuilder::class, StartupPeerConnection::class, StartupDataChannel::class, StartupMediaTrack::class, StartupMediaSource::class])
   fun talkTargetLegacyAutoWithoutCatalogCanCreateClient() = verifyTalkWireTarget(null, true, advisoryMissing = true, catalogFailure = true)
+
   @Test fun talkTargetLegacyAutoWithoutCatalogCanRecoverToRelay() = verifyTalkWireTarget(null, false, advisoryMissing = true, catalogFailure = true)
+
   @Test fun talkTargetModernRelay() = verifyTalkWireTarget("[\"talk-session-target-v1\"]", false)
+
   @Test
   @Config(shadows = [StartupPeerFactory::class, StartupPeerFactoryBuilder::class, StartupPeerConnection::class, StartupDataChannel::class, StartupMediaTrack::class, StartupMediaSource::class])
   fun talkTargetLegacyClientUsesStableSchemas() = verifyTalkWireTarget(null, true)
 
-  private fun verifyTalkWireTarget(capabilities: String?, webRtc: Boolean, advisoryMissing: Boolean = false, catalogFailure: Boolean = false) = runBlocking {
-    val schemas = Json.parseToJsonElement(checkNotNull(javaClass.classLoader!!.getResourceAsStream("talk-target-stable-schemas.json")).bufferedReader().use { it.readText() }).jsonObject.getValue("schemas").jsonObject
+  private fun verifyTalkWireTarget(
+    capabilities: String?,
+    webRtc: Boolean,
+    advisoryMissing: Boolean = false,
+    catalogFailure: Boolean = false,
+  ) = runBlocking {
+    val schemas =
+      Json
+        .parseToJsonElement(checkNotNull(javaClass.classLoader!!.getResourceAsStream("talk-target-stable-schemas.json")).bufferedReader().use { it.readText() })
+        .jsonObject
+        .getValue("schemas")
+        .jsonObject
     val modern = capabilities?.contains("talk-session-target-v1") == true
     val seen = ConcurrentLinkedQueue<JsonObject>()
     val rejected = ConcurrentLinkedQueue<String>()
-    val target = ai.openclaw.app.chat.ChatComposerOwner("fixture", "work", "agent:work:target-proof")
+    val target =
+      ai.openclaw.app.chat
+        .ChatComposerOwner("fixture", "work", "agent:work:target-proof")
     var selectedTarget = target
     StartupPeerConnection.reset()
     StartupDataChannel.reset()
     var offered = false
-    withStartedTalk(currentChatTarget = { selectedTarget }, serveOffer = webRtc,
+    withStartedTalk(
+      currentChatTarget = { selectedTarget },
+      serveOffer = webRtc,
       responseForRequest = { request, _ ->
         when (request["method"]?.jsonPrimitive?.content) {
           "connect" -> {
             val features = capabilities?.let { ",\"features\":{\"capabilities\":$it}" } ?: ""
             """{"snapshot":{"sessionDefaults":{"mainSessionKey":"agent:main:main"}}$features}"""
           }
-          "talk.config" -> if (advisoryMissing) """{"config":{"talk":{"realtime":{}}}}""" else if (webRtc) """{"config":{"talk":{"realtime":{"transport":"webrtc"}}}}""" else null
-          "talk.catalog" -> if (advisoryMissing) """{"realtime":{"ready":false,"providers":[]}}""" else """{"realtime":{"ready":$modern,"activeProvider":"openai","providers":[{"id":"openai","configured":$modern,"transports":["webrtc","gateway-relay"]}]}}"""
-          "talk.client.create" -> """{"provider":"openai","transport":"webrtc","voiceSessionId":"target-client","clientSecret":"fixture","offerUrl":"/fixture-offer","model":"gpt-realtime-2.1","controlSource":"transcript"}"""
-          else -> null
+
+          "talk.config" -> {
+            if (advisoryMissing) {
+              """{"config":{"talk":{"realtime":{}}}}"""
+            } else if (webRtc) {
+              """{"config":{"talk":{"realtime":{"transport":"webrtc"}}}}"""
+            } else {
+              null
+            }
+          }
+
+          "talk.catalog" -> {
+            if (advisoryMissing) """{"realtime":{"ready":false,"providers":[]}}""" else """{"realtime":{"ready":$modern,"activeProvider":"openai","providers":[{"id":"openai","configured":$modern,"transports":["webrtc","gateway-relay"]}]}}"""
+          }
+
+          "talk.client.create" -> {
+            """{"provider":"openai","transport":"webrtc","voiceSessionId":"target-client","clientSecret":"fixture","offerUrl":"/fixture-offer","model":"gpt-realtime-2.1","controlSource":"transcript"}"""
+          }
+
+          else -> {
+            null
+          }
         }
-      }, interceptRequest = { request, socket ->
+      },
+      interceptRequest = { request, socket ->
         val method = request.getValue("method").jsonPrimitive.content
         if (method.startsWith("talk.")) seen.add(request)
         val params = request["params"]?.jsonObject ?: JsonObject(emptyMap())
         val keyless = method in listOf("talk.session.steer", "talk.session.close", "talk.session.submitToolResult")
-        val invalid = (!modern || keyless) && schemas.values.any { tag ->
-          val schema = tag.jsonObject[method]?.jsonObject
-          schema != null && (params.keys.any { it !in schema.getValue("properties").jsonObject } ||
-            (schema["required"] as? kotlinx.serialization.json.JsonArray)?.any { it.jsonPrimitive.content !in params } == true)
-        }
+        val invalid =
+          (!modern || keyless) &&
+            schemas.values.any { tag ->
+              val schema = tag.jsonObject[method]?.jsonObject
+              schema != null && (
+                params.keys.any { it !in schema.getValue("properties").jsonObject } ||
+                  (schema["required"] as? kotlinx.serialization.json.JsonArray)?.any { it.jsonPrimitive.content !in params } == true
+              )
+            }
         if (invalid) {
           rejected.add(method)
           val id = request.getValue("id").jsonPrimitive.content
@@ -2878,15 +2940,19 @@ class TalkModeManagerTest {
           val message = if (unavailable) "This target cannot use this transport" else "Talk session ownership has no explicit owner"
           socket.send("""{"type":"res","id":"$id","ok":false,"error":{"code":"$code","message":"$message"}}""")
           true
-        } else invalid
-      }, duringStart = { manager, _ ->
+        } else {
+          invalid
+        }
+      },
+      duringStart = { manager, _ ->
         check(!manager.hasFailure.value) { "Target negotiation failed: $rejected / " + manager.statusText.value }
         if (webRtc && !offered && StartupPeerConnection.offer != null) {
           offered = true
           StartupPeerConnection.offer!!.onCreateSuccess(org.webrtc.SessionDescription(org.webrtc.SessionDescription.Type.OFFER, "v=0"))
           StartupDataChannel.open()
         }
-      }) { proof ->
+      },
+    ) { proof ->
       val agent = readPrivateField(proof.manager, "realtimeAgentCoordinator") as RealtimeAgentCoordinator
       assertTrue(agent.handleToolCall("consult", "openclaw_agent_consult", JsonObject(emptyMap()), false))
       assertTrue(agent.handleToolCall("control", "openclaw_agent_control", JsonObject(emptyMap()), false))

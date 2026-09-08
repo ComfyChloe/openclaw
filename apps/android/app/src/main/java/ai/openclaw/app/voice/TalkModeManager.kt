@@ -327,7 +327,11 @@ class TalkModeManager internal constructor(
   private val _cameraCallId = MutableStateFlow<String?>(null)
   val cameraCallId: StateFlow<String?> = _cameraCallId
 
-  internal suspend fun openCamera(expectedCallId: String, view: androidx.camera.view.PreviewView, facing: String): AutoCloseable {
+  internal suspend fun openCamera(
+    expectedCallId: String,
+    view: androidx.camera.view.PreviewView,
+    facing: String,
+  ): AutoCloseable {
     val client = realtimeClient ?: error("Talk is not active")
     check(client.cameraCallId == expectedCallId) { "Talk call changed" }
     return client.openCamera(checkNotNull(camera), view, facing)
@@ -1044,25 +1048,33 @@ class TalkModeManager internal constructor(
           val configured = config.realtimeTransport
           val target = checkNotNull(startWireTarget)
           val advisory = !target.lease.supportsTalkSessionTarget
-          val catalog = try {
-            val response = target.request("talk.catalog", "{}") { enqueue ->
-              if (!isCurrentStart(generation)) throw CancellationException("Talk target changed before catalog request")
-              enqueue()
+          val catalog =
+            try {
+              val response =
+                target.request("talk.catalog", "{}") { enqueue ->
+                  if (!isCurrentStart(generation)) throw CancellationException("Talk target changed before catalog request")
+                  enqueue()
+                }
+              json.parseToJsonElement(response).asObjectOrNull()
+            } catch (error: Exception) {
+              if (!advisory || error is CancellationException) throw error
+              null
             }
-            json.parseToJsonElement(response).asObjectOrNull()
-          } catch (error: Exception) {
-            if (!advisory || error is CancellationException) throw error
-            null
-          }
           if (!isCurrentStart(generation) || !_isEnabled.value) return@launch
-          val selected = try { selectedAndroidRealtimeProvider(catalog) } catch (error: IllegalStateException) {
-            if (!advisory) throw error else null
-          }
+          val selected =
+            try {
+              selectedAndroidRealtimeProvider(catalog)
+            } catch (error: IllegalStateException) {
+              if (!advisory) throw error else null
+            }
           val supportsCamera = selected?.get("supportsVideoFrames").asBooleanOrNull() == true
-          val selectedRoute = try { resolveAndroidRealtimeRoute(configured, catalog, config.realtimeRelayModelSupported) } catch (error: IllegalStateException) {
-            if (!advisory || configured != null) throw error
-            if (config.realtimeRelayModelSupported) AndroidRealtimeRoute.WebRtcWithRelayRecovery else AndroidRealtimeRoute.WebRtc
-          }
+          val selectedRoute =
+            try {
+              resolveAndroidRealtimeRoute(configured, catalog, config.realtimeRelayModelSupported)
+            } catch (error: IllegalStateException) {
+              if (!advisory || configured != null) throw error
+              if (config.realtimeRelayModelSupported) AndroidRealtimeRoute.WebRtcWithRelayRecovery else AndroidRealtimeRoute.WebRtc
+            }
           when (val route = selectedRoute) {
             AndroidRealtimeRoute.WebRtc, AndroidRealtimeRoute.WebRtcWithRelayRecovery -> {
               try {
@@ -1215,8 +1227,6 @@ class TalkModeManager internal constructor(
       requestPhoneRealtimeSessionWithLanguageFallback(language) { requestedLanguage ->
         val params =
           buildJsonObject {
-            put("sessionKey", JsonPrimitive(callKey))
-            target.agentId?.let { put("agentId", JsonPrimitive(it)) }
             put("mode", JsonPrimitive("realtime"))
             put("transport", JsonPrimitive("gateway-relay"))
             put("brain", JsonPrimitive("agent-consult"))
@@ -1308,7 +1318,10 @@ class TalkModeManager internal constructor(
     }
   }
 
-  private suspend fun startRealtimeClient(generation: Long, supportsCamera: Boolean) {
+  private suspend fun startRealtimeClient(
+    generation: Long,
+    supportsCamera: Boolean,
+  ) {
     check(isConnected()) { "Gateway not connected" }
     check(ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) { "Microphone permission required" }
     val target = startWireTarget ?: error("Gateway not connected")

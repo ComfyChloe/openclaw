@@ -263,163 +263,180 @@ class TalkRealtimeClientLifecycleTest {
       }
     }
 
-  @Test fun describeViewErrorsKeepCallOpenAndNextRequestSendsExactlyOneImage() = runBlocking {
-    withStartedClient("transcript", supportsCamera = true) { client, failures, requests ->
-      val view = Shadow.newInstanceOf(PreviewView::class.java)
-      val frames = Shadow.extract<TalkPreviewViewShadow>(view)
-      var released = 0
-      val camera = TalkCameraPreview(view, AutoCloseable { released++ }) { true }
-      realtimeTestField(client, "camera").set(client, camera)
-      // A missing current bitmap is a camera/tool error, not a voice-call failure.
-      StartupDataChannel.message(describeViewEvent("missing"))
-      withTimeout(5_000) { while (StartupDataChannel.sent.none { it.contains("call-missing") }) yield() }
-      assertTrue(StartupDataChannel.sent.any { it.contains("Camera image unavailable") })
-      assertTrue(failures.isEmpty())
-      assertFalse(StartupPeerConnection.disposed)
-      assertFalse(requests.contains("talk.client.close"))
-      frames.frame = Bitmap.createBitmap(16, 16, Bitmap.Config.ARGB_8888)
-      StartupDataChannel.message(describeViewEvent("image"))
-      withTimeout(5_000) { while (StartupDataChannel.sent.none { it.contains("call-image") }) yield() }
-      assertEquals(1, StartupDataChannel.sent.count { it.contains("data:image/jpeg;base64,") })
-      assertEquals(2, StartupDataChannel.sent.count { it.contains("function_call_output") })
-      assertEquals(2, frames.reads)
-      assertTrue(frames.frame!!.isRecycled)
-      assertTrue(failures.isEmpty())
-      client.close()
-      assertEquals(1, released)
-    }
-  }
-
-  @Test fun describeViewDropsFrameWhenChatOrGatewayOwnerChangesDuringCapture() = runBlocking {
-    for (changeGateway in listOf(false, true)) {
-      var chatCurrent = true
-      var gatewayCurrent = true
-      withStartedClient("transcript", supportsCamera = true, isCurrent = { chatCurrent }, leaseCurrent = { gatewayCurrent }) { client, failures, _ ->
+  @Test fun describeViewErrorsKeepCallOpenAndNextRequestSendsExactlyOneImage() =
+    runBlocking {
+      withStartedClient("transcript", supportsCamera = true) { client, failures, requests ->
         val view = Shadow.newInstanceOf(PreviewView::class.java)
         val frames = Shadow.extract<TalkPreviewViewShadow>(view)
-        frames.frame = Bitmap.createBitmap(16, 16, Bitmap.Config.ARGB_8888)
-        frames.onRead = { if (changeGateway) gatewayCurrent = false else chatCurrent = false }
-        val camera = TalkCameraPreview(view, AutoCloseable {}) { chatCurrent && gatewayCurrent }
+        var released = 0
+        val camera = TalkCameraPreview(view, AutoCloseable { released++ }) { true }
         realtimeTestField(client, "camera").set(client, camera)
-        val owner = coroutineContext[Job]!!
-        val existingJobs = owner.children.toSet()
-        StartupDataChannel.message(describeViewEvent("retired"))
-        withTimeout(5_000) { while (frames.frame?.isRecycled != true) yield() }
-        // Join the actual per-call coroutine before asserting absence of late sends.
-        val toolJobs = owner.children.filter { it !in existingJobs }.toList()
-        withTimeout(5_000) { toolJobs.joinAll() }
-        assertEquals(1, frames.reads)
+        // A missing current bitmap is a camera/tool error, not a voice-call failure.
+        StartupDataChannel.message(describeViewEvent("missing"))
+        withTimeout(5_000) { while (StartupDataChannel.sent.none { it.contains("call-missing") }) yield() }
+        assertTrue(StartupDataChannel.sent.any { it.contains("Camera image unavailable") })
+        assertTrue(failures.isEmpty())
+        assertFalse(StartupPeerConnection.disposed)
+        assertFalse(requests.contains("talk.client.close"))
+        frames.frame = Bitmap.createBitmap(16, 16, Bitmap.Config.ARGB_8888)
+        StartupDataChannel.message(describeViewEvent("image"))
+        withTimeout(5_000) { while (StartupDataChannel.sent.none { it.contains("call-image") }) yield() }
+        assertEquals(1, StartupDataChannel.sent.count { it.contains("data:image/jpeg;base64,") })
+        assertEquals(2, StartupDataChannel.sent.count { it.contains("function_call_output") })
+        assertEquals(2, frames.reads)
         assertTrue(frames.frame!!.isRecycled)
-        assertTrue("A retired owner must send neither image nor tool output", StartupDataChannel.sent.isEmpty())
+        assertTrue(failures.isEmpty())
+        client.close()
+        assertEquals(1, released)
+      }
+    }
+
+  @Test fun describeViewDropsFrameWhenChatOrGatewayOwnerChangesDuringCapture() =
+    runBlocking {
+      for (changeGateway in listOf(false, true)) {
+        var chatCurrent = true
+        var gatewayCurrent = true
+        withStartedClient("transcript", supportsCamera = true, isCurrent = { chatCurrent }, leaseCurrent = { gatewayCurrent }) { client, failures, _ ->
+          val view = Shadow.newInstanceOf(PreviewView::class.java)
+          val frames = Shadow.extract<TalkPreviewViewShadow>(view)
+          frames.frame = Bitmap.createBitmap(16, 16, Bitmap.Config.ARGB_8888)
+          frames.onRead = { if (changeGateway) gatewayCurrent = false else chatCurrent = false }
+          val camera = TalkCameraPreview(view, AutoCloseable {}) { chatCurrent && gatewayCurrent }
+          realtimeTestField(client, "camera").set(client, camera)
+          val owner = coroutineContext[Job]!!
+          val existingJobs = owner.children.toSet()
+          StartupDataChannel.message(describeViewEvent("retired"))
+          withTimeout(5_000) { while (frames.frame?.isRecycled != true) yield() }
+          // Join the actual per-call coroutine before asserting absence of late sends.
+          val toolJobs = owner.children.filter { it !in existingJobs }.toList()
+          withTimeout(5_000) { toolJobs.joinAll() }
+          assertEquals(1, frames.reads)
+          assertTrue(frames.frame!!.isRecycled)
+          assertTrue("A retired owner must send neither image nor tool output", StartupDataChannel.sent.isEmpty())
+          assertTrue(failures.isEmpty())
+        }
+      }
+    }
+
+  @Test fun stoppedCallReleasesPreviewAndRejectsLateDescribeViewCallback() =
+    runBlocking {
+      withStartedClient("transcript", supportsCamera = true) { client, failures, requests ->
+        val view = Shadow.newInstanceOf(PreviewView::class.java)
+        val frames = Shadow.extract<TalkPreviewViewShadow>(view)
+        var released = 0
+        val camera = TalkCameraPreview(view, AutoCloseable { released++ }) { true }
+        realtimeTestField(client, "camera").set(client, camera)
+        client.close()
+        assertEquals(1, released)
+        // Existing JNI shadow deliberately retains the callback after unregister/dispose.
+        StartupDataChannel.message(describeViewEvent("late"))
+        yield()
+        assertEquals(0, frames.reads)
+        assertTrue(StartupDataChannel.sent.isEmpty())
+        assertEquals(1, requests.count { it == "talk.client.close" })
         assertTrue(failures.isEmpty())
       }
     }
-  }
 
-  @Test fun stoppedCallReleasesPreviewAndRejectsLateDescribeViewCallback() = runBlocking {
-    withStartedClient("transcript", supportsCamera = true) { client, failures, requests ->
-      val view = Shadow.newInstanceOf(PreviewView::class.java)
-      val frames = Shadow.extract<TalkPreviewViewShadow>(view)
-      var released = 0
-      val camera = TalkCameraPreview(view, AutoCloseable { released++ }) { true }
-      realtimeTestField(client, "camera").set(client, camera)
-      client.close()
-      assertEquals(1, released)
-      // Existing JNI shadow deliberately retains the callback after unregister/dispose.
-      StartupDataChannel.message(describeViewEvent("late"))
-      yield()
-      assertEquals(0, frames.reads)
-      assertTrue(StartupDataChannel.sent.isEmpty())
-      assertEquals(1, requests.count { it == "talk.client.close" })
-      assertTrue(failures.isEmpty())
-    }
-  }
-
-  @Test fun errorOwnerCompletesConsultOnlyAfterSdkAcceptance() = runBlocking {
-    withStartedClient("transcript", acceptedConsult = true) { client, failures, requests ->
-      val transport = acceptConsult(client)
-      val batch = realtimeTestField(client, "toolBatch").get(client) as TalkRealtimeToolBatch
-      var pendingAtSend: Boolean? = null
-      var duplicate: Job? = null
-      StartupDataChannel.onSend = { message ->
-        if (message.contains("function_call_output") && pendingAtSend == null) {
-          pendingAtSend = batch.hasPending
-          duplicate = launch { transport.submit("call-consult", buildJsonObject { put("text", "duplicate") }) }
+  @Test fun errorOwnerCompletesConsultOnlyAfterSdkAcceptance() =
+    runBlocking {
+      withStartedClient("transcript", acceptedConsult = true) { client, failures, requests ->
+        val transport = acceptConsult(client)
+        val batch = realtimeTestField(client, "toolBatch").get(client) as TalkRealtimeToolBatch
+        var pendingAtSend: Boolean? = null
+        var duplicate: Job? = null
+        StartupDataChannel.onSend = { message ->
+          if (message.contains("function_call_output") && pendingAtSend == null) {
+            pendingAtSend = batch.hasPending
+            duplicate = launch { transport.submit("call-consult", buildJsonObject { put("text", "duplicate") }) }
+          }
         }
+        completeConsult(client, "accepted answer")
+        duplicate?.join()
+        assertEquals(true, pendingAtSend)
+        assertFalse(batch.hasPending)
+        assertEquals(1, StartupDataChannel.attempts.count { it.contains("function_call_output") })
+        assertEquals(1, requests.count { it == "talk.client.toolCall" })
+        assertTrue(failures.isEmpty())
       }
-      completeConsult(client, "accepted answer")
-      duplicate?.join()
-      assertEquals(true, pendingAtSend)
-      assertFalse(batch.hasPending)
-      assertEquals(1, StartupDataChannel.attempts.count { it.contains("function_call_output") })
-      assertEquals(1, requests.count { it == "talk.client.toolCall" })
-      assertTrue(failures.isEmpty())
     }
-  }
 
-  @Test fun errorOwnerReportsOversizedConsultWithinTheMessageBudget() = runBlocking {
-    withStartedClient("transcript", acceptedConsult = true) { client, failures, requests ->
-      acceptConsult(client)
-      completeConsult(client, "é".repeat(40_000))
-      val output = StartupDataChannel.sent.filter { it.contains("function_call_output") }.single()
-      assertTrue(output.contains("error"))
-      assertTrue(output.contains("budget", ignoreCase = true))
-      assertFalse(output.contains("é"))
-      assertTrue(StartupDataChannel.sent.all { it.toByteArray().size <= 65_536 })
-      assertFalse((realtimeTestField(client, "toolBatch").get(client) as TalkRealtimeToolBatch).hasPending)
-      assertEquals(1, requests.count { it == "talk.client.toolCall" })
-      assertTrue(failures.isEmpty())
-      assertFalse(StartupPeerConnection.disposed)
+  @Test fun errorOwnerReportsOversizedConsultWithinTheMessageBudget() =
+    runBlocking {
+      withStartedClient("transcript", acceptedConsult = true) { client, failures, requests ->
+        acceptConsult(client)
+        completeConsult(client, "é".repeat(40_000))
+        val output = StartupDataChannel.sent.filter { it.contains("function_call_output") }.single()
+        assertTrue(output.contains("error"))
+        assertTrue(output.contains("budget", ignoreCase = true))
+        assertFalse(output.contains("é"))
+        assertTrue(StartupDataChannel.sent.all { it.toByteArray().size <= 65_536 })
+        assertFalse((realtimeTestField(client, "toolBatch").get(client) as TalkRealtimeToolBatch).hasPending)
+        assertEquals(1, requests.count { it == "talk.client.toolCall" })
+        assertTrue(failures.isEmpty())
+        assertFalse(StartupPeerConnection.disposed)
+      }
     }
-  }
 
   @Test fun errorOwnerClosesVisiblyWhenConsultSendIsRejected() = assertUndeliverableConsult(tinyBudget = false)
+
   @Test fun errorOwnerClosesVisiblyWhenEvenTheErrorCannotFit() = assertUndeliverableConsult(tinyBudget = true)
 
-  private fun assertUndeliverableConsult(tinyBudget: Boolean) = runBlocking {
-    withStartedClient("transcript", acceptedConsult = true) { client, failures, requests ->
-      acceptConsult(client)
-      if (tinyBudget) {
-        val peer = realtimeTestField(client, "peer").get(client) as TalkRealtimePeer
-        realtimeTestField(peer, "maxMessageBytes").setInt(peer, 64)
-      } else StartupDataChannel.allowSend = false
-      completeConsult(client, "accepted answer")
-      assertTrue("A rejected output must remain uncompleted", (realtimeTestField(client, "toolBatch").get(client) as TalkRealtimeToolBatch).hasPending)
-      assertEquals(1, failures.size)
-      client.close()
-      assertEquals(1, requests.count { it == "talk.client.close" })
-      assertTrue(StartupDataChannel.sent.isEmpty())
-      assertTrue(StartupPeerConnection.disposed)
-    }
-  }
-
-  @Test fun errorOwnerContainsDescribeViewOutputSendFailure() = runBlocking {
-    val escaped = runCatching {
-      withStartedClient("transcript") { client, failures, _ ->
-        val owner = coroutineContext[Job]!!
-        val existing = owner.children.toSet()
-        StartupDataChannel.allowSend = false
-        StartupDataChannel.message(describeViewEvent("rejected-view"))
-        withTimeout(5_000) { while (StartupDataChannel.attempts.isEmpty()) yield() }
-        val jobs = owner.children.filter { it !in existing }.toList()
-        withTimeout(5_000) { jobs.joinAll() }
+  private fun assertUndeliverableConsult(tinyBudget: Boolean) =
+    runBlocking {
+      withStartedClient("transcript", acceptedConsult = true) { client, failures, requests ->
+        acceptConsult(client)
+        if (tinyBudget) {
+          val peer = realtimeTestField(client, "peer").get(client) as TalkRealtimePeer
+          realtimeTestField(peer, "maxMessageBytes").setInt(peer, 64)
+        } else {
+          StartupDataChannel.allowSend = false
+        }
+        completeConsult(client, "accepted answer")
+        assertTrue("A rejected output must remain uncompleted", (realtimeTestField(client, "toolBatch").get(client) as TalkRealtimeToolBatch).hasPending)
         assertEquals(1, failures.size)
-        assertTrue((realtimeTestField(client, "toolBatch").get(client) as TalkRealtimeToolBatch).hasPending)
+        client.close()
+        assertEquals(1, requests.count { it == "talk.client.close" })
+        assertTrue(StartupDataChannel.sent.isEmpty())
+        assertTrue(StartupPeerConnection.disposed)
       }
-    }.exceptionOrNull()
-    assertEquals("Output failure must be contained by the client owner", null, escaped)
-  }
+    }
 
-  @Test fun errorOwnerShowsRecoverableProviderFailure() = assertRecoverableErrorVisible(
-    """{"type":"error","error":{"event_id":"unrelated","message":"fixture-private-detail"}}""",
-    "Recoverable provider event error",
-  )
-  @Test fun errorOwnerShowsRecoverableTranscriptionFailure() = assertRecoverableErrorVisible(
-    """{"type":"conversation.item.input_audio_transcription.failed","item_id":"speech"}""",
-    "Recoverable input transcription error",
-  )
+  @Test fun errorOwnerContainsDescribeViewOutputSendFailure() =
+    runBlocking {
+      val escaped =
+        runCatching {
+          withStartedClient("transcript") { client, failures, _ ->
+            val owner = coroutineContext[Job]!!
+            val existing = owner.children.toSet()
+            StartupDataChannel.allowSend = false
+            StartupDataChannel.message(describeViewEvent("rejected-view"))
+            withTimeout(5_000) { while (StartupDataChannel.attempts.isEmpty()) yield() }
+            val jobs = owner.children.filter { it !in existing }.toList()
+            withTimeout(5_000) { jobs.joinAll() }
+            assertEquals(1, failures.size)
+            assertTrue((realtimeTestField(client, "toolBatch").get(client) as TalkRealtimeToolBatch).hasPending)
+          }
+        }.exceptionOrNull()
+      assertEquals("Output failure must be contained by the client owner", null, escaped)
+    }
 
-  private fun assertRecoverableErrorVisible(event: String, message: String) = runBlocking {
+  @Test fun errorOwnerShowsRecoverableProviderFailure() =
+    assertRecoverableErrorVisible(
+      """{"type":"error","error":{"event_id":"unrelated","message":"fixture-private-detail"}}""",
+      "Recoverable provider event error",
+    )
+
+  @Test fun errorOwnerShowsRecoverableTranscriptionFailure() =
+    assertRecoverableErrorVisible(
+      """{"type":"conversation.item.input_audio_transcription.failed","item_id":"speech"}""",
+      "Recoverable input transcription error",
+    )
+
+  private fun assertRecoverableErrorVisible(
+    event: String,
+    message: String,
+  ) = runBlocking {
     val statuses = mutableListOf<String>()
     withStartedClient("transcript", onStatus = { statuses.add(it) }) { client, failures, requests ->
       ShadowLog.clear()
@@ -445,44 +462,48 @@ class TalkRealtimeClientLifecycleTest {
   }
 
   @Test fun responseOwnerContainsSendFailureAfterResponseDone() = assertDeferredResponseSendFailure(rejectedCreation = false)
+
   @Test fun responseOwnerContainsSendFailureAfterCorrelatedRejection() = assertDeferredResponseSendFailure(rejectedCreation = true)
 
-  private fun assertDeferredResponseSendFailure(rejectedCreation: Boolean) = runBlocking {
-    val escaped = runCatching {
-      withStartedClient("transcript", acceptedConsult = true) { client, failures, requests ->
-        val response = realtimeTestField(client, "responseState").get(client) as TalkRealtimeResponseState
-        acceptConsult(client)
-        if (!rejectedCreation) {
-          StartupDataChannel.message("""{"type":"response.created","response":{"id":"active-response"}}""")
-          withTimeout(5_000) { while (response.responseId != "active-response") yield() }
-        }
-        completeConsult(client, "accepted answer")
-        val trigger = if (rejectedCreation) {
-          val creation = Json.parseToJsonElement(StartupDataChannel.sent.single { it.contains("response.create") }) as kotlinx.serialization.json.JsonObject
-          val eventId = (creation.getValue("event_id") as kotlinx.serialization.json.JsonPrimitive).content
-          StartupDataChannel.message(describeViewEvent("control", "openclaw_agent_control"))
-          withTimeout(5_000) { while (!response.responsePending) yield() }
-          """{"type":"error","error":{"event_id":"$eventId"}}"""
-        } else {
-          assertTrue(response.responsePending)
-          """{"type":"response.done","response":{"id":"active-response","status":"completed","output":[]}}"""
-        }
-        val attempts = StartupDataChannel.attempts.size
-        val owner = coroutineContext[Job]!!
-        val existing = owner.children.toSet()
-        StartupDataChannel.allowSend = false
-        StartupDataChannel.message(trigger)
-        withTimeout(5_000) { while (StartupDataChannel.attempts.size == attempts) yield() }
-        val sendJobs = owner.children.filter { it !in existing }.toList()
-        withTimeout(5_000) { sendJobs.joinAll() }
-        assertEquals("A failed response emission must reach the visible failure callback once", 1, failures.size)
-        client.close()
-        assertEquals(1, requests.count { it == "talk.client.close" })
-        assertTrue(StartupPeerConnection.disposed)
-      }
-    }.exceptionOrNull()
-    assertEquals("The response owner must contain asynchronous SDK rejection", null, escaped)
-  }
+  private fun assertDeferredResponseSendFailure(rejectedCreation: Boolean) =
+    runBlocking {
+      val escaped =
+        runCatching {
+          withStartedClient("transcript", acceptedConsult = true) { client, failures, requests ->
+            val response = realtimeTestField(client, "responseState").get(client) as TalkRealtimeResponseState
+            acceptConsult(client)
+            if (!rejectedCreation) {
+              StartupDataChannel.message("""{"type":"response.created","response":{"id":"active-response"}}""")
+              withTimeout(5_000) { while (response.responseId != "active-response") yield() }
+            }
+            completeConsult(client, "accepted answer")
+            val trigger =
+              if (rejectedCreation) {
+                val creation = Json.parseToJsonElement(StartupDataChannel.sent.single { it.contains("response.create") }) as kotlinx.serialization.json.JsonObject
+                val eventId = (creation.getValue("event_id") as kotlinx.serialization.json.JsonPrimitive).content
+                StartupDataChannel.message(describeViewEvent("control", "openclaw_agent_control"))
+                withTimeout(5_000) { while (!response.responsePending) yield() }
+                """{"type":"error","error":{"event_id":"$eventId"}}"""
+              } else {
+                assertTrue(response.responsePending)
+                """{"type":"response.done","response":{"id":"active-response","status":"completed","output":[]}}"""
+              }
+            val attempts = StartupDataChannel.attempts.size
+            val owner = coroutineContext[Job]!!
+            val existing = owner.children.toSet()
+            StartupDataChannel.allowSend = false
+            StartupDataChannel.message(trigger)
+            withTimeout(5_000) { while (StartupDataChannel.attempts.size == attempts) yield() }
+            val sendJobs = owner.children.filter { it !in existing }.toList()
+            withTimeout(5_000) { sendJobs.joinAll() }
+            assertEquals("A failed response emission must reach the visible failure callback once", 1, failures.size)
+            client.close()
+            assertEquals(1, requests.count { it == "talk.client.close" })
+            assertTrue(StartupPeerConnection.disposed)
+          }
+        }.exceptionOrNull()
+      assertEquals("The response owner must contain asynchronous SDK rejection", null, escaped)
+    }
 
   private suspend fun acceptConsult(client: TalkRealtimeClient): RealtimeAgentClientTransport {
     val agent = realtimeTestField(client, "agent").get(client) as RealtimeAgentCoordinator
@@ -491,16 +512,31 @@ class TalkRealtimeClientLifecycleTest {
     return (realtimeTestField(agent, "activeSession").get(agent) as RealtimeAgentSession).clientTransport!!
   }
 
-  private suspend fun completeConsult(client: TalkRealtimeClient, text: String) {
+  private suspend fun completeConsult(
+    client: TalkRealtimeClient,
+    text: String,
+  ) {
     val agent = realtimeTestField(client, "agent").get(client) as RealtimeAgentCoordinator
     val owner = (realtimeTestField(agent, "sessionScope").get(agent) as CoroutineScope).coroutineContext[Job]!!
-    assertTrue(agent.handleChatEvent("main", "accepted-consult", "final", buildJsonObject { put("role", "assistant"); put("content", text) }))
+    assertTrue(
+      agent.handleChatEvent(
+        "main",
+        "accepted-consult",
+        "final",
+        buildJsonObject {
+          put("role", "assistant")
+          put("content", text)
+        },
+      ),
+    )
     val jobs = owner.children.toList()
     withTimeout(5_000) { jobs.joinAll() }
   }
 
-  private fun describeViewEvent(id: String, name: String = "describe_view"): String =
-    """{"type":"response.done","response":{"id":"response-$id","status":"completed","output":[{"type":"function_call","status":"completed","call_id":"call-$id","name":"$name","arguments":"{}"}]}}"""
+  private fun describeViewEvent(
+    id: String,
+    name: String = "describe_view",
+  ): String = """{"type":"response.done","response":{"id":"response-$id","status":"completed","output":[{"type":"function_call","status":"completed","call_id":"call-$id","name":"$name","arguments":"{}"}]}}"""
 
   private suspend fun withStartedClient(
     controlSource: String?,

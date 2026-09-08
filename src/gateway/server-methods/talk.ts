@@ -81,7 +81,6 @@ import { talkClientHandlers } from "./talk-client.js";
 import { talkSessionHandlers } from "./talk-session.js";
 import {
   buildTalkRealtimeConfig,
-  talkClientConsultRoutingError,
   resolveTalkRealtimeGatewayRelayLaunch,
   buildRealtimeVoiceLaunchOptions,
   buildTalkTranscriptionConfig,
@@ -274,14 +273,8 @@ function buildTalkCatalog(config: OpenClawConfig, targetAgentId?: string) {
   const activeTranscriptionProvider = transcriptionSelection.activeProvider;
   const realtimeConfig = buildTalkRealtimeConfig(config);
   const realtimeProviderIds = Object.keys(realtimeConfig.providers);
-  const clientLaunchError = talkClientConsultRoutingError(realtimeConfig.consultRouting);
-  // Web Talk may recover a rejected client launch through relay only when transport
-  // is unset. Check that executable route without rewriting an explicit transport.
   const realtimeSurface =
-    realtimeConfig.transport === "gateway-relay" ||
-    (realtimeConfig.transport === undefined && clientLaunchError !== undefined)
-      ? "gateway-relay"
-      : "browser-session";
+    realtimeConfig.transport === "gateway-relay" ? "gateway-relay" : "browser-session";
   // Mirror talk.client.create's resolution inputs (agent scope + top-level model
   // override) so catalog readiness matches what session creation will actually do;
   // diverging here previously reported GPT-Live over OAuth as unconfigured.
@@ -312,7 +305,7 @@ function buildTalkCatalog(config: OpenClawConfig, targetAgentId?: string) {
               }),
               consultRouting: realtimeConfig.consultRouting,
             }).error
-          : clientLaunchError;
+          : undefined;
       if (launchError) {
         throw new Error(launchError);
       }

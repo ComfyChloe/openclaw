@@ -319,7 +319,9 @@ async function createOpenAIRealtimeBrowserSession(
           context,
         );
   if (auth.status === "missing") {
-    if (config.authMethod === "api-key") throw new Error(OPENAI_REALTIME_PLATFORM_AUTH_REQUIRED);
+    if (config.authMethod === "api-key") {
+      throw new Error(OPENAI_REALTIME_PLATFORM_AUTH_REQUIRED);
+    }
     if (
       config.authMethod !== "oauth" &&
       hasOpenAIRealtimePlatformAuthInput(
@@ -412,7 +414,9 @@ export function buildOpenAIRealtimeVoiceProvider(
     resolveConfig: ({ rawConfig }) => normalizeProviderConfig(rawConfig),
     isConfigured: ({ cfg, providerConfig, agentId }) => {
       const config = normalizeProviderConfig(providerConfig);
-      if (config.authMethod === "oauth") return false;
+      if (config.authMethod === "oauth") {
+        return false;
+      }
       if (config.azureEndpoint || config.azureDeployment) {
         return hasOpenAIRealtimeApiKeyInput(config.apiKey);
       }

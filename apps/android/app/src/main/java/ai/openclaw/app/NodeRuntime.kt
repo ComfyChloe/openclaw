@@ -1503,6 +1503,7 @@ class NodeRuntime private constructor(
   internal val gatewayCatalogRevision: StateFlow<Long> = gatewayMethodsEpoch.asStateFlow()
 
   @Volatile internal var gatewayDataRequestOverrideForTests: GatewayDataRequestOverride? = null
+
   @Volatile internal var talkRequestLeaseOverrideForTests: GatewaySession.RequestLease? = null
 
   @Volatile internal var gatewayDataRequestTimeoutObserverForTests: ((method: String, timeoutMs: Long) -> Unit)? = null
@@ -2338,8 +2339,11 @@ class NodeRuntime private constructor(
 
   internal val talkCameraCallId: StateFlow<String?> get() = talkMode.cameraCallId
 
-  internal suspend fun openTalkCamera(callId: String, view: androidx.camera.view.PreviewView, facing: String): AutoCloseable =
-    talkMode.openCamera(callId, view, facing)
+  internal suspend fun openTalkCamera(
+    callId: String,
+    view: androidx.camera.view.PreviewView,
+    facing: String,
+  ): AutoCloseable = talkMode.openCamera(callId, view, facing)
 
   val talkModeHasFailure: StateFlow<Boolean>
     get() = talkMode.hasFailure
@@ -3087,6 +3091,7 @@ class NodeRuntime private constructor(
       }
     }
   }
+
   val chatSessionOwnerAgentId: StateFlow<String?> = chat.sessionOwnerAgentId
   internal val gatewayComposerDefaultAgentOwner: StateFlow<GatewayDefaultAgentOwner?> = chat.composerDefaultAgentOwner
   val chatSessionId: StateFlow<String?> = chat.sessionId
@@ -6725,7 +6730,9 @@ class NodeRuntime private constructor(
     }
     val readiness =
       try {
-        val wireTarget = ai.openclaw.app.voice.TalkWireTarget(lease, target.sessionKey, target.agentId)
+        val wireTarget =
+          ai.openclaw.app.voice
+            .TalkWireTarget(lease, target.sessionKey, target.agentId)
         val response = wireTarget.request("talk.catalog", "{}")
         val parsed = parseGatewayTalkSetupReadiness(json.parseToJsonElement(response).asObjectOrNull())
         if (lease.supportsTalkSessionTarget) parsed else parsed.copy(realtimeTalk = GatewayTalkSetupReadiness.unverified().realtimeTalk)

@@ -178,7 +178,8 @@ export function resolveSessionMutationAuthorization(params: {
       assertTalkSessionStorageTarget(getCfg(), talkInput.target);
       talkSessionTarget = talkInput.target;
     } else {
-      talkSessionTarget = talkInput && prepareTalkSessionTarget(getCfg(), talkInput.sessionKey, talkInput.agentId);
+      talkSessionTarget =
+        talkInput && prepareTalkSessionTarget(getCfg(), talkInput.sessionKey, talkInput.agentId);
     }
   } catch (error) {
     return {

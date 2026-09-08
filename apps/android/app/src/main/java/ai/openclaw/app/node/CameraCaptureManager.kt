@@ -324,16 +324,20 @@ class CameraCaptureManager(
     view: androidx.camera.view.PreviewView,
     facing: String,
     isCurrent: () -> Boolean,
-  ): TalkCameraPreview = withContext(Dispatchers.Main.immediate) {
-    ensureCameraPermission()
-    val owner = lifecycleOwner ?: error("Camera is not ready")
-    val provider = context.cameraProvider()
-    check(isCurrent()) { "Talk camera request expired" }
-    val preview = androidx.camera.core.Preview.Builder().build()
-    preview.setSurfaceProvider(view.surfaceProvider)
-    val binding = bindCameraUseCases(provider, owner, resolveCameraSelector(provider, facing, null), preview)
-    TalkCameraPreview(view, binding, isCurrent)
-  }
+  ): TalkCameraPreview =
+    withContext(Dispatchers.Main.immediate) {
+      ensureCameraPermission()
+      val owner = lifecycleOwner ?: error("Camera is not ready")
+      val provider = context.cameraProvider()
+      check(isCurrent()) { "Talk camera request expired" }
+      val preview =
+        androidx.camera.core.Preview
+          .Builder()
+          .build()
+      preview.setSurfaceProvider(view.surfaceProvider)
+      val binding = bindCameraUseCases(provider, owner, resolveCameraSelector(provider, facing, null), preview)
+      TalkCameraPreview(view, binding, isCurrent)
+    }
 
   private fun parseFacing(params: JsonObject?): String? {
     val value = parseJsonString(params, "facing")?.trim()?.lowercase() ?: return null
