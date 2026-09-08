@@ -81,6 +81,8 @@ import { talkClientHandlers } from "./talk-client.js";
 import { talkSessionHandlers } from "./talk-session.js";
 import {
   buildTalkRealtimeConfig,
+  resolveTalkRealtimeGatewayRelayLaunch,
+  buildRealtimeVoiceLaunchOptions,
   buildTalkTranscriptionConfig,
   configuredOrFalse,
   listTalkTranscriptionProviders,
@@ -283,7 +285,7 @@ function buildTalkCatalog(config: OpenClawConfig, targetAgentId?: string) {
     canonicalizeRealtimeVoiceProviderId(realtimeConfig.provider, config),
     () => {
       assertSecretOwnerAvailable("capability", "talk:realtime");
-      return resolveConfiguredRealtimeVoiceProvider({
+      const resolution = resolveConfiguredRealtimeVoiceProvider({
         cfg: config,
         configuredProviderId: realtimeConfig.provider,
         providerConfigs: realtimeConfig.providers,
@@ -291,7 +293,23 @@ function buildTalkCatalog(config: OpenClawConfig, targetAgentId?: string) {
         agentId: realtimeAgentId,
         defaultModel: realtimeConfig.model,
         surface: realtimeSurface,
-      }).provider.id;
+      });
+      const launchError =
+        realtimeSurface === "gateway-relay"
+          ? resolveTalkRealtimeGatewayRelayLaunch({
+              ...resolution,
+              cfg: config,
+              launchOptions: buildRealtimeVoiceLaunchOptions({
+                requested: {},
+                defaults: realtimeConfig,
+              }),
+              consultRouting: realtimeConfig.consultRouting,
+            }).error
+          : undefined;
+      if (launchError) {
+        throw new Error(launchError);
+      }
+      return resolution.provider.id;
     },
   );
   const activeRealtimeProvider = realtimeSelection.activeProvider;
