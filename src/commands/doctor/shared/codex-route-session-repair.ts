@@ -44,6 +44,7 @@ import type {
   CodexSessionRouteRepairSummary,
   SessionRouteRepairResult,
 } from "./codex-route-types.js";
+import { migrateLegacyRuntimeModelRef } from "./legacy-runtime-model-providers.js";
 import {
   createRetiredModelRefRepairResolver,
   repairRetiredSessionModelRef,
@@ -97,11 +98,75 @@ function rewriteSessionModelPair(params: {
   }
   const canonicalModel =
     legacyProviderModelRef && toCanonicalOpenAIModelRef(legacyProviderModelRef);
-  if (!canonicalModel) {
+  if (canonicalModel) {
+    params.entry[params.modelKey] = canonicalModel;
+    return true;
+  }
+  const scopedRuntimeRef =
+    model &&
+    (!provider || ["anthropic", "claude-cli", "google", "google-gemini-cli"].includes(provider))
+      ? migrateLegacyRuntimeModelRef(model)
+      : null;
+  const rawRef = scopedRuntimeRef ? model : provider && model ? `${provider}/${model}` : model;
+  const migrated = scopedRuntimeRef ?? (rawRef ? migrateLegacyRuntimeModelRef(rawRef) : null);
+  if (
+    !migrated ||
+    (rawRef &&
+      isBlockedLegacyCodexModelRef({
+        modelRef: rawRef,
+        blockedModelIdentities: params.blockedModelIdentities,
+      }))
+  ) {
     return false;
   }
-  params.entry[params.modelKey] = canonicalModel;
-  return true;
+  let changed = false;
+  if (params.entry[params.providerKey] !== migrated.provider) {
+    params.entry[params.providerKey] = migrated.provider;
+    changed = true;
+  }
+  if (params.entry[params.modelKey] !== migrated.model) {
+    params.entry[params.modelKey] = migrated.model;
+    changed = true;
+  }
+  if (
+    params.entry.agentRuntimeOverride === undefined ||
+    normalizeRuntimeString(params.entry.agentRuntimeOverride) === "auto"
+  ) {
+    params.entry.agentRuntimeOverride = migrated.runtime;
+    changed = true;
+  }
+  return changed;
+}
+
+function isCodexSessionRoute(entry: SessionEntry): boolean {
+  return (
+    isLegacyCodexProviderId(entry.modelProvider) ||
+    isLegacyCodexProviderId(entry.providerOverride) ||
+    (sessionProviderAllowsScopedModelRef(normalizeString(entry.modelProvider)) &&
+      isOpenAICodexModelRef(entry.model)) ||
+    (sessionProviderAllowsScopedModelRef(normalizeString(entry.providerOverride)) &&
+      isOpenAICodexModelRef(entry.modelOverride)) ||
+    normalizeRuntimeString(entry.agentRuntimeOverride) === "codex"
+  );
+}
+
+function normalizeCodexSessionHarness(entry: SessionEntry, knownCodexRoute: boolean): boolean {
+  if (!knownCodexRoute && !isCodexSessionRoute(entry)) {
+    return false;
+  }
+  let changed = false;
+  if (
+    normalizeRuntimeString(entry.agentHarnessId) === "codex-cli" ||
+    (knownCodexRoute && entry.agentHarnessId === undefined)
+  ) {
+    entry.agentHarnessId = "codex";
+    changed = true;
+  }
+  if (normalizeRuntimeString(entry.agentRuntimeOverride) === "codex-cli") {
+    entry.agentRuntimeOverride = "codex";
+    changed = true;
+  }
+  return changed;
 }
 
 function sessionProviderAllowsScopedModelRef(provider: string | undefined): boolean {
@@ -197,6 +262,8 @@ function repairCodexSessionStoreRoutes(params: {
     if (!entry || isValidAgentHarnessSessionStoreEntry(sessionKey, entry)) {
       continue;
     }
+    const legacyCodexHarness = normalizeRuntimeString(entry.agentHarnessId) === "codex-cli";
+    const codexModelRoute = isCodexSessionRoute(entry);
     const changedRuntimeModelRoute = rewriteSessionModelPair({
       entry,
       providerKey: "modelProvider",
@@ -222,9 +289,9 @@ function repairCodexSessionStoreRoutes(params: {
       entry,
       params.blockedModelIdentities,
     );
-    const changedRuntimePins = changedModelRoute
-      ? preserveRepairedSessionRuntimeIntent(entry)
-      : false;
+    const changedRuntimePins =
+      changedModelRoute && codexModelRoute ? preserveRepairedSessionRuntimeIntent(entry) : false;
+    const changedCodexHarness = normalizeCodexSessionHarness(entry, legacyCodexHarness);
     // Providerless route repair first needs the legacy profile prefix; only the
     // auth migration owner's exact collision-aware map may rewrite its identity.
     const mappedAuthProfileId =
@@ -249,6 +316,7 @@ function repairCodexSessionStoreRoutes(params: {
       !changedModelRoute &&
       !changedFallbackNotice &&
       !changedRuntimePins &&
+      !changedCodexHarness &&
       !changedAuthProfile &&
       !changedRetiredModel
     ) {
