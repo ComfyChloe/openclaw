@@ -221,6 +221,7 @@ class TalkModeManager internal constructor(
   private val onRequestedAudioInputChanged: (String?) -> Unit = {},
   private val currentChatTarget: () -> ai.openclaw.app.chat.ChatComposerOwner? = { null },
   private val currentChatSelection: () -> Long = { 0L },
+  private val camera: ai.openclaw.app.node.CameraCaptureManager? = null,
   private val onBeforeSpeak: suspend () -> Unit = {},
   private val onAfterSpeak: suspend () -> Unit = {},
   private val captureRelayStopNotification: () -> ((isCurrent: () -> Boolean) -> Unit) = { {} },
@@ -323,6 +324,18 @@ class TalkModeManager internal constructor(
   private var startWireTarget: TalkWireTarget? = null
   private val startLease: GatewaySession.RequestLease? get() = startWireTarget?.lease
   private var startChatSelection = 0L
+  private val _cameraCallId = MutableStateFlow<String?>(null)
+  val cameraCallId: StateFlow<String?> = _cameraCallId
+
+  internal suspend fun openCamera(
+    expectedCallId: String,
+    view: androidx.camera.view.PreviewView,
+    facing: String,
+  ): AutoCloseable {
+    val client = realtimeClient ?: error("Talk is not active")
+    check(client.cameraCallId == expectedCallId) { "Talk call changed" }
+    return client.openCamera(checkNotNull(camera), view, facing)
+  }
 
   /** Navigation retires the call; a later return to the same key cannot revive its generation. */
   fun onChatTargetChanged() {
@@ -1048,11 +1061,13 @@ class TalkModeManager internal constructor(
               null
             }
           if (!isCurrentStart(generation) || !_isEnabled.value) return@launch
-          try {
-            selectedAndroidRealtimeProvider(catalog)
-          } catch (error: IllegalStateException) {
-            if (!advisory) throw error
-          }
+          val selected =
+            try {
+              selectedAndroidRealtimeProvider(catalog)
+            } catch (error: IllegalStateException) {
+              if (!advisory) throw error else null
+            }
+          val supportsCamera = selected?.get("supportsVideoFrames").asBooleanOrNull() == true
           val selectedRoute =
             try {
               resolveAndroidRealtimeRoute(configured, catalog, config.realtimeRelayModelSupported)
@@ -1063,7 +1078,7 @@ class TalkModeManager internal constructor(
           when (val route = selectedRoute) {
             AndroidRealtimeRoute.WebRtc, AndroidRealtimeRoute.WebRtcWithRelayRecovery -> {
               try {
-                startRealtimeClient(generation)
+                startRealtimeClient(generation, supportsCamera)
               } catch (err: Throwable) {
                 // The selected route owns recovery permission; inactive provider auth cannot override it.
                 if (route != AndroidRealtimeRoute.WebRtcWithRelayRecovery || err is CancellationException) throw err
@@ -1305,6 +1320,7 @@ class TalkModeManager internal constructor(
 
   private suspend fun startRealtimeClient(
     generation: Long,
+    supportsCamera: Boolean,
   ) {
     check(isConnected()) { "Gateway not connected" }
     check(ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) { "Microphone permission required" }
@@ -1323,9 +1339,11 @@ class TalkModeManager internal constructor(
         isCurrent = { isCurrentStart(generation) && lease.isCurrent() },
         agentId = target.agentId,
         wireTarget = target,
+        supportsCamera = supportsCamera,
         onStatus = { state ->
           synchronized(realtimeCapturePauseLock) {
             if (realtimeClient === client && realtimeCapturePause == null) {
+              _cameraCallId.value = client.cameraCallId
               val snapshot = client.snapshot
               _isListening.value = snapshot != null && state == "Listening"
               setRealtimePlaying(snapshot != null && state == "Speaking")
@@ -1787,6 +1805,7 @@ class TalkModeManager internal constructor(
     val status = currentStatus
     val retiredClient = realtimeClient
     realtimeClient = null
+    _cameraCallId.value = null
     if (retiredClient != null) {
       audioRetirement.retire(cleanup = scope.async(start = CoroutineStart.UNDISPATCHED) { withContext(NonCancellable) { retiredClient.close() } })
     }
