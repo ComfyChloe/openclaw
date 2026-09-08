@@ -1,5 +1,6 @@
 import { formatPortDiagnostics } from "../../infra/ports.js";
 import type { GatewayPortHealthSnapshot, GatewayRestartSnapshot } from "./restart-health.types.js";
+import { allListenersOwnedByRuntimePid } from "./restart-port-ownership.js";
 
 function renderPluginDiagnostics(snapshot: GatewayPortHealthSnapshot): string[] {
   const lines: string[] = [];
@@ -18,7 +19,10 @@ function renderPluginDiagnostics(snapshot: GatewayPortHealthSnapshot): string[] 
   return lines;
 }
 
-function renderPortUsageDiagnostics(snapshot: GatewayPortHealthSnapshot): string[] {
+function renderPortUsageDiagnostics(
+  snapshot: GatewayPortHealthSnapshot,
+  includePluginDiagnostics = true,
+): string[] {
   const lines: string[] = [];
   if (snapshot.portUsage.status === "busy") {
     lines.push(...formatPortDiagnostics(snapshot.portUsage));
@@ -31,7 +35,9 @@ function renderPortUsageDiagnostics(snapshot: GatewayPortHealthSnapshot): string
   if (snapshot.probeError) {
     lines.push(`Gateway probe failed: ${snapshot.probeError}`);
   }
-  lines.push(...renderPluginDiagnostics(snapshot));
+  if (includePluginDiagnostics) {
+    lines.push(...renderPluginDiagnostics(snapshot));
+  }
   return lines;
 }
 
@@ -66,7 +72,13 @@ export function renderRestartDiagnostics(snapshot: GatewayRestartSnapshot): stri
   if (runtimeSummary) {
     lines.push(`Service runtime: ${runtimeSummary}`);
   }
-  lines.push(...renderPortUsageDiagnostics(snapshot));
+  const runtimePid = snapshot.runtime.pid;
+  const pluginOwnershipAccepted =
+    snapshot.runtime.status === "running" &&
+    typeof runtimePid === "number" &&
+    snapshot.portUsage.status === "busy" &&
+    allListenersOwnedByRuntimePid(snapshot.portUsage.listeners, runtimePid);
+  lines.push(...renderPortUsageDiagnostics(snapshot, pluginOwnershipAccepted));
   return lines;
 }
 

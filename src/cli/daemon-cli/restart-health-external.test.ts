@@ -185,6 +185,50 @@ describe("restart health", () => {
     expect(callGateway).toHaveBeenCalledTimes(2);
   });
 
+  it.each([true, false])(
+    "keeps polling unverified plugin failures until healthy=%s without attributing them",
+    async (recovers) => {
+      inspectPortUsage.mockResolvedValue({
+        port: 18789,
+        status: "busy",
+        listeners: [{ pid: 4200, commandLine: "openclaw-gateway" }],
+        hints: [],
+      });
+      const unavailable = gatewayHealthResponse({
+        health: {
+          ok: true,
+          plugins: {
+            errors: [],
+            unavailable: [
+              {
+                id: "discord",
+                state: "configured-unavailable",
+                diagnostic: {
+                  kind: "plugin-verification",
+                  reason: "missing-openclaw-peer-link",
+                  detail: "unverified listener plugin failure",
+                },
+              },
+            ],
+          },
+        },
+      });
+      callGateway.mockImplementationOnce(unavailable);
+      callGateway.mockImplementation(recovers ? gatewayHealthResponse() : unavailable);
+      const { waitForGatewayHealthyListener } = await import("./restart-health.js");
+      const snapshot = await waitForGatewayHealthyListener({
+        port: 18789,
+        includePluginHealth: true,
+        attempts: 1,
+        delayMs: 500,
+      });
+      expect(snapshot.healthy).toBe(recovers);
+      expect(snapshot.unavailablePlugins).toBeUndefined();
+      expect(inspectPortUsage).toHaveBeenCalledTimes(2);
+      expect(sleep).toHaveBeenCalledTimes(1);
+    },
+  );
+
   it("bounds replacement health after an indefinite previous-owner wait", async () => {
     inspectPortUsage.mockResolvedValue({
       port: 18789,

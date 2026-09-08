@@ -182,15 +182,27 @@ describe("restart health", () => {
   });
 
   it.each([
-    { name: "stopped", runtime: { status: "stopped" } as const, observedPlugin: "discord" },
+    {
+      name: "stopped",
+      runtime: { status: "stopped" } as const,
+      observedPlugin: "discord",
+      mixed: false,
+    },
     {
       name: "running under a different pid",
       runtime: { status: "running", pid: 8000 } as const,
       observedPlugin: undefined,
+      mixed: false,
+    },
+    {
+      name: "running alongside a foreign listener",
+      runtime: { status: "running", pid: 8000 } as const,
+      observedPlugin: "discord",
+      mixed: true,
     },
   ])(
     "does not attribute stale-listener plugin failures when the managed service is $name",
-    async ({ runtime, observedPlugin }) => {
+    async ({ runtime, observedPlugin, mixed }) => {
       callGateway.mockImplementation(
         gatewayHealthResponse({
           server: { version: "2026.4.24", connId: "stale" },
@@ -216,7 +228,10 @@ describe("restart health", () => {
       inspectPortUsage.mockResolvedValue({
         port: 18789,
         status: "busy",
-        listeners: [{ pid: 5151, commandLine: "openclaw-gateway" }],
+        listeners: [
+          { pid: 5151, commandLine: "openclaw-gateway" },
+          ...(mixed ? [{ pid: 8000, commandLine: "openclaw-gateway" }] : []),
+        ],
         hints: [],
       });
 
@@ -233,6 +248,10 @@ describe("restart health", () => {
 
       expect(snapshot.waitOutcome).toBe("timeout");
       expect(snapshot.unavailablePlugins?.[0]?.id).toBe(observedPlugin);
+      const { renderRestartDiagnostics } = await import("./restart-health.js");
+      expect(renderRestartDiagnostics(snapshot).join("\n")).not.toContain(
+        "stale listener plugin failure",
+      );
     },
   );
 
@@ -668,5 +687,26 @@ describe("restart health", () => {
     expect(snapshot.waitOutcome).toBe("timeout");
     expect(snapshot.elapsedMs).toBe(4_000);
     expect(sleep).toHaveBeenCalledTimes(4);
+  });
+
+  it("cancels a migration-extended wait before another health inspection", async () => {
+    const controller = new AbortController();
+    const aborted = new Error("repair-budget");
+    inspectPortUsage.mockResolvedValue({ port: 18789, status: "free", listeners: [], hints: [] });
+    sleep.mockImplementationOnce(async () => {
+      controller.abort(aborted);
+    });
+    const { waitForGatewayHealthyRestart } = await import("./restart-health.js");
+    await expect(
+      waitForGatewayHealthyRestart({
+        service: makeGatewayService({ status: "running", pid: 8000 }),
+        port: 18789,
+        attempts: 1,
+        delayMs: 60_000,
+        isStartupMigrationActive: () => true,
+        signal: controller.signal,
+      }),
+    ).rejects.toBe(aborted);
+    expect(inspectPortUsage).toHaveBeenCalledOnce();
   });
 });
