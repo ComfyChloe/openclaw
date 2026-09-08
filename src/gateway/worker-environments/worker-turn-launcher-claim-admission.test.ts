@@ -227,7 +227,9 @@ describe("worker turn launcher claim admission", () => {
       await expect(
         provider.executeTurn({ ...sessionTarget, runId }, turn(runId), runLocal),
       ).rejects.toThrow("Wait for workspace recovery to finish before retrying");
-      await new Promise<void>((resolve) => setImmediate(resolve));
+      await new Promise<void>((resolve) => {
+        setImmediate(resolve);
+      });
       expect(runLocal).not.toHaveBeenCalled();
       expect(placements.listPendingWorkspaceResults()).toEqual(pending);
       expect(placements.get(SESSION_ID)?.turnClaim).toBeNull();
