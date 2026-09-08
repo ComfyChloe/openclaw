@@ -22,7 +22,7 @@ function errorMessage(error: unknown): string {
 }
 
 async function loadUsageRouteData(
-  context: ApplicationContext,
+  context: Pick<ApplicationContext, "gateway" | "agentSelection">,
   options: RouteLoaderOptions,
 ): Promise<UsageRouteData> {
   const gateway = context.gateway;
