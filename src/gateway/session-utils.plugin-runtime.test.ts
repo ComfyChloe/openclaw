@@ -125,7 +125,55 @@ describe("gateway session list plugin runtime normalization", () => {
     },
   );
 
-  it("keeps provider runtime normalization for detail rows", async () => {
+  it.each([
+    { name: "direct", parentSessionKey: undefined },
+    { name: "inherited", parentSessionKey: "agent:main:parent" },
+  ])("does not re-normalize $name resolved overrides in detail rows", ({ parentSessionKey }) => {
+    normalizeProviderModelIdWithPluginMock.mockImplementation(
+      ({ provider, context }: { provider?: string; context?: { modelId?: string } }) =>
+        provider === "custom-provider" && context?.modelId === "custom-legacy-model"
+          ? "custom-modern-model"
+          : undefined,
+    );
+    const cfg = {
+      agents: { defaults: { model: { primary: "openai/gpt-5.4" } } },
+    } as OpenClawConfig;
+    const selectedEntry: SessionEntry = {
+      sessionId: parentSessionKey ? "parent" : "child",
+      updatedAt: 1,
+      providerOverride: "custom-provider",
+      modelOverride: "custom-legacy-model",
+      modelOverrideSource: "user",
+      modelOverrideRouteResolution: "resolved",
+    };
+    const childEntry: SessionEntry = {
+      sessionId: "child",
+      updatedAt: 2,
+      ...(parentSessionKey ? { parentSessionKey } : selectedEntry),
+    };
+    const store = parentSessionKey
+      ? { [parentSessionKey]: selectedEntry, "agent:main:child": childEntry }
+      : { "agent:main:child": childEntry };
+
+    const row = sessionUtils.buildGatewaySessionRow({
+      cfg,
+      agentId: "main",
+      storePath: "",
+      store,
+      key: "agent:main:child",
+      entry: childEntry,
+    });
+
+    expect(row.modelProvider).toBe("custom-provider");
+    expect(row.model).toBe("custom-legacy-model");
+    expect(
+      normalizeProviderModelIdWithPluginMock.mock.calls.filter(
+        ([call]) => (call as { provider?: string }).provider === "custom-provider",
+      ),
+    ).toHaveLength(0);
+  });
+
+  it("keeps provider runtime normalization for raw detail rows", async () => {
     normalizeProviderModelIdWithPluginMock.mockImplementation(
       ({ provider, context }: { provider?: string; context?: { modelId?: string } }) => {
         if (provider === "custom-provider" && context?.modelId === "custom-legacy-model") {

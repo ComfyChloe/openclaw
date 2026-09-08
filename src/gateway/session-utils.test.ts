@@ -375,7 +375,7 @@ describe("gateway session utils", () => {
     expect(row.modelOverrideSource).toBe(expected);
   });
 
-  test("projects explicit Default as the configured selection without public provenance", () => {
+  test("projects explicit Default as the configured selection", () => {
     const row = buildGatewaySessionRow({
       cfg: createModelDefaultsConfig({ primary: "openai/gpt-5.4" }),
       storePath: "",
@@ -423,7 +423,7 @@ describe("gateway session utils", () => {
 
     expect(row.modelProvider).toBe("anthropic");
     expect(row.model).toBe("claude-sonnet-4-6");
-    expect(row.modelOverrideSource).toBeNull();
+    expect(row.modelOverrideSource).toBe("inherited");
   });
 
   test("projects the active fallback model separately from the selected model", () => {

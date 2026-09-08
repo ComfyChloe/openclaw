@@ -33,17 +33,21 @@ function resolveStoredOverrideFromEntry(params: {
     providerOverride: params.entry?.providerOverride,
     modelOverride: params.entry?.modelOverride,
   });
+  const routeResolution = resolveSessionModelOverrideRouteResolution(params.entry);
   const ref = resolvePersistedOverrideModelRef({
     defaultProvider: params.defaultProvider,
     overrideProvider: normalized.providerOverride,
     overrideModel: normalized.modelOverride,
-    allowPluginNormalization: params.allowPluginNormalization,
+    // Resolved overrides are already canonical. Re-running provider normalization
+    // can rewrite their persisted identity while projecting a detail row.
+    allowPluginNormalization:
+      routeResolution === "resolved" ? false : params.allowPluginNormalization,
   });
   return ref
     ? {
         ...ref,
         source: params.source,
-        routeResolution: resolveSessionModelOverrideRouteResolution(params.entry),
+        routeResolution,
       }
     : null;
 }
