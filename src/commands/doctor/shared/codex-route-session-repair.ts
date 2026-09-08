@@ -103,8 +103,7 @@ function rewriteSessionModelPair(params: {
     return { changed: true, runtime: "codex" };
   }
   const scopedRuntimeRef =
-    model &&
-    (!provider || ["anthropic", "claude-cli", "google", "google-gemini-cli"].includes(provider))
+    model && (!provider || ["claude-cli", "google-gemini-cli"].includes(provider))
       ? migrateLegacyRuntimeModelRef(model)
       : null;
   const rawRef = scopedRuntimeRef ? model : provider && model ? `${provider}/${model}` : model;

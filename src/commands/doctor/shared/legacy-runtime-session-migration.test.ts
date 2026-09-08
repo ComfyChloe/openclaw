@@ -118,7 +118,13 @@ describe("legacy runtime session model migration", () => {
     });
   });
 
-  it("preserves a custom namespaced model under an explicit canonical provider", async () => {
+  it.each([
+    { provider: "openai", model: "codex/team/custom-model" },
+    { provider: "google", model: "claude-cli/team/model" },
+    { provider: "anthropic", model: "google-gemini-cli/team/model" },
+    { provider: "google", model: "google-gemini-cli/assistant-b" },
+    { provider: "anthropic", model: "claude-cli/assistant-a" },
+  ])("preserves a namespaced $model under explicit $provider", async ({ provider, model }) => {
     const state = await createOpenClawTestState({ layout: "state-only", prefix: "runtime-pair-" });
     states.push(state);
     state.applyEnv();
@@ -134,17 +140,21 @@ describe("legacy runtime session model migration", () => {
     await replaceSessionEntry(scope, {
       sessionId: "custom-pair",
       updatedAt: 1,
-      modelProvider: "openai",
-      model: "codex/team/custom-model",
-      providerOverride: "openai",
-      modelOverride: "codex/team/custom-model",
+      modelProvider: provider,
+      model,
+      providerOverride: provider,
+      modelOverride: model,
       modelOverrideSource: "user",
       authProfileOverride: "authored:account",
       authProfileOverrideSource: "user",
-      agentRuntimeOverride: "openclaw",
     });
     const before = loadSessionEntry(scope);
 
+    expect(
+      (await maybeRepairCodexSessionRoutes({ cfg, env: state.env, shouldRepair: true }))
+        .repairedSessions,
+    ).toBe(0);
+    expect(loadSessionEntry(scope)).toEqual(before);
     expect(
       (await maybeRepairCodexSessionRoutes({ cfg, env: state.env, shouldRepair: true }))
         .repairedSessions,
@@ -162,8 +172,8 @@ describe("legacy runtime session model migration", () => {
       expectedRuntime: "claude-cli",
     },
     {
-      provider: "google",
-      model: "google-gemini-cli/assistant-b",
+      provider: "google-gemini-cli",
+      model: "assistant-b",
       canonicalProvider: "google",
       canonicalModel: "assistant-b",
       explicitRuntime: "openclaw",
