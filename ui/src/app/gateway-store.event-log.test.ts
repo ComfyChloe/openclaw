@@ -34,8 +34,10 @@ describe("application gateway diagnostic history ownership", () => {
     store.current().opts.onEvent?.(A_EVENT);
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     store.gateway.stop();
+    // Credential changes queue warm-boot imports against these test globals.
+    await vi.dynamicImportSettled();
     setAvatarGatewayOrigin(null);
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
