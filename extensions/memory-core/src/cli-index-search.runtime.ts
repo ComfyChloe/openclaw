@@ -32,6 +32,7 @@ import type {
   MemoryPromoteExplainOptions,
   MemorySearchCommandOptions,
 } from "./cli.types.js";
+import { resolveMemoryPromotionFileMaxChars } from "./memory-budget.js";
 import { forgetMemoryEntries } from "./memory-forget.js";
 import { formatMemoryVectorDegradedWriteReason } from "./memory/manager-vector-warning.js";
 import type { MemoryCoreRuntimeHost } from "./memory/runtime-host.js";
@@ -415,11 +416,12 @@ export async function runMemoryPromote(
       let applyResult: Awaited<ReturnType<typeof applyShortTermPromotions>> | undefined;
       if (opts.apply) {
         try {
+          const workspaceAgentIds = resolveMemoryDreamingWorkspaces(cfg).find(
+            (workspace) => path.resolve(workspace.workspaceDir) === path.resolve(workspaceDir),
+          )?.agentIds ?? [agentId];
           applyResult = await applyShortTermPromotions({
             agentId,
-            workspaceAgentIds: resolveMemoryDreamingWorkspaces(cfg).find(
-              (workspace) => path.resolve(workspace.workspaceDir) === path.resolve(workspaceDir),
-            )?.agentIds,
+            workspaceAgentIds,
             workspaceDir,
             candidates,
             limit: opts.limit,
@@ -428,6 +430,10 @@ export async function runMemoryPromote(
             minUniqueQueries: opts.minUniqueQueries ?? dreaming.minUniqueQueries,
             maxAgeDays: dreaming.maxAgeDays,
             maxPromotedSnippetTokens: dreaming.maxPromotedSnippetTokens,
+            memoryFileMaxChars: resolveMemoryPromotionFileMaxChars({
+              cfg,
+              agentIds: workspaceAgentIds,
+            }),
             timezone: dreaming.timezone,
           });
         } catch (err) {

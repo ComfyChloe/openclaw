@@ -24,6 +24,7 @@ import { peekSystemEventEntries } from "openclaw/plugin-sdk/system-event-runtime
 import { appendFailedDreamingEvent } from "./dreaming-events.js";
 import type { NarrativePhaseData } from "./dreaming-narrative.js";
 import { formatErrorMessage, includesSystemEventToken } from "./dreaming-shared.js";
+import { resolveMemoryPromotionFileMaxChars } from "./memory-budget.js";
 
 const RUNTIME_CRON_RECONCILE_INTERVAL_MS = 60_000;
 const HEARTBEAT_ISOLATED_SESSION_SUFFIX = ":heartbeat";
@@ -637,6 +638,10 @@ async function runShortTermDreamingPromotionIfTriggered(params: {
         maxAgeDays: params.config.maxAgeDays,
         maxPromotedSnippetTokens: params.config.maxPromotedSnippetTokens,
         maxPriorEntryLossFraction: params.config.maxPriorEntryLossFraction,
+        memoryFileMaxChars: resolveMemoryPromotionFileMaxChars({
+          cfg: params.cfg,
+          agentIds,
+        }),
         consolidation: {
           ...(params.subagent ? { subagent: params.subagent } : {}),
           ...(params.config.execution?.model ? { model: params.config.execution.model } : {}),

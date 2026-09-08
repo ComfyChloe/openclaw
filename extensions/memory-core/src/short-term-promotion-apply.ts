@@ -587,22 +587,32 @@ export async function applyShortTermPromotions(
           const baseMemory = compaction.compacted;
           const header = baseMemory.trim().length > 0 ? "" : "# Long-Term Memory\n\n";
           const content = `${header}${withTrailingNewline(baseMemory)}${section}`;
-          // Append fallback keeps the historical read-modify-replace contract. Policy accepts
-          // its external-editor race because OpenClaw writers remain serialized by this sweep lock.
-          await commitMemoryContent({
-            filePath: memoryWritePath,
-            tempPrefix: `${path.basename(memoryPath)}.promotion`,
-            expectedHash: hashMemoryContent(existingMemory),
-            expectedContent: existingMemory,
-            allowInPlaceFallback: true,
-            content,
-          });
-          committedMemoryContent = content;
-          for (const candidate of toAppend) {
-            successfulCandidates.set(candidate.key, candidate);
+          if (budgetChars > 0 && content.length > budgetChars) {
+            const reason = `MEMORY.md budget exceeded (${content.length} > ${budgetChars} chars)`;
+            for (const candidate of toAppend) {
+              rejectionReasons.set(candidate.key, reason);
+            }
+            options.consolidation?.logger.warn(
+              `memory-core: deferred ${toAppend.length} promotion candidate(s) because ${reason}.`,
+            );
+          } else {
+            // Append fallback keeps the historical read-modify-replace contract. Policy accepts
+            // its external-editor race because OpenClaw writers remain serialized by this sweep lock.
+            await commitMemoryContent({
+              filePath: memoryWritePath,
+              tempPrefix: `${path.basename(memoryPath)}.promotion`,
+              expectedHash: hashMemoryContent(existingMemory),
+              expectedContent: existingMemory,
+              allowInPlaceFallback: true,
+              content,
+            });
+            committedMemoryContent = content;
+            for (const candidate of toAppend) {
+              successfulCandidates.set(candidate.key, candidate);
+            }
+            compactedDates = droppedDates;
+            appendedCandidates = toAppend.length;
           }
-          compactedDates = droppedDates;
-          appendedCandidates = toAppend.length;
         }
       }
       if (rewriteSkippedReason) {

@@ -1,8 +1,39 @@
 // Memory Core tests cover memory budget plugin behavior.
+import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
 import { describe, expect, it } from "vitest";
-import { compactMemoryForBudget, DEFAULT_MEMORY_FILE_MAX_CHARS } from "./memory-budget.js";
+import {
+  compactMemoryForBudget,
+  DEFAULT_MEMORY_FILE_MAX_CHARS,
+  resolveMemoryPromotionFileMaxChars,
+} from "./memory-budget.js";
 
 const PROMOTION_MARKER_LINE = "<!-- openclaw-memory-promotion:memory/short-term.md#entry -->";
+
+describe("promotion file budget resolution", () => {
+  const cfg = {
+    agents: {
+      defaults: { bootstrapMaxChars: 9_500 },
+      list: [
+        { id: "alpha", bootstrapMaxChars: 12_000 },
+        { id: "beta", bootstrapMaxChars: 9_000 },
+      ],
+    },
+  } as OpenClawConfig;
+
+  it("uses the smallest bootstrap cap among agents sharing the workspace", () => {
+    expect(resolveMemoryPromotionFileMaxChars({ cfg, agentIds: ["alpha", "beta"] })).toBe(9_000);
+  });
+
+  it("retains the promotion writer ceiling when the agent cap is larger", () => {
+    expect(resolveMemoryPromotionFileMaxChars({ cfg, agentIds: ["alpha"] })).toBe(
+      DEFAULT_MEMORY_FILE_MAX_CHARS,
+    );
+  });
+
+  it("falls back to the configured default for an unlisted workspace owner", () => {
+    expect(resolveMemoryPromotionFileMaxChars({ cfg, agentIds: ["gamma"] })).toBe(9_500);
+  });
+});
 
 function promotionSection(date: string, sizeChars: number): string {
   const heading = `## Promoted From Short-Term Memory (${date})\n`;
