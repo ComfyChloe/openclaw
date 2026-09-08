@@ -236,13 +236,17 @@ function assertConfigChannel(channel) {
 
 function assertDryRun(kind, channel) {
   const preview = JSON.parse(process.env.UPDATE_JSON ?? "");
+  const reportedKind =
+    kind === "git" && process.env.OPENCLAW_UPDATE_CHANNEL_DRY_RUN_PACKAGE_COMPAT === "1"
+      ? "package"
+      : kind;
   assert.equal(preview.dryRun, true);
   assert.equal(preview.installKind, "package");
   assert.equal(preview.storedChannel, "dev");
   assert.equal(preview.effectiveChannel, channel);
-  assert.equal(preview.updateInstallKind, kind);
-  assert.equal(preview.mode, kind === "git" ? "git" : "npm");
-  assert.equal(preview.switchToGit, kind === "git");
+  assert.equal(preview.updateInstallKind, reportedKind);
+  assert.equal(preview.mode, reportedKind === "git" ? "git" : "npm");
+  assert.equal(preview.switchToGit, reportedKind === "git");
   assert.equal(preview.switchToPackage, false);
 }
 
