@@ -341,6 +341,7 @@ describe("doctor session state provider routes", () => {
     expect(result.store[sessionKey]).toEqual({
       sessionId: "session-1",
       updatedAt: expect.any(Number),
+      delivery: { kind: "none" },
       authProfileOverride: "google:chosen",
       authProfileOverrideSource: "user",
     });
