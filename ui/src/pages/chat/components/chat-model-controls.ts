@@ -331,10 +331,8 @@ export function renderChatModelControls(props: ChatModelControlsProps) {
       ),
     });
   }
-  // A persisted pin can match a changed default; provenance must outrank equality.
-  // Unpinned rows use the selected route to distinguish configured Default from inheritance.
-  const pickerValue =
-    modelOverrideSource === null && currentOverride === defaultModel ? "" : currentOverride;
+  // A persisted pin can match a changed default; equality cannot establish inheritance.
+  const pickerValue = modelOverrideSource === null ? "" : currentOverride;
   const activeModelOption =
     pickerValue === ""
       ? modelOptions.find((option) => option.isDefault)
