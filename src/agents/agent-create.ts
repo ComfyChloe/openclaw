@@ -34,7 +34,11 @@ import {
   mergeIdentityMarkdownContent,
   sanitizeAgentIdentityLine,
 } from "./identity-file.js";
-import { DEFAULT_IDENTITY_FILENAME, ensureAgentWorkspace } from "./workspace.js";
+import {
+  DEFAULT_IDENTITY_FILENAME,
+  ensureAgentWorkspace,
+  isWorkspaceBootstrapPending,
+} from "./workspace.js";
 
 const BOOTSTRAP_AGENT_ID = "main";
 
@@ -447,6 +451,10 @@ export async function createAgent(params: CreateAgentParams): Promise<CreateAgen
           const skipBootstrap = template
             ? false
             : (params.skipBootstrap ?? nextConfig.agents?.defaults?.skipBootstrap);
+          // Role files must not supply completion evidence for an unfinished workspace.
+          if (template && (await isWorkspaceBootstrapPending(workspaceDir))) {
+            throw new UnfinishedRoleBootstrapError();
+          }
           params.beforePersistentApply?.();
           const workspace = await ensureAgentWorkspace({
             dir: workspaceDir,
@@ -458,9 +466,6 @@ export async function createAgent(params: CreateAgentParams): Promise<CreateAgen
               : (params.skipOptionalBootstrapFiles ??
                 nextConfig.agents?.defaults?.skipOptionalBootstrapFiles),
           });
-          if (template && workspace.bootstrapPending) {
-            throw new UnfinishedRoleBootstrapError();
-          }
           if (workspace.dir !== workspaceDir) {
             const entries = listAgentEntries(nextConfig);
             const entryIndex = findAgentEntryIndex(entries, agentId);

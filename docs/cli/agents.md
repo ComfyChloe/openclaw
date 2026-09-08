@@ -85,8 +85,9 @@ leave skills unchanged.
 Role delegation settings are also applied. Standalone coordinators target the
 standard specialist ids; use the team command to create and wire all four agents.
 Unknown roles are rejected with the available role names. A workspace with an
-unfinished bootstrap cannot adopt a role; complete its bootstrap or choose a
-new workspace.
+unfinished bootstrap cannot adopt a role. OpenClaw checks completion before
+adding role files; rejected adoption leaves workspace files and agent config
+unchanged. Complete its bootstrap or choose a new workspace.
 
 With the experimental Claws surface enabled, the equivalent source path is
 `openclaw claws add docs/reference/templates/roles/<role>` from a source
