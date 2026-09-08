@@ -103,6 +103,7 @@ import ai.openclaw.app.systemagent.SystemAgentChatController
 import ai.openclaw.app.systemagent.SystemAgentChatState
 import ai.openclaw.app.systemagent.SystemAgentGatewayAccess
 import ai.openclaw.app.voice.AndroidOnDeviceVoiceWakeRecognizer
+import ai.openclaw.app.voice.AudioInputPreferenceState
 import ai.openclaw.app.voice.GatewayTranscriptionSession
 import ai.openclaw.app.voice.MicCaptureManager
 import ai.openclaw.app.voice.PreviewVoiceWakeRecognizer
@@ -1110,8 +1111,8 @@ class NodeRuntime private constructor(
   private val externalAudioCaptureActive = MutableStateFlow(false)
   private val _voiceCaptureMode = MutableStateFlow(VoiceCaptureMode.Off)
   val voiceCaptureMode: StateFlow<VoiceCaptureMode> = _voiceCaptureMode.asStateFlow()
-  private val _activeAudioInputDevicePreference = MutableStateFlow<String?>(null)
-  val activeAudioInputDevicePreference: StateFlow<String?> = _activeAudioInputDevicePreference.asStateFlow()
+  private val _activeAudioInputDevicePreference = MutableStateFlow<AudioInputPreferenceState>(AudioInputPreferenceState.Inactive)
+  val activeAudioInputDevicePreference: StateFlow<AudioInputPreferenceState> = _activeAudioInputDevicePreference.asStateFlow()
 
   private val discovery = GatewayDiscovery(appContext, scope = scope)
   val gateways: StateFlow<List<GatewayEndpoint>> = discovery.gateways
@@ -1371,6 +1372,7 @@ class NodeRuntime private constructor(
   private val providerModelCatalogRefreshGuard = LatestGatewayRefreshGuard()
   private val _modelAuthProviders = MutableStateFlow<List<GatewayModelProviderSummary>>(emptyList())
   val modelAuthProviders: StateFlow<List<GatewayModelProviderSummary>> = _modelAuthProviders.asStateFlow()
+  private val talkSetupRefreshGuard = LatestGatewayRefreshGuard()
   private val _talkSetupReadiness = MutableStateFlow(GatewayTalkSetupReadiness.unverified())
   val talkSetupReadiness: StateFlow<GatewayTalkSetupReadiness> = _talkSetupReadiness.asStateFlow()
   private val _gatewayDefaultAgentId = MutableStateFlow<String?>(null)
@@ -1501,6 +1503,8 @@ class NodeRuntime private constructor(
   internal val gatewayCatalogRevision: StateFlow<Long> = gatewayMethodsEpoch.asStateFlow()
 
   @Volatile internal var gatewayDataRequestOverrideForTests: GatewayDataRequestOverride? = null
+
+  @Volatile internal var talkRequestLeaseOverrideForTests: GatewaySession.RequestLease? = null
 
   @Volatile internal var gatewayDataRequestTimeoutObserverForTests: ((method: String, timeoutMs: Long) -> Unit)? = null
 
@@ -2192,7 +2196,7 @@ class NodeRuntime private constructor(
       preferredAudioInputDevice = { prefs.preferredAudioInputDevice.value },
       onAppliedAudioInputChanged = { key ->
         if (_voiceCaptureMode.value == VoiceCaptureMode.ManualMic) {
-          _activeAudioInputDevicePreference.value = key
+          _activeAudioInputDevicePreference.value = AudioInputPreferenceState.Applied(key)
         }
       },
       createTranscriptionSession = {
@@ -2277,6 +2281,14 @@ class NodeRuntime private constructor(
   val micCooldown: StateFlow<Boolean>
     get() = micCapture.micCooldown
 
+  private fun currentTalkTarget(): ai.openclaw.app.chat.ChatComposerOwner =
+    ai.openclaw.app.chat.resolveChatComposerOwner(
+      gatewayStableId = connectedEndpoint?.stableId,
+      gatewayDefaultAgentId = chat.sessionOwnerAgentId.value ?: gatewayDefaultAgentId.value,
+      sessionKey = chat.sessionKey.value,
+      mainSessionKey = _mainSessionKey.value,
+    )
+
   private val talkMode: TalkModeManager by lazy {
     TalkModeManager(
       context = appContext,
@@ -2287,7 +2299,14 @@ class NodeRuntime private constructor(
       preferredAudioInputDevice = { prefs.preferredAudioInputDevice.value },
       onAppliedAudioInputChanged = { key ->
         if (_voiceCaptureMode.value == VoiceCaptureMode.TalkMode) {
-          _activeAudioInputDevicePreference.value = key
+          _activeAudioInputDevicePreference.value = AudioInputPreferenceState.Applied(key)
+        }
+      },
+      currentChatTarget = ::currentTalkTarget,
+      currentChatSelection = { chat.selectionGeneration.value },
+      onRequestedAudioInputChanged = { key ->
+        if (_voiceCaptureMode.value == VoiceCaptureMode.TalkMode) {
+          _activeAudioInputDevicePreference.value = AudioInputPreferenceState.Requested(key)
         }
       },
       onBeforeSpeak = { micCapture.pauseForTts() },
@@ -2316,6 +2335,10 @@ class NodeRuntime private constructor(
 
   val talkModeStatusText: StateFlow<String>
     get() = talkMode.statusText
+
+
+  val talkModeHasFailure: StateFlow<Boolean>
+    get() = talkMode.hasFailure
 
   private val wearRealtimeLifecycleMutex = Mutex()
 
@@ -3047,6 +3070,20 @@ class NodeRuntime private constructor(
 
   val chatSessionKey: StateFlow<String> = chat.sessionKey
   internal val chatSelectionGeneration: StateFlow<Long> = chat.selectionGeneration
+
+  init {
+    scope.launch {
+      chat.selectionGeneration.collect {
+        talkMode.onChatTargetChanged()
+        synchronized(gatewayDataScopeLock) {
+          talkSetupRefreshGuard.invalidate()
+          _talkSetupReadiness.value = GatewayTalkSetupReadiness.unverified()
+        }
+        refreshTalkSetupReadiness()
+      }
+    }
+  }
+
   val chatSessionOwnerAgentId: StateFlow<String?> = chat.sessionOwnerAgentId
   internal val gatewayComposerDefaultAgentOwner: StateFlow<GatewayDefaultAgentOwner?> = chat.composerDefaultAgentOwner
   val chatSessionId: StateFlow<String?> = chat.sessionId
@@ -4296,7 +4333,7 @@ class NodeRuntime private constructor(
         ownershipEpoch = voiceCaptureOwnershipEpoch.incrementAndGet()
         talkPttOwnership.set(null)
         _voiceCaptureMode.value = captureMode
-        _activeAudioInputDevicePreference.value = null
+        _activeAudioInputDevicePreference.value = AudioInputPreferenceState.Inactive
         when (captureMode) {
           VoiceCaptureMode.Off -> {
             talkMode.ttsOnAllResponses = false
@@ -5502,6 +5539,7 @@ class NodeRuntime private constructor(
     if (operatorConnected && (event == "config.changed" || event == "chat.metadata.changed")) {
       refreshModelCatalog()
       refreshProviderModels()
+      refreshTalkSetupReadiness()
     }
     if (event == "config.changed" || event == GatewayEvent.UsersPrefsChanged.rawValue) {
       // Config changes invalidate the snapshot; profile changes are targeted by
@@ -6136,6 +6174,8 @@ class NodeRuntime private constructor(
     synchronized(gatewayDataScopeLock) {
       // Every explicit destination, including New, supersedes pending lookup or Continue work.
       val selectionSequence = chatSelectionSeq.incrementAndGet()
+      talkSetupRefreshGuard.invalidate()
+      _talkSetupReadiness.value = GatewayTalkSetupReadiness.unverified()
       if (_sessionCatalogState.value.continuingEntryId != null) {
         sessionCatalogContinueSeq.incrementAndGet()
         _sessionCatalogState.value = _sessionCatalogState.value.copy(continuingEntryId = null)
@@ -6659,19 +6699,47 @@ class NodeRuntime private constructor(
   }
 
   private suspend fun refreshTalkSetupReadinessFromGateway() {
-    val gatewayScope = captureGatewayDataScope() ?: return
-    if (!operatorConnected) {
-      _talkSetupReadiness.value = GatewayTalkSetupReadiness.unverified()
-      return
+    val capturedLease = talkRequestLeaseOverrideForTests ?: operatorSession.captureRequestLease()
+    val gatewayScope: GatewayDataScope
+    val target: ai.openclaw.app.chat.ChatComposerOwner
+    val lease: GatewaySession.RequestLease
+    val selection: Long
+    val refresh: Long
+    synchronized(gatewayDataScopeLock) {
+      gatewayScope = captureGatewayDataScope() ?: return
+      target = currentTalkTarget()
+      if (capturedLease == null || capturedLease.endpointStableId != gatewayScope.stableId) {
+        _talkSetupReadiness.value = GatewayTalkSetupReadiness.unverified()
+        return
+      }
+      lease = capturedLease
+      selection = chat.selectionGeneration.value
+      refresh = talkSetupRefreshGuard.begin()
+      if (!operatorConnected) {
+        _talkSetupReadiness.value = GatewayTalkSetupReadiness.unverified()
+        return
+      }
     }
     val readiness =
       try {
-        val response = requestGatewayData(gatewayScope, "talk.catalog", "{}")
-        parseGatewayTalkSetupReadiness(json.parseToJsonElement(response).asObjectOrNull())
+        val wireTarget =
+          ai.openclaw.app.voice
+            .TalkWireTarget(lease, target.sessionKey, target.agentId)
+        val response = wireTarget.request("talk.catalog", "{}")
+        val parsed = parseGatewayTalkSetupReadiness(json.parseToJsonElement(response).asObjectOrNull())
+        if (lease.supportsTalkSessionTarget) parsed else parsed.copy(realtimeTalk = GatewayTalkSetupReadiness.unverified().realtimeTalk)
       } catch (_: Throwable) {
         GatewayTalkSetupReadiness.unverified(GatewayTalkSetupIssue.CatalogLoadFailed)
       }
-    publishGatewayData(gatewayScope) { _talkSetupReadiness.value = readiness }
+    lease.commitIfCurrent {
+      publishGatewayData(gatewayScope) {
+        talkSetupRefreshGuard.publishIfCurrent(refresh) {
+          if (selection == chat.selectionGeneration.value && target == currentTalkTarget()) {
+            _talkSetupReadiness.value = readiness
+          }
+        }
+      }
+    }
   }
 
   private suspend fun refreshCronFromGateway() {
