@@ -501,5 +501,6 @@ describe("maturity docs renderer CLI", () => {
     );
     expect(scorecard).toContain("Coverage Experimental - 0%");
     expect(scorecard).toContain("end-to-end coverage above 90%");
+    expect(scorecard).toContain("> Latest recorded score run:");
   });
 });

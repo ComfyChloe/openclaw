@@ -1111,7 +1111,7 @@ function renderMaturityScorecard({
     ...renderEvidenceSection(evidenceSummaries, surfaceNames),
   );
   if (updatedDate) {
-    lines.push(`> Last updated: ${updatedDate}`, "");
+    lines.push(`> Latest recorded score run: ${updatedDate}`, "");
   }
   return `${lines.join("\n").trimEnd()}\n`;
 }

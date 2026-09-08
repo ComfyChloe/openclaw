@@ -2791,4 +2791,4 @@ Open a surface to inspect the evidence state of each category. The list stays co
 
 </AccordionGroup>
 
-> Last updated: 2026-09-08
+> Latest recorded score run: 2026-09-08
