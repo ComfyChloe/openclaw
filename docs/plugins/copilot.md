@@ -35,6 +35,9 @@ For the broader model/provider/runtime split, start with
 - A writable `copilotHome` directory. Defaults to `<agentDir>/copilot` when
   OpenClaw provides an agent directory, otherwise
   `~/.openclaw/agents/<agentId>/copilot`.
+- Code Mode requires an OpenClaw host with provider transcript commit support.
+  If the runtime reports that capability missing, upgrade OpenClaw or disable
+  Code Mode.
 
 `openclaw doctor` runs the plugin's [doctor contract](#doctor) for
 session-state ownership and future config migrations. It does not probe the

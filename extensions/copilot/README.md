@@ -24,4 +24,7 @@ questions, replay, and the supported-surface contract.
 
 - Plugin id: `copilot`
 - Package: `@openclaw/copilot`
-- Minimum OpenClaw host: `2026.5.28`
+- Minimum OpenClaw host for the base runtime: `2026.5.28`
+- Code Mode additionally requires host provider transcript commit support.
+  Before publishing a build that requires it, set `openclaw.compat.pluginApi`
+  to the first OpenClaw release containing that capability.
