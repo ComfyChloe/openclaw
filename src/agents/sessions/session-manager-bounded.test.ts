@@ -1,6 +1,7 @@
 import path from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../../test/helpers/temp-dir.js";
+import { makeUserMessage } from "../../../test/helpers/user-message.js";
 import {
   appendTranscriptEvent,
   appendTranscriptMessage,
@@ -97,11 +98,7 @@ it("keeps generated entry ids unique outside a bounded transcript tail", async (
   const messageId = "deadbeef-0000-4000-8000-000000000000";
   const thinkingId = "deadbeef-0000-4000-8000-000000000001";
   uuidQueue.push(messageId);
-  const appended = manager.appendMessageWithTranscriptAnchor({
-    role: "user",
-    content: "persisted",
-    timestamp: 2,
-  });
+  const appended = manager.appendMessageWithTranscriptAnchor(makeUserMessage("persisted", 2));
 
   expect(appended).toMatchObject({ entryId: messageId, anchor: { effectiveParentId: "tail" } });
   uuidQueue.push(thinkingId);
@@ -392,11 +389,7 @@ it("excludes interleaved display payloads without inventing events or losing fen
   const bounded = SessionManager.openBounded(scope, limits);
   expect(bounded.getAppendParentId()).toBe(tailId);
   expect(bounded.buildSessionContext()).toEqual(manager.buildSessionContext());
-  const appended = bounded.appendMessageWithTranscriptAnchor({
-    role: "user",
-    content: "current",
-    timestamp: 2,
-  });
+  const appended = bounded.appendMessageWithTranscriptAnchor(makeUserMessage("current", 2));
   expect(appended.anchor?.effectiveParentId).toBe(tailId);
   if (!appended.anchor) {
     throw new Error("missing admission anchor");
@@ -1005,5 +998,53 @@ it("preserves inactive siblings when the bounded active branch fits its limits",
         message: { role: "assistant", content: "inactive" },
       }),
     ]),
+  );
+});
+
+it("preserves explicit reset retention of excluded user input in a bounded reopen", async () => {
+  const dir = tempDirs.make("openclaw-bounded-reset-excluded-");
+  const scope = {
+    agentId: "main",
+    sessionId: "reset-excluded",
+    sessionKey: "agent:main:reset-excluded",
+    storePath: path.join(dir, "sessions.json"),
+  };
+  await upsertSessionEntryCore(scope, { sessionId: scope.sessionId, updatedAt: 1 });
+  const manager = SessionManager.open(scope, dir);
+  manager.appendMessage({ role: "user", content: "discarded", timestamp: 1 });
+  const retained = manager.appendMessage({
+    role: "user",
+    content: "explicitly retained",
+    timestamp: 2,
+    display: false,
+    excludeFromContext: true,
+  } as Parameters<SessionManager["appendMessage"]>[0]);
+  manager.appendResetBoundary("new", retained);
+  const current = manager.appendMessageWithTranscriptAnchor(makeUserMessage("fresh", 3));
+  const raw = await loadTranscriptEvents(scope);
+  expect(manager.buildSessionContext().messages).toMatchObject([
+    { content: "explicitly retained" },
+    { content: "fresh" },
+  ]);
+  expect(
+    SessionManager.openBounded(scope, { maxEvents: 8, maxBytes: 4096 }).buildSessionContext(),
+  ).toEqual(manager.buildSessionContext());
+  expect(await loadTranscriptEvents(scope)).toEqual(raw);
+  manager.appendResetBoundary("new");
+  expect(
+    SessionManager.openBounded(scope, { maxEvents: 8, maxBytes: 4096 }).buildSessionContext()
+      .messages,
+  ).toEqual([]);
+  if (!current.anchor) {
+    throw new Error("Missing current-turn anchor");
+  }
+  runWithSessionTranscriptReadFence(
+    { ...current.anchor, logicalTurnId: "current", role: "user" },
+    () => {
+      expect(
+        SessionManager.openBounded(scope, { maxEvents: 8, maxBytes: 4096 }).buildSessionContext()
+          .messages,
+      ).toMatchObject([{ content: "explicitly retained" }]);
+    },
   );
 });
