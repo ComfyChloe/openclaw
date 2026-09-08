@@ -59,6 +59,10 @@ Every section heading from the previous single-page version keeps its anchor her
 - <a id="npm-workflow-inputs" />[NPM workflow inputs](/reference/releasing/npm-workflow-inputs#npm-workflow-inputs)
 - <a id="regular-beta%2Flatest-stable-release-sequence" />[Regular beta/latest stable release sequence](/reference/releasing/beta-latest-sequence#regular-beta%2Flatest-stable-release-sequence)
 - <a id="regular-beta/latest-stable-release-sequence" />[Regular beta/latest stable release sequence](/reference/releasing/beta-latest-sequence#regular-beta/latest-stable-release-sequence)
+- <a id="previous-updater-compatibility" />[Previous updater compatibility](/reference/releasing/preflight#previous-updater-compatibility)
+- <a id="design-proposal%3A-immutable-runtime-generations" />[Design proposal: immutable runtime generations](/reference/releasing/preflight#design-proposal%3A-immutable-runtime-generations)
+- <a id="design-proposal-immutable-runtime-generations" />[Design proposal: immutable runtime generations](/reference/releasing/preflight#design-proposal-immutable-runtime-generations)
+- <a id="required-checks" />[Required checks](/reference/releasing/preflight#required-checks)
 
 ## Public references
 
