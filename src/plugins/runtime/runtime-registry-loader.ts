@@ -12,10 +12,8 @@ import { collectConfiguredMemoryEmbeddingProviderIds } from "../gateway-startup-
 import { createInstalledPluginIndexScopeLookup } from "../installed-plugin-index-scope-lookup.js";
 import { loadOpenClawPlugins } from "../loader.js";
 import { hasNonEmptyPluginIdScope } from "../plugin-scope.js";
-import {
-  buildPluginRuntimeLoadOptionsFromValues,
-  resolvePluginRuntimeLoadContext,
-} from "./load-context.js";
+import { buildPluginRuntimeLoadOptions } from "./load-context.js";
+import { resolvePluginRuntimeLoadContext } from "./load-context.resolve.js";
 
 export type PluginRegistryScope =
   | "configured-channels"
@@ -142,7 +140,7 @@ export function ensurePluginRegistryLoaded(options?: {
       }) ?? context.activationSourceConfig)
     : context.activationSourceConfig;
   loadOpenClawPlugins(
-    buildPluginRuntimeLoadOptionsFromValues(
+    buildPluginRuntimeLoadOptions(
       { ...context, config, activationSourceConfig },
       {
         throwOnLoadError: true,

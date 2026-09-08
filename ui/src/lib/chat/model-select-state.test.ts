@@ -20,11 +20,14 @@ type ChatModelStateInput = Parameters<typeof resolveChatModelSelectState>[0];
 function createChatModelState(
   params: Partial<Omit<ChatModelStateInput, "sessionKey">> = {},
 ): ChatModelStateInput {
+  const sessionsResult =
+    params.sessionsResult ?? createSessionsListResult({ model: null, modelProvider: null });
   return {
+    activeSession: params.activeSession ?? sessionsResult.sessions[0],
     sessionKey: "main",
     modelOverrides: {},
     chatModelCatalog: [],
-    sessionsResult: createSessionsListResult({ model: null, modelProvider: null }),
+    sessionsResult,
     ...params,
   };
 }
@@ -51,10 +54,10 @@ function resolveFastModeState(params: {
     catalog: [],
     connected: true,
     currentModelOverride: `${params.provider}/model`,
+    fastModeTarget: sessionsResult.sessions[0],
     gatewayAvailable: true,
     loading: false,
     sending: false,
-    sessionKey: "main",
     sessionsResult,
     stream: null,
   });
@@ -458,10 +461,10 @@ describe("chat-model-select-state", () => {
         catalog: [],
         connected: true,
         currentModelOverride: "",
+        fastModeTarget: sessionsResult.sessions[0],
         gatewayAvailable: true,
         loading: false,
         sending: false,
-        sessionKey: "main",
         sessionsResult,
         stream: null,
       }).supported,
@@ -486,10 +489,10 @@ describe("chat-model-select-state", () => {
         catalog: providers.map((provider) => ({ id: model, name: "Gemma", provider })),
         connected: true,
         currentModelOverride: model,
+        fastModeTarget: sessionsResult.sessions[0],
         gatewayAvailable: true,
         loading: false,
         sending: false,
-        sessionKey: "main",
         sessionsResult,
         stream: null,
       }).supported,
@@ -538,10 +541,10 @@ describe("chat-model-select-state", () => {
         ],
         connected: true,
         currentModelOverride: "anthropic/claude-opus-4-8",
+        fastModeTarget: sessionsResult.sessions[0],
         gatewayAvailable: true,
         loading: false,
         sending: false,
-        sessionKey: "main",
         sessionsResult,
         stream: null,
       }).supported,
@@ -578,10 +581,10 @@ describe("chat-model-select-state", () => {
         ],
         connected: true,
         currentModelOverride: "anthropic/claude-opus-4-8",
+        fastModeTarget: sessionsResult.sessions[0],
         gatewayAvailable: true,
         loading: false,
         sending: false,
-        sessionKey: "main",
         sessionsResult,
         stream: null,
       }).supported,
@@ -613,10 +616,10 @@ describe("chat-model-select-state", () => {
         ],
         connected: true,
         currentModelOverride: "google/gemini-2.5-pro",
+        fastModeTarget: sessionsResult.sessions[0],
         gatewayAvailable: true,
         loading: false,
         sending: false,
-        sessionKey: "main",
         sessionsResult,
         stream: null,
       }).supported,
@@ -648,10 +651,10 @@ describe("chat-model-select-state", () => {
         ],
         connected: true,
         currentModelOverride: "vendor/model",
+        fastModeTarget: sessionsResult.sessions[0],
         gatewayAvailable: true,
         loading: false,
         sending: false,
-        sessionKey: "main",
         sessionsResult,
         stream: null,
       }).supported,
@@ -800,34 +803,6 @@ describe("chat-model-select-state", () => {
     expect(resolved.modelOverrideSource).toBe(expected);
   });
 
-  it("distinguishes an inherited parent model from explicit default", () => {
-    const inherited = createChatModelState({
-      agentDefaultModel: "openai/gpt-5.6-sol",
-      chatModelCatalog: createModelCatalog(
-        { id: "gpt-5.6-sol", name: "GPT-5.6 Sol", provider: "openai" },
-        { id: "claude-sonnet-4-6", name: "Sonnet 4.6", provider: "anthropic" },
-      ),
-      sessionsResult: createSessionsListResult({
-        model: "claude-sonnet-4-6",
-        modelProvider: "anthropic",
-        modelOverrideSource: null,
-        modelSelectionSource: "parent",
-      }),
-    });
-    const explicitDefault = {
-      ...inherited,
-      sessionsResult: createSessionsListResult({
-        model: "gpt-5.6-sol",
-        modelProvider: "openai",
-        modelOverrideSource: null,
-        modelSelectionSource: "default",
-      }),
-    };
-
-    expect(resolveChatModelSelectState(inherited).modelSelectionSource).toBe("parent");
-    expect(resolveChatModelSelectState(explicitDefault).modelSelectionSource).toBe("default");
-  });
-
   it("reads pin provenance from a canonical main row when the route uses the alias key", () => {
     const state = createChatModelState({
       sessionsResult: createSessionsListResult({
@@ -860,7 +835,6 @@ describe("chat-model-select-state", () => {
 
     expect(resolveChatModelSelectState(pendingPin).currentOverride).toBe("openai/gpt-5-mini");
     expect(resolveChatModelSelectState(pendingPin).modelOverrideSource).toBe("user");
-    expect(resolveChatModelSelectState(pendingPin).modelSelectionSource).toBe("session");
 
     const pendingReset = {
       ...pendingPin,
@@ -874,7 +848,6 @@ describe("chat-model-select-state", () => {
 
     expect(resolveChatModelSelectState(pendingReset).currentOverride).toBe("");
     expect(resolveChatModelSelectState(pendingReset).modelOverrideSource).toBeNull();
-    expect(resolveChatModelSelectState(pendingReset).modelSelectionSource).toBe("default");
   });
 
   it("disambiguates duplicate friendly names in picker options and default labels", () => {
@@ -951,5 +924,70 @@ describe("chat-model-select-state", () => {
         label: "Claude Sonnet · claude-3-7-sonnet-thinking · anthropic",
       },
     ]);
+  });
+});
+
+describe("selected Fast applicability", () => {
+  function state(
+    support: boolean | undefined,
+    fastMode?: boolean | "auto",
+    selected = "claude-sonnet-5",
+  ) {
+    const sessionsResult = createSessionsListResult({
+      model: "claude-sonnet-5",
+      modelProvider: "anthropic",
+    });
+    const session = expectDefined(sessionsResult.sessions[0], "Fast applicability session");
+    return resolveChatFastModeSelectState({
+      activeRunId: null,
+      connected: true,
+      gatewayAvailable: true,
+      loading: false,
+      sending: false,
+      stream: null,
+      currentModelOverride: `anthropic/${selected}`,
+      sessionsResult,
+      fastModeTarget: { ...session, ...(fastMode === undefined ? {} : { fastMode }) },
+      catalog: [
+        {
+          id: "claude-sonnet-5",
+          name: "Sonnet 5",
+          provider: "anthropic",
+          supportsFastMode: support,
+        },
+        { id: "claude-opus-5", name: "Opus 5", provider: "anthropic", supportsFastMode: true },
+      ],
+    });
+  }
+
+  it("disables a confirmed no-op offer", () => {
+    expect(state(false)).toMatchObject({ supported: false, disabled: true, nextValue: "" });
+  });
+  it("uses canonical spelling when matching the selected applicability", () => {
+    expect(state(false, undefined, "CLAUDE-SONNET-5")).toMatchObject({
+      supported: false,
+      disabled: true,
+      nextValue: "",
+    });
+  });
+  it.each([true, false, "auto"] as const)(
+    "keeps saved %s clearable on a no-op route",
+    (fastMode) => {
+      expect(state(false, fastMode)).toMatchObject({
+        supported: true,
+        disabled: false,
+        nextValue: "",
+      });
+    },
+  );
+  it("preserves the existing unknown behavior", () => {
+    expect(state(undefined)).toMatchObject({ supported: true, disabled: false, nextValue: "on" });
+  });
+  it("uses the selected model's support before the stale session model", () => {
+    expect(state(false, undefined, "claude-opus-5")).toMatchObject({
+      supported: true,
+      disabled: false,
+      nextValue: "on",
+    });
   });
 });

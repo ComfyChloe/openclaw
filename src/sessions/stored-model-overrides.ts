@@ -24,7 +24,11 @@ function resolveStoredOverrideFromEntry(params: {
   entry?: SessionEntry;
   defaultProvider: string;
   source: StoredModelOverride["source"];
+  allowPluginNormalization?: boolean;
 }): StoredModelOverride | null {
+  if (params.entry?.modelOverrideSource === "default") {
+    return null;
+  }
   const normalized = normalizeStoredOverrideModel({
     providerOverride: params.entry?.providerOverride,
     modelOverride: params.entry?.modelOverride,
@@ -33,6 +37,7 @@ function resolveStoredOverrideFromEntry(params: {
     defaultProvider: params.defaultProvider,
     overrideProvider: normalized.providerOverride,
     overrideModel: normalized.modelOverride,
+    allowPluginNormalization: params.allowPluginNormalization,
   });
   return ref
     ? {
@@ -47,11 +52,13 @@ function resolveStoredOverrideFromEntry(params: {
 export function resolveDirectStoredModelOverride(params: {
   sessionEntry?: SessionEntry;
   defaultProvider: string;
+  allowPluginNormalization?: boolean;
 }): StoredModelOverride | null {
   return resolveStoredOverrideFromEntry({
     entry: params.sessionEntry,
     defaultProvider: params.defaultProvider,
     source: "session",
+    allowPluginNormalization: params.allowPluginNormalization,
   });
 }
 
@@ -78,6 +85,7 @@ export function resolveStoredModelOverride(params: {
   sessionKey?: string;
   parentSessionKey?: string;
   defaultProvider: string;
+  allowPluginNormalization?: boolean;
 }): StoredModelOverride | null {
   if (params.sessionEntry?.modelOverrideSource === "default") {
     return null;
@@ -85,6 +93,7 @@ export function resolveStoredModelOverride(params: {
   const direct = resolveDirectStoredModelOverride({
     sessionEntry: params.sessionEntry,
     defaultProvider: params.defaultProvider,
+    allowPluginNormalization: params.allowPluginNormalization,
   });
   if (direct) {
     return direct;
@@ -104,5 +113,6 @@ export function resolveStoredModelOverride(params: {
     entry: parentEntry,
     defaultProvider: params.defaultProvider,
     source: "parent",
+    allowPluginNormalization: params.allowPluginNormalization,
   });
 }

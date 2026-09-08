@@ -6,7 +6,6 @@ import type {
   SessionsListResult,
 } from "../../api/types.ts";
 import { t } from "../../i18n/index.ts";
-import { areUiSessionKeysEquivalent } from "../sessions/session-key.ts";
 import {
   buildCatalogDisplayLookup,
   buildChatModelOptionFromLookup,
@@ -18,6 +17,7 @@ import {
 } from "./model-ref.ts";
 
 type ChatModelSelectStateInput = {
+  activeSession?: GatewaySessionRow;
   agentDefaultModel?: string;
   chatModelCatalog: ModelCatalogEntry[];
   modelOverrides: Readonly<Record<string, string | null | undefined>>;
@@ -37,7 +37,6 @@ type ChatModelSelectState = {
   defaultModel: string;
   defaultLabel: string;
   modelOverrideSource: GatewaySessionRow["modelOverrideSource"];
-  modelSelectionSource: GatewaySessionRow["modelSelectionSource"];
   options: ChatModelSelectOption[];
 };
 
@@ -55,28 +54,30 @@ export type ChatFastModeSelectState = {
   supported: boolean;
 };
 
+export type ChatFastModeTarget = Pick<
+  GatewaySessionRow,
+  "effectiveFastMode" | "fastMode" | "model" | "modelProvider"
+>;
+
 type ChatFastModeSelectStateInput = {
   activeRunId: string | null;
   catalog: ModelCatalogEntry[];
   connected: boolean;
   currentModelOverride: string;
+  fastModeTarget?: ChatFastModeTarget;
   gatewayAvailable: boolean;
   loading: boolean;
   sending: boolean;
-  sessionKey: string;
   sessionsResult: SessionsListResult | null;
   stream: string | null;
 };
 
-// Providers with a runtime fast-mode mapping: Anthropic sets speed (or legacy
-// service_tier), OpenAI sets service_tier priority, MiniMax/xAI select fast variants.
-// Providers without a wire mapping must not offer the toggle.
+// Preserve existing controls only when the selected request's applicability is unknown.
 const FAST_MODE_PROVIDER_IDS = new Set(["anthropic", "minimax", "minimax-portal", "openai", "xai"]);
 
-function resolveActiveSessionRow(state: ChatModelSelectStateInput) {
-  return state.sessionsResult?.sessions?.find((row) =>
-    areUiSessionKeysEquivalent(row.key, state.sessionKey),
-  );
+export function isChatFastModeProviderSupported(provider: string | null | undefined): boolean {
+  const providerId = normalizeChatModelProviderId(provider ?? "");
+  return Boolean(providerId && FAST_MODE_PROVIDER_IDS.has(providerId));
 }
 
 function resolveModelOverrideSource(state: ChatModelSelectStateInput) {
@@ -85,22 +86,7 @@ function resolveModelOverrideSource(state: ChatModelSelectStateInput) {
   if (Object.hasOwn(state.modelOverrides, state.sessionKey)) {
     return state.modelOverrides[state.sessionKey] == null ? null : "user";
   }
-  return resolveActiveSessionRow(state)?.modelOverrideSource;
-}
-
-function resolveModelSelectionSource(state: ChatModelSelectStateInput) {
-  if (Object.hasOwn(state.modelOverrides, state.sessionKey)) {
-    return state.modelOverrides[state.sessionKey] == null ? "default" : "session";
-  }
-  const row = resolveActiveSessionRow(state);
-  return (
-    row?.modelSelectionSource ??
-    (row?.modelOverrideSource === null
-      ? "default"
-      : row?.modelOverrideSource
-        ? "session"
-        : undefined)
-  );
+  return state.activeSession?.modelOverrideSource;
 }
 
 export function resolveChatModelOverrideValue(state: ChatModelSelectStateInput): string {
@@ -111,8 +97,8 @@ export function resolveChatModelOverrideValue(state: ChatModelSelectStateInput):
     return normalizeChatModelOverrideValue(sharedOverrides[state.sessionKey], catalog);
   }
 
-  const activeRow = resolveActiveSessionRow(state);
-  return resolvePreferredServerChatModelValue(activeRow?.model, activeRow?.modelProvider, catalog);
+  const active = state.activeSession;
+  return resolvePreferredServerChatModelValue(active?.model, active?.modelProvider, catalog);
 }
 
 function resolveDefaultModelValue(state: ChatModelSelectStateInput): string {
@@ -267,7 +253,6 @@ export function resolveChatModelSelectState(
     defaultModel,
     defaultLabel: defaultModel ? `Default (${defaultLabel})` : "Default model",
     modelOverrideSource: resolveModelOverrideSource(state),
-    modelSelectionSource: resolveModelSelectionSource(state),
     options,
   };
 }
@@ -359,9 +344,7 @@ function resolveFastModeProvider(
 export function resolveChatFastModeSelectState(
   input: ChatFastModeSelectStateInput,
 ): ChatFastModeSelectState {
-  const activeRow = input.sessionsResult?.sessions?.find((row) =>
-    areUiSessionKeysEquivalent(row.key, input.sessionKey),
-  );
+  const activeRow = input.fastModeTarget;
   const activeProvider = normalizeChatModelProviderId(activeRow?.modelProvider ?? "") || null;
   const defaultProvider =
     normalizeChatModelProviderId(input.sessionsResult?.defaults?.modelProvider ?? "") || null;
@@ -390,10 +373,29 @@ export function resolveChatFastModeSelectState(
         ? "auto"
         : "off"
     : configuredOverride;
-  const providerSupported = Boolean(
-    effectiveProvider && FAST_MODE_PROVIDER_IDS.has(effectiveProvider),
+  const selectedValue = normalizeChatModelAvailabilityKey(
+    normalizeChatModelOverrideValue(
+      input.currentModelOverride ||
+        buildQualifiedChatModelValue(
+          activeRow?.model ?? input.sessionsResult?.defaults?.model ?? "",
+          effectiveProvider,
+        ),
+      input.catalog,
+    ),
   );
-  const supported = providerSupported || Boolean(configuredOverride);
+  const applicability = new Set(
+    input.catalog
+      .filter(
+        (entry) =>
+          normalizeChatModelAvailabilityKey(
+            buildQualifiedChatModelValue(entry.id, entry.provider),
+          ) === selectedValue,
+      )
+      .map((entry) => entry.supportsFastMode),
+  );
+  const selectedSupport = applicability.size === 1 ? [...applicability][0] : undefined;
+  const requestSupported = selectedSupport ?? isChatFastModeProviderSupported(effectiveProvider);
+  const supported = requestSupported || Boolean(configuredOverride);
   // The picker exposes speed as a two-state toggle: fast on, or back to the
   // provider baseline (explicit off for OpenAI's priority tier, inherited
   // default elsewhere). Auto and explicit standard overrides remain reachable
@@ -415,7 +417,7 @@ export function resolveChatFastModeSelectState(
   // inherited baseline is unknowable while an override exists, and clearing
   // could land on a fast default, turning the click into a visible no-op.
   // /fast default remains the way back to the inherited setting.
-  const nextValue: ChatFastModeSelectValue = !providerSupported ? "" : active ? "off" : "on";
+  const nextValue: ChatFastModeSelectValue = !requestSupported ? "" : active ? "off" : "on";
   return {
     active,
     currentOverride,

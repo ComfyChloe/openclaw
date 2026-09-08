@@ -54,13 +54,13 @@ export function hasUserPinnedModelSelection(
 export function resolveSessionModelOverrideSource(
   entry: ModelOverrideProvenanceEntry | undefined,
 ): "auto" | "user" | null {
-  if (!normalizeOptionalString(entry?.modelOverride)) {
-    return null;
-  }
   if (entry?.modelOverrideSource === "default") {
     return null;
   }
-  if (entry?.modelOverrideSource) {
+  if (!normalizeOptionalString(entry?.modelOverride)) {
+    return null;
+  }
+  if (entry?.modelOverrideSource === "user" || entry?.modelOverrideSource === "auto") {
     return entry.modelOverrideSource;
   }
   return hasUserPinnedModelSelection(entry) ? "user" : "auto";

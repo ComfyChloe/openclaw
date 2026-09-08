@@ -334,6 +334,13 @@ describe("plugin session extension SessionEntry projection", () => {
           description: "retired pending-final field",
           sessionEntrySlotKey: "pendingFinalDeliveryText",
         });
+        for (const field of ["execSecurity", "execAsk"]) {
+          api.registerSessionExtension({
+            namespace: `retired-${field.toLowerCase()}`,
+            description: "retired session exec policy",
+            sessionEntrySlotKey: field,
+          });
+        }
       },
     });
 
@@ -377,29 +384,15 @@ describe("plugin session extension SessionEntry projection", () => {
         pluginId: "slot-collision",
         message: "sessionEntrySlotKey is reserved by SessionEntry: pendingFinalDeliveryText",
       },
-    ]);
-  });
-
-  it("keeps modelSelectionMode available as a plugin session-entry slot", () => {
-    const { config, registry } = createPluginRegistryFixture();
-    registerTestPlugin({
-      registry,
-      config,
-      record: createPluginRecord({ id: "legacy-model-slot", name: "Legacy Model Slot" }),
-      register(api) {
-        api.registerSessionExtension({
-          namespace: "selection",
-          description: "existing plugin slot",
-          sessionEntrySlotKey: "modelSelectionMode",
-        });
+      {
+        pluginId: "slot-collision",
+        message: "sessionEntrySlotKey is reserved by SessionEntry: execSecurity",
       },
-    });
-
-    expect(registry.registry.diagnostics).toEqual([]);
-    expect(registry.registry.sessionExtensions).toHaveLength(1);
-    expect(registry.registry.sessionExtensions[0]?.extension.sessionEntrySlotKey).toBe(
-      "modelSelectionMode",
-    );
+      {
+        pluginId: "slot-collision",
+        message: "sessionEntrySlotKey is reserved by SessionEntry: execAsk",
+      },
+    ]);
   });
 
   it("rejects sessionEntrySlotKey values inherited from Object.prototype", () => {
