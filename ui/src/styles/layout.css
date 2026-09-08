@@ -3194,9 +3194,9 @@ a:is(
   padding-right: 0;
 }
 
-/* Footer agent chip: identity-first entrance to the active agent. The body
-   resumes the latest conversation; trailing actions create/open the menu. */
-.sidebar-brand > openclaw-sidebar-agent-card {
+/* The header identifies the active agent or the whole workspace. */
+.sidebar-brand > openclaw-sidebar-agent-card,
+.sidebar-workspace-header {
   display: flex;
   min-width: 0;
   flex: 1 1 auto;
@@ -3211,7 +3211,8 @@ a:is(
   flex: 0 1 auto;
 }
 
-.sidebar-agent-card__main {
+.sidebar-agent-card__main,
+.sidebar-workspace-header__main {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -3229,17 +3230,27 @@ a:is(
 }
 
 .sidebar-agent-card__main:hover,
+.sidebar-workspace-header__main:hover,
+.sidebar-workspace-header__main[aria-expanded="true"],
 .sidebar-agent-card--open .sidebar-agent-card__main {
   background: color-mix(in srgb, var(--bg-hover) 84%, transparent);
 }
 
-.sidebar-agent-card__main:active {
+.sidebar-agent-card__main:active,
+.sidebar-workspace-header__main:active {
   background: color-mix(in srgb, var(--bg-hover) 96%, transparent);
 }
 
-.sidebar-agent-card__main:focus-visible {
+.sidebar-agent-card__main:focus-visible,
+.sidebar-workspace-header__main:focus-visible {
   outline: 2px solid color-mix(in srgb, var(--accent) 48%, transparent);
   outline-offset: 1px;
+}
+
+.sidebar-workspace-header__mark {
+  width: var(--sidebar-agent-avatar-size);
+  height: var(--sidebar-agent-avatar-size);
+  flex: none;
 }
 
 .sidebar-agent-card__avatar {

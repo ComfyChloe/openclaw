@@ -114,6 +114,11 @@ export function renderSidebarAgentMenuForController(controller: SidebarMenusCont
     onToggleRoster: () => {
       host.sidebarAgentsMode = host.sidebarAgentsMode === "roster" ? "chip" : "roster";
       patchSettings({ sidebarAgentsMode: host.sidebarAgentsMode });
+      void host.updateComplete.then(() => {
+        host
+          .querySelector<HTMLElement>(".sidebar-workspace-header__main, .sidebar-agent-card__main")
+          ?.focus();
+      });
     },
     connected: host.connected,
     openMode: controller.agentMenuInteractionState === "open-hover" ? "hover" : "click",

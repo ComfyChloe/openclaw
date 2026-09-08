@@ -135,6 +135,12 @@ suite.define(() => {
         await waitForControlUiRoute(page, { routeId: "chat" });
         const sidebar = page.locator("openclaw-app-sidebar");
         const chip = sidebar.locator(".sidebar-agent-card__main");
+        const workspace = sidebar.locator(".sidebar-workspace-header__main");
+        const expectWorkspace = async () => {
+          await expect.poll(() => workspace.textContent()).toMatch(/^\s*OpenClaw\s*$/);
+          expect(await sidebar.locator("openclaw-sidebar-agent-card").count()).toBe(0);
+          expect(await sidebar.locator(".sidebar-agent-card__avatar").count()).toBe(0);
+        };
         const sessionRows = sidebar.locator(".sidebar-recent-session");
         await expect.poll(() => chip.isVisible()).toBe(true);
         await expect.poll(() => sessionRows.count()).toBe(2);
@@ -142,7 +148,9 @@ suite.define(() => {
         expect(await sidebar.locator('[data-session-key="agent:forge:notes"]').count()).toBe(0);
         await captureSidebarUiProof(suite, page, "sidebar-roster-before.png");
         await chip.click();
-        await sidebar.locator('wa-dropdown-item[value="command:sidebar-agents"]').click();
+        const modeToggle = sidebar.locator('wa-dropdown-item[value="command:sidebar-agents"]');
+        await expect.poll(() => modeToggle.textContent()).toContain("Show all agents");
+        await modeToggle.click();
 
         const headers = sidebar.locator(".sidebar-agent-roster__row");
         await expect.poll(() => headers.count()).toBe(4);
@@ -153,7 +161,7 @@ suite.define(() => {
           .toEqual(["forge", "main", "scout", "bloom"]);
         await expect.poll(() => sessionRows.count()).toBe(8);
         expect(await sidebar.getByRole("link", { name: "Home", exact: true }).count()).toBe(0);
-        expect(await chip.isVisible()).toBe(true);
+        await expectWorkspace();
         for (const agent of agentsList.agents) {
           const group = sidebar.locator(`[data-agent-group="${agent.id}"]`);
           expect(await group.locator(".sidebar-recent-session").allTextContents()).toEqual([
@@ -178,6 +186,46 @@ suite.define(() => {
           "Working: Preparing the sample dashboard.",
         );
         await captureSidebarUiProof(suite, page, "sidebar-roster-after.png");
+
+        await workspace.focus();
+        await page.keyboard.press("Enter");
+        const workspaceMenu = sidebar.locator(".sidebar-agent-menu");
+        const workspaceMenuItems = workspaceMenu.locator(":scope > wa-dropdown-item");
+        await expect.poll(() => workspaceMenuItems.count()).toBe(3);
+        expect(
+          await workspaceMenuItems.evaluateAll((items) =>
+            items.map((item) => item.getAttribute("value")),
+          ),
+        ).toEqual(["command:sidebar-agents", "command:agent-settings", "command:help"]);
+        expect(
+          await workspaceMenu
+            .getByRole("menuitem", { name: "Show one agent", exact: true })
+            .count(),
+        ).toBe(1);
+        expect(await workspaceMenuItems.nth(1).textContent()).toContain("Agent settings");
+        expect(
+          await workspaceMenu.locator('wa-dropdown-item[slot="submenu"]').allTextContents(),
+        ).toEqual([
+          expect.stringContaining("Docs"),
+          expect.stringContaining("Get help"),
+          expect.stringContaining("Discord community"),
+          expect.stringContaining("View changelog"),
+        ]);
+        await expect
+          .poll(() => modeToggle.evaluate((element) => element === document.activeElement))
+          .toBe(true);
+        await page.keyboard.press("ArrowDown");
+        await expect
+          .poll(() =>
+            workspaceMenuItems.nth(1).evaluate((element) => element === document.activeElement),
+          )
+          .toBe(true);
+        await captureSidebarUiProof(suite, page, "sidebar-team-workspace-menu.png");
+        await page.keyboard.press("Escape");
+        await expect.poll(() => workspaceMenu.count()).toBe(0);
+        await expect
+          .poll(() => workspace.evaluate((element) => element === document.activeElement))
+          .toBe(true);
 
         await sidebar.locator(".sidebar-brand__new-thread").click();
         const newMenu = sidebar.locator(".sidebar-brand .sidebar-new-session-menu");
@@ -207,7 +255,7 @@ suite.define(() => {
           .locator('[data-session-key="agent:forge:notes"] .sidebar-recent-session__link')
           .click();
         await waitForControlUiRoute(page, { routeId: "chat", pathname: "/chat/forge/notes" });
-        await expect.poll(() => chip.textContent()).toContain("Forge");
+        await expectWorkspace();
         await expect.poll(() => sessionRows.count()).toBe(8);
         await sidebar.locator(".sidebar-session-sort").click();
         expect(
@@ -240,15 +288,25 @@ suite.define(() => {
           )
           .toBe("false");
         await expect.poll(() => sessionRows.count()).toBe(6);
-        expect(await chip.isVisible()).toBe(true);
+        await expectWorkspace();
         await sidebar.getByRole("link", { name: "See all", exact: true }).click();
         await waitForControlUiRoute(page, { routeId: "agents-home", pathname: "/agents" });
         await expect.poll(() => page.locator(".agents-home__card").count()).toBe(4);
-        await chip.click();
-        await sidebar.locator('wa-dropdown-item[value="command:sidebar-agents"]').click();
+        await workspace.click();
+        await modeToggle.press("Enter");
         await expect.poll(() => headers.count()).toBe(0);
         expect(await sidebar.getByRole("link", { name: "Home", exact: true }).count()).toBe(1);
         expect(await chip.isVisible()).toBe(true);
+        expect(await workspace.count()).toBe(0);
+        await expect
+          .poll(() => chip.evaluate((element) => element === document.activeElement))
+          .toBe(true);
+        await chip.click();
+        await expect.poll(() => modeToggle.textContent()).toContain("Show all agents");
+        expect(
+          await sidebar.locator(".sidebar-agent-menu__agent-grid wa-dropdown-item").count(),
+        ).toBe(4);
+        await page.keyboard.press("Escape");
       },
     );
   });

@@ -58,16 +58,19 @@ main session. Working agents appear first, followed by the most recently active.
 agent creation flow when available, or agent settings otherwise. `/agents` now
 opens the roster; agent configuration remains at `/settings/agents`.
 
-To browse sessions across agents, enable **Show all agents in the sidebar** in the
+To browse sessions across agents, choose **Show all agents** in the
 agent switcher. This enables **team mode**, a browser preference that is off by
-default. Sessions appear under collapsible agent headers, with working agents
+default. The top row becomes a workspace header with the configured Gateway display
+name, or **OpenClaw**, and the OpenClaw mark. Its menu contains **Show one agent**,
+**Agent settings**, and the existing documentation, help, community, and changelog
+links. Sessions appear under collapsible agent headers, with working agents
 first and then the most recently active. **Home** disappears from Pages: click an agent header's avatar or name to
 open that agent's main chat. The separate collapse control only folds its sessions.
 The top **+** opens an agent menu with avatars, names, and working indicators in
 the same order as the groups; choosing an agent opens New session for that agent.
 Each group's **+** does this directly. Selecting a session switches the active
-agent; the chip above remains the context indicator and agent switcher. Turning
-team mode off restores the usual Home row and direct New session button.
+agent for chat. Choose **Show one agent** in the workspace menu to restore the
+agent chip, Home row, and direct New session button.
 
 Enabling team mode also defaults the shared page scope to **All agents**, while
 remembering the previous scope to restore when you turn it off. That scope,

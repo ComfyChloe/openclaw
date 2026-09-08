@@ -82,6 +82,7 @@ type SidebarMenusRenderer = {
 
 interface SidebarMenusControllerHost
   extends ReactiveControllerHost, SessionOrganizerControllerHost {
+  readonly querySelector: HTMLElement["querySelector"];
   readonly activeRouteId?: NavigationRouteId;
   readonly basePath: string;
   readonly canPairDevice: boolean;
