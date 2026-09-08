@@ -155,9 +155,25 @@ esac
 const CANONICAL_SCHEMA = "    mediaModels: z\n";
 const LEGACY_SCHEMA = "    imageGenerationModel: AgentToolModelSchema.optional(),\n";
 const SCHEMA_PATH = "src/config/zod-schema.agent-defaults.ts";
+const CALIBRATED_KOVA_REF = "70ea2c5a3bdd206937b4a0bd7460a19a69d8c52a";
+
+function contentsMetadata(sourcePath: string, bytes: Buffer) {
+  return {
+    type: "file",
+    name: sourcePath.split("/").at(-1),
+    path: sourcePath,
+    sha: "f".repeat(40),
+    size: bytes.length,
+    encoding: "base64",
+    content: bytes.toString("base64"),
+  };
+}
 
 type ResolutionOptions = {
   schema?: string | Buffer;
+  packageJson?: string;
+  packageMetadata?: unknown;
+  packageStatus?: number;
   contractStatus?: "ahead" | "behind" | "diverged";
   contractOverride?: string;
   kovaRef?: string;
@@ -182,24 +198,35 @@ async function runTargetResolution(options: ResolutionOptions = {}) {
   const canonicalRef = "a".repeat(40);
   const legacyRef = "b".repeat(40);
   const schema = Buffer.from(options.schema ?? CANONICAL_SCHEMA);
-  const metadata = options.metadata ?? {
-    type: "file",
-    name: "zod-schema.agent-defaults.ts",
-    path: SCHEMA_PATH,
-    sha: "f".repeat(40),
-    size: schema.length,
-    encoding: "base64",
-    content: schema.toString("base64"),
-  };
+  const metadata = options.metadata ?? contentsMetadata(SCHEMA_PATH, schema);
+  const packageMetadata =
+    options.packageMetadata ??
+    contentsMetadata(
+      "package.json",
+      Buffer.from(options.packageJson ?? JSON.stringify({ version: "0.0.0-fixture" })),
+    );
   let requests = 0;
+  const requestedPaths: string[] = [];
   let responseClosed = false;
   const server = createServer((request, response) => {
     requests += 1;
     expect(request.method).toBe("GET");
+    const sourcePath =
+      request.url === `/repos/openclaw/openclaw/contents/package.json?ref=${"c".repeat(40)}`
+        ? "package.json"
+        : SCHEMA_PATH;
     expect(request.url).toBe(
-      `/repos/openclaw/openclaw/contents/${SCHEMA_PATH}?ref=${"c".repeat(40)}`,
+      `/repos/openclaw/openclaw/contents/${sourcePath}?ref=${"c".repeat(40)}`,
     );
+    requestedPaths.push(sourcePath);
     expect(request.headers.accept).toBe("application/vnd.github.object+json");
+    if (sourcePath === "package.json") {
+      response.writeHead(options.packageStatus ?? 200, {
+        "content-type": "application/json; charset=utf-8",
+      });
+      response.end(JSON.stringify(packageMetadata));
+      return;
+    }
     response.on("close", () => {
       responseClosed = true;
     });
@@ -249,7 +276,8 @@ https.get = (options, callback) => {
   }) + "\\n");
   return http.get({...options, hostname:"127.0.0.1", port:${address.port}}, (response) => {
     callback(response);
-    if (process.env.CONTENTS_TIMEOUT === "true") {
+    if (process.env.CONTENTS_TIMEOUT === "true" &&
+        options.path === ${JSON.stringify(`/repos/openclaw/openclaw/contents/${SCHEMA_PATH}?ref=${"c".repeat(40)}`)}) {
       assert.equal(typeof deadline, "function");
       setImmediate(deadline);
     }
@@ -326,7 +354,16 @@ if (process.env.CONTENTS_TIMEOUT === "true") {
       : [],
   );
   expect(existsSync(join(root, "git-called"))).toBe(false);
-  return { canonicalRef, legacyRef, outputs, result, requests, responseClosed, root };
+  return {
+    canonicalRef,
+    legacyRef,
+    outputs,
+    result,
+    requests,
+    requestedPaths,
+    responseClosed,
+    root,
+  };
 }
 
 describe("OpenClaw performance workflow", () => {
@@ -520,6 +557,135 @@ describe("OpenClaw performance workflow", () => {
     expect(workflow).toContain("Kova live OpenAI GPT 5.6 agent turn");
   });
 
+  it("selects calibrated Kova only for the exact historical release", async () => {
+    const run = await runTargetResolution({
+      packageJson: JSON.stringify({ version: "2026.7.33" }),
+    });
+    expect(run.result.status, run.result.stderr).toBe(0);
+    expect(run.outputs.kova_ref).toBe(CALIBRATED_KOVA_REF);
+    expect(run.outputs.kova_config_contract).toBe("canonical");
+    expect(run.outputs.kova_ref_trusted_for_live).toBe("false");
+    expect(run.requestedPaths).toEqual(["package.json", SCHEMA_PATH]);
+    expect(run.requests).toBe(2);
+    const trust = runCandidateTrustClassification({
+      candidateSha: run.outputs.tested_sha,
+      eventName: "workflow_dispatch",
+      kovaSha: run.outputs.kova_ref,
+      ref: "refs/heads/main",
+      workflowSha: run.outputs.tested_sha,
+    });
+    expect(trust.result.status, trust.result.stderr).toBe(0);
+    expect(trust.outputs).toEqual({
+      secret_eligible: "false",
+      cache_write_allowed: "false",
+      external_required: "true",
+    });
+  });
+
+  it.each([
+    { name: "ordinary version", version: "2026.8.1" },
+    { name: "longer patch", version: "2026.7.330" },
+    { name: "prerelease", version: "2026.7.33-beta.1" },
+    { name: "trailing newline", version: "2026.7.33\n" },
+  ])("preserves ordinary Kova defaults for $name", async ({ version }) => {
+    const run = await runTargetResolution({
+      packageJson: JSON.stringify({ version }),
+      schema: LEGACY_SCHEMA,
+    });
+    expect(run.result.status, run.result.stderr).toBe(0);
+    expect(run.outputs.kova_ref).toBe(run.legacyRef);
+    expect(run.outputs.kova_config_contract).toBe("legacy-list");
+    expect(run.requestedPaths).toEqual(["package.json", SCHEMA_PATH]);
+    expect(run.requests).toBe(2);
+  });
+
+  it.each(["", "producer-v2"])(
+    "preserves explicit Kova ref without fetching package metadata (contract: %s)",
+    async (contractOverride) => {
+      const run = await runTargetResolution({
+        kovaRef: "9".repeat(40),
+        contractOverride,
+        packageJson: JSON.stringify({ version: "2026.7.33" }),
+        packageStatus: 503,
+      });
+      expect(run.result.status, run.result.stderr).toBe(0);
+      expect(run.outputs.kova_ref).toBe("9".repeat(40));
+      expect(run.outputs.kova_config_contract).toBe(contractOverride || "canonical");
+      expect(run.requestedPaths).toEqual(contractOverride ? [] : [SCHEMA_PATH]);
+      expect(run.requests).toBe(contractOverride ? 0 : 1);
+    },
+  );
+
+  it.each([
+    { name: "explicit contract", contractOverride: "producer-v2", status: 503 },
+    { name: "legacy schema", schema: LEGACY_SCHEMA },
+    { name: "unknown schema", schema: "// unknown", expectedContract: "" },
+    { name: "missing schema", status: 404, expectedContract: "" },
+  ])("preserves calibrated release contract behavior: $name", async (options) => {
+    const run = await runTargetResolution({
+      ...options,
+      packageJson: JSON.stringify({ version: "2026.7.33" }),
+    });
+    expect(run.result.status, run.result.stderr).toBe(0);
+    expect(run.outputs.kova_ref).toBe(CALIBRATED_KOVA_REF);
+    expect(run.outputs.kova_config_contract).toBe(
+      options.contractOverride ?? options.expectedContract ?? "legacy-list",
+    );
+    expect(run.requestedPaths).toEqual(
+      options.contractOverride ? ["package.json"] : ["package.json", SCHEMA_PATH],
+    );
+    expect(run.requests).toBe(options.contractOverride ? 1 : 2);
+  });
+
+  it.each([
+    { name: "malformed JSON", packageJson: "{" },
+    { name: "null JSON", packageJson: "null" },
+    { name: "array JSON", packageJson: "[]" },
+    { name: "missing version", packageJson: "{}" },
+    { name: "numeric version", packageJson: '{"version":733}' },
+    { name: "null version", packageJson: '{"version":null}' },
+    { name: "missing package", packageStatus: 404 },
+    { name: "unavailable package", packageStatus: 503 },
+    { name: "directory package", packageMetadata: { entries: [] } },
+    {
+      name: "symlink package",
+      packageMetadata: {
+        ...contentsMetadata("package.json", Buffer.from("{}")),
+        type: "symlink",
+        target: "other.json",
+      },
+    },
+    {
+      name: "submodule package",
+      packageMetadata: {
+        ...contentsMetadata("package.json", Buffer.from("{}")),
+        submodule_git_url: "https://github.com/openclaw/openclaw.git",
+      },
+    },
+    {
+      name: "wrong package path",
+      packageMetadata: contentsMetadata("other.json", Buffer.from('{"version":"2026.7.33"}')),
+    },
+  ])("rejects required package metadata without fallback: $name", async (options) => {
+    const run = await runTargetResolution(options);
+    expect(run.result.status).not.toBe(0);
+    expect(run.outputs).toEqual({});
+    expect(run.requestedPaths).toEqual(["package.json"]);
+    expect(run.requests).toBe(1);
+  });
+
+  it("never executes or logs package source or arbitrary version bytes", async () => {
+    const marker = "$(touch package-executed);`exit 31`";
+    const run = await runTargetResolution({
+      packageJson: JSON.stringify({ version: marker, scripts: { preinstall: marker } }),
+    });
+    expect(run.result.status, run.result.stderr).toBe(0);
+    expect(run.outputs.kova_ref).toBe(run.canonicalRef);
+    expect(run.result.stdout + run.result.stderr).not.toContain(marker);
+    expect(existsSync(join(run.root, "package-executed"))).toBe(false);
+    expect(run.requestedPaths).toEqual(["package.json", SCHEMA_PATH]);
+  });
+
   it("selects canonical Kova metadata for targets containing the config transition", async () => {
     const { canonicalRef, outputs, result } = await runTargetResolution();
     expect(result.status, result.stderr).toBe(0);
@@ -678,12 +844,15 @@ describe("OpenClaw performance workflow", () => {
     },
   ])(
     "preserves the complete Kova override table: $name",
-    async ({ contract, ref, requests = 1, ...options }) => {
+    async ({ contract, ref, requests, ...options }) => {
       const run = await runTargetResolution(options);
       expect(run.result.status, run.result.stderr).toBe(0);
       expect(run.outputs.kova_ref).toBe(ref.repeat(40));
       expect(run.outputs.kova_config_contract).toBe(contract);
-      expect(run.requests).toBe(requests);
+      const expectedPaths =
+        requests === 0 ? [] : options.kovaRef ? [SCHEMA_PATH] : ["package.json", SCHEMA_PATH];
+      expect(run.requestedPaths).toEqual(expectedPaths);
+      expect(run.requests).toBe(expectedPaths.length);
     },
   );
 
@@ -732,11 +901,13 @@ describe("OpenClaw performance workflow", () => {
             ...metadata,
           };
     for (const kovaRef of ["", "9".repeat(40)]) {
-      const { result, outputs, requests } = await runTargetResolution({
+      const { result, outputs, requests, requestedPaths } = await runTargetResolution({
         metadata: response,
         kovaRef,
       });
-      expect(requests).toBe(1);
+      const expectedPaths = kovaRef ? [SCHEMA_PATH] : ["package.json", SCHEMA_PATH];
+      expect(requestedPaths).toEqual(expectedPaths);
+      expect(requests).toBe(expectedPaths.length);
       if (kovaRef) {
         expect(result.status, result.stderr).toBe(0);
         expect(outputs.kova_config_contract).toBe("");
@@ -801,6 +972,7 @@ describe("OpenClaw performance workflow", () => {
     const run = await runTargetResolution({ ...options, metadata, kovaRef: "9".repeat(40) });
     expect(run.result.status, run.result.stderr).not.toBe(0);
     expect(run.outputs).toEqual({});
+    expect(run.requestedPaths).toEqual([SCHEMA_PATH]);
     expect(run.requests).toBe(1);
     expect(run.responseClosed).toBe(true);
     expect(run.result.stderr).not.toContain("Bearer");

@@ -151,106 +151,134 @@ jobs:
           [[ "$kova_config_contract" != *$'\n'* && "$kova_config_contract" != *$'\r'* ]] ||
             { echo "::error::kova_config_contract must be a single line."; exit 1; }
           if [[ -z "$kova_ref" || -z "$kova_config_contract" ]]; then
-            detected_contract="$(node - "$GITHUB_REPOSITORY" "$resolved_sha" <<'NODE'
+            metadata="$(node - "$GITHUB_REPOSITORY" "$resolved_sha" "$kova_ref" "$kova_config_contract" <<'NODE'
           const assert = require("node:assert/strict");
           const { createHash } = require("node:crypto");
           const https = require("node:https");
-          const [repository, ref] = process.argv.slice(2);
+          const [repository, ref, requestedKovaRef, requestedContract] = process.argv.slice(2);
           const schemaPath = "src/config/zod-schema.agent-defaults.ts";
-          const name = "zod-schema.agent-defaults.ts";
-          const facts = { path: schemaPath, ref, status: null, transport: "failed", receivedBytes: 0 };
-          let stage = "request";
-          async function main() {
-            assert(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository) && /^[a-f0-9]{40}$/.test(ref));
-            const body = await new Promise((resolve, reject) => {
-              const chunks = [];
-              let settled = false, timer;
-              const finish = (error, value) => {
-                if (settled) return;
-                settled = true;
-                clearTimeout(timer);
-                if (error) { request.destroy(); reject(error); } else resolve(value);
-              };
-              const request = https.get({
-                hostname: "api.github.com", method: "GET", agent: false, maxHeaderSize: 64 * 1024,
-                path: `/repos/${repository}/contents/${schemaPath}?ref=${ref}`,
-                headers: { Accept: "application/vnd.github.object+json", "User-Agent": "openclaw-performance",
-                  ...(process.env.GH_TOKEN ? { Authorization: `Bearer ${process.env.GH_TOKEN}` } : {}) },
-              }, (response) => {
-                facts.status = response.statusCode;
-                facts.media = String(response.headers["content-type"] ?? "").split(";")[0];
-                response.on("data", (chunk) => {
-                  facts.receivedBytes += chunk.length;
-                  if (facts.receivedBytes > 2 * 1024 * 1024) {
-                    stage = "receive limit";
-                    finish(new Error());
-                  } else if (!settled) chunks.push(chunk);
+          async function inspectContents(contentPath) {
+            const requiredPackage = contentPath === "package.json";
+            const name = requiredPackage ? "package.json" : "zod-schema.agent-defaults.ts";
+            const facts = { path: contentPath, ref, status: null, transport: "failed", receivedBytes: 0 };
+            let stage = "request";
+            async function inspect() {
+              assert(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository) && /^[a-f0-9]{40}$/.test(ref));
+              const body = await new Promise((resolve, reject) => {
+                const chunks = [];
+                let settled = false, timer;
+                const finish = (error, value) => {
+                  if (settled) return;
+                  settled = true;
+                  clearTimeout(timer);
+                  if (error) { request.destroy(); reject(error); } else resolve(value);
+                };
+                const request = https.get({
+                  hostname: "api.github.com", method: "GET", agent: false, maxHeaderSize: 64 * 1024,
+                  path: `/repos/${repository}/contents/${contentPath}?ref=${ref}`,
+                  headers: { Accept: "application/vnd.github.object+json", "User-Agent": "openclaw-performance",
+                    ...(process.env.GH_TOKEN ? { Authorization: `Bearer ${process.env.GH_TOKEN}` } : {}) },
+                }, (response) => {
+                  facts.status = response.statusCode;
+                  facts.media = String(response.headers["content-type"] ?? "").split(";")[0];
+                  response.on("data", (chunk) => {
+                    facts.receivedBytes += chunk.length;
+                    if (facts.receivedBytes > 2 * 1024 * 1024) {
+                      stage = "receive limit";
+                      finish(new Error());
+                    } else if (!settled) chunks.push(chunk);
+                  });
+                  response.once("error", () => finish(new Error()));
+                  response.once("aborted", () => finish(new Error()));
+                  response.once("end", () => finish(response.complete ? null : new Error(), Buffer.concat(chunks)));
                 });
-                response.once("error", () => finish(new Error()));
-                response.once("aborted", () => finish(new Error()));
-                response.once("end", () => finish(response.complete ? null : new Error(), Buffer.concat(chunks)));
+                request.once("error", () => finish(new Error()));
+                timer = setTimeout(() => { stage = "deadline"; finish(new Error()); }, 30_000);
               });
-              request.once("error", () => finish(new Error()));
-              timer = setTimeout(() => { stage = "deadline"; finish(new Error()); }, 30_000);
-            });
-            facts.transport = "complete";
-            stage = "HTTP status";
-            assert(facts.status === 200 || facts.status === 404);
-            let contract = "";
-            if (facts.status === 200) {
-              stage = "metadata";
-              assert(["application/json", "application/vnd.github.object+json"].includes(facts.media));
-              const value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(body));
-              const object = (entry) => entry !== null && typeof entry === "object" && !Array.isArray(entry);
-              const entryMetadata = (entry) => object(entry) &&
-                ["file", "dir", "symlink", "submodule"].includes(entry.type) &&
-                typeof entry.name === "string" && !["", ".", ".."].includes(entry.name) && !/[/\\\0]/.test(entry.name) &&
-                typeof entry.sha === "string" && /^[a-f0-9]{40}$/.test(entry.sha) &&
-                Number.isSafeInteger(entry.size) && entry.size >= 0;
-              assert(object(value));
-              if (Object.hasOwn(value, "entries")) {
-                assert((value.type === undefined || value.type === "dir") &&
-                  (value.path === undefined || value.path === schemaPath) &&
-                  (value.name === undefined || value.name === name) &&
-                  Array.isArray(value.entries) && value.entries.length <= 1000 &&
-                  value.entries.every((entry) => entryMetadata(entry) && entry.path === `${schemaPath}/${entry.name}`));
-              } else {
-                assert(entryMetadata(value) && value.path === schemaPath && value.name === name);
-                if (value.type === "symlink") {
-                  assert(typeof value.target === "string" && value.target.length > 0);
-                } else if (value.type === "submodule" || Object.hasOwn(value, "submodule_git_url")) {
-                  assert(["file", "submodule"].includes(value.type) &&
-                    typeof value.submodule_git_url === "string" && value.submodule_git_url.length > 0);
+              facts.transport = "complete";
+              stage = "HTTP status";
+              assert(facts.status === 200 || (!requiredPackage && facts.status === 404));
+              let contract = "";
+              if (facts.status === 200) {
+                stage = "metadata";
+                assert(["application/json", "application/vnd.github.object+json"].includes(facts.media));
+                const value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(body));
+                const object = (entry) => entry !== null && typeof entry === "object" && !Array.isArray(entry);
+                const entryMetadata = (entry) => object(entry) &&
+                  ["file", "dir", "symlink", "submodule"].includes(entry.type) &&
+                  typeof entry.name === "string" && !["", ".", ".."].includes(entry.name) && !/[/\\\0]/.test(entry.name) &&
+                  typeof entry.sha === "string" && /^[a-f0-9]{40}$/.test(entry.sha) &&
+                  Number.isSafeInteger(entry.size) && entry.size >= 0;
+                assert(object(value));
+                if (requiredPackage) {
+                  assert(value.type === "file" && !Object.hasOwn(value, "entries") &&
+                    !Object.hasOwn(value, "submodule_git_url"));
+                }
+                if (Object.hasOwn(value, "entries")) {
+                  assert((value.type === undefined || value.type === "dir") &&
+                    (value.path === undefined || value.path === contentPath) &&
+                    (value.name === undefined || value.name === name) &&
+                    Array.isArray(value.entries) && value.entries.length <= 1000 &&
+                    value.entries.every((entry) => entryMetadata(entry) && entry.path === `${contentPath}/${entry.name}`));
                 } else {
-                  assert(value.type === "file" && value.size <= 1_000_000 &&
-                    value.encoding === "base64" && typeof value.content === "string");
-                  stage = "base64";
-                  const encoded = value.content.replace(/\r?\n/g, "");
-                  assert(encoded.length % 4 === 0 && /^[A-Za-z0-9+/]*={0,2}$/.test(encoded));
-                  const decoded = Buffer.from(encoded, "base64");
-                  assert(decoded.length === value.size && decoded.toString("base64") === encoded);
-                  // Latin-1 preserves every byte; only literal LF-delimited whole lines classify.
-                  const lines = decoded.toString("latin1").split("\n");
-                  contract = lines.includes("    mediaModels: z") ? "canonical" :
-                    lines.includes("    imageGenerationModel: AgentToolModelSchema.optional(),") ? "legacy-list" : "";
-                  Object.assign(facts, { encoding: value.encoding, declaredBytes: value.size,
-                    decodedBytes: decoded.length, blob: value.sha, sha256: createHash("sha256").update(decoded).digest("hex") });
+                  assert(entryMetadata(value) && value.path === contentPath && value.name === name);
+                  if (value.type === "symlink") {
+                    assert(typeof value.target === "string" && value.target.length > 0);
+                  } else if (value.type === "submodule" || Object.hasOwn(value, "submodule_git_url")) {
+                    assert(["file", "submodule"].includes(value.type) &&
+                      typeof value.submodule_git_url === "string" && value.submodule_git_url.length > 0);
+                  } else {
+                    assert(value.type === "file" && value.size <= 1_000_000 &&
+                      value.encoding === "base64" && typeof value.content === "string");
+                    stage = "base64";
+                    const encoded = value.content.replace(/\r?\n/g, "");
+                    assert(encoded.length % 4 === 0 && /^[A-Za-z0-9+/]*={0,2}$/.test(encoded));
+                    const decoded = Buffer.from(encoded, "base64");
+                    assert(decoded.length === value.size && decoded.toString("base64") === encoded);
+                    if (requiredPackage) {
+                      stage = "package JSON";
+                      const metadata = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(decoded));
+                      assert(object(metadata) && typeof metadata.version === "string");
+                      contract = metadata.version === "2026.7.33" ? "calibrated" : "";
+                    } else {
+                      // Latin-1 preserves every byte; only literal LF-delimited whole lines classify.
+                      const lines = decoded.toString("latin1").split("\n");
+                      contract = lines.includes("    mediaModels: z") ? "canonical" :
+                        lines.includes("    imageGenerationModel: AgentToolModelSchema.optional(),") ? "legacy-list" : "";
+                    }
+                    Object.assign(facts, { encoding: value.encoding, declaredBytes: value.size,
+                      decodedBytes: decoded.length, blob: value.sha, sha256: createHash("sha256").update(decoded).digest("hex") });
+                  }
                 }
               }
+              if (!requiredPackage) facts.contract = contract;
+              return contract;
             }
-            facts.contract = contract;
-            process.stdout.write(contract);
+            return inspect().catch(() => {
+              console.error(`::error::Contents acquisition failed at ${stage}`);
+              throw new Error("Contents acquisition failed");
+            }).finally(() => {
+              // Never emit source, error bodies, authorization headers, or arbitrary response headers.
+              if (!["application/json", "application/vnd.github.object+json"].includes(facts.media)) delete facts.media;
+              console.error("performance-contract " + JSON.stringify(facts));
+            });
+          }
+          async function main() {
+            const calibrated = !requestedKovaRef && await inspectContents("package.json") === "calibrated";
+            const contract = (!requestedKovaRef && !calibrated) || !requestedContract
+              ? await inspectContents(schemaPath) : "";
+            process.stdout.write(JSON.stringify({ calibrated, contract }));
           }
           main().catch(() => {
-            console.error(`::error::Contents acquisition failed at ${stage}`);
             process.exitCode = 1;
-          }).finally(() => {
-            // Never emit source, error bodies, authorization headers, or arbitrary response headers.
-            if (!["application/json", "application/vnd.github.object+json"].includes(facts.media)) delete facts.media;
-            console.error("performance-contract " + JSON.stringify(facts));
           });
           NODE
             )"
+            if [[ "$(jq -r '.calibrated' <<<"$metadata")" == true ]]; then
+              # Kova #116 carries the historical status CLI calibration for this release only.
+              kova_ref="70ea2c5a3bdd206937b4a0bd7460a19a69d8c52a"
+            fi
+            detected_contract="$(jq -r '.contract' <<<"$metadata")"
             default_kova_ref=""
             case "$detected_contract" in
               canonical)
