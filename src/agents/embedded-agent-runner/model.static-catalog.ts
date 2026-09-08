@@ -4,7 +4,6 @@
 import { normalizeResolvedPricing } from "@openclaw/llm-core";
 import type { NormalizedModelCatalogRow } from "@openclaw/model-catalog-core/model-catalog-types";
 import { normalizeProviderId } from "@openclaw/model-catalog-core/provider-id";
-import type { ModelProviderConfig } from "../../config/types.models.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { planEffectiveModelCatalogRows } from "../../model-catalog/index.js";
 import { normalizePluginsConfig } from "../../plugins/config-state.js";
@@ -16,6 +15,7 @@ import { loadPluginManifestRegistryCore } from "../../plugins/manifest-registry.
 import { loadPluginManifest } from "../../plugins/manifest.js";
 import { getPluginCache, getPluginMetadataSnapshotCache } from "../../plugins/plugin-cache.js";
 import type { PluginMetadataSnapshot } from "../../plugins/plugin-metadata-snapshot.types.js";
+import { isProviderCatalogSourceAllowed } from "../../plugins/provider-config-owner.js";
 import {
   normalizePluginDiscoveryResult,
   resolveRuntimePluginDiscoveryProviders,
@@ -31,7 +31,7 @@ import {
 import type { PluginRegistry } from "../../plugins/registry-types.js";
 import { dedupeByKey } from "../../shared/dedupe-by-key.js";
 import { DEFAULT_CONTEXT_TOKENS } from "../defaults.js";
-import { buildInlineProviderModels, type InlineModelEntry } from "./model.inline-provider.js";
+import { buildInlineProviderModels, completeInlineProviderModel } from "./model.inline-provider.js";
 import type { BundledStaticCatalogState } from "./model.static-catalog.types.js";
 import { findStaticModel } from "./model.static-id.js";
 
@@ -67,25 +67,6 @@ function modelFromStaticCatalogRow(row: NormalizedModelCatalogRow): ProviderRunt
     headers: row.headers,
     compat: row.compat,
     mediaInput: row.mediaInput,
-  };
-}
-
-function completeProviderStaticCatalogModel(
-  model: InlineModelEntry,
-  providerConfig: ModelProviderConfig,
-): ProviderRuntimeModel {
-  return {
-    ...model,
-    name: model.name || model.id,
-    api: model.api ?? providerConfig.api ?? "openai-responses",
-    baseUrl: model.baseUrl ?? "",
-    reasoning: model.reasoning ?? false,
-    input: normalizeStaticCatalogInput(model.input),
-    cost: model.cost ?? normalizeResolvedPricing({}),
-    contextWindow: model.contextWindow ?? DEFAULT_CONTEXT_TOKENS,
-    contextTokens: model.contextTokens,
-    maxTokens: model.maxTokens ?? DEFAULT_CONTEXT_TOKENS,
-    ...(providerConfig.authHeader !== undefined ? { authHeader: providerConfig.authHeader } : {}),
   };
 }
 
@@ -134,7 +115,12 @@ function listBundledStaticCatalogPlugins(
   const plugins: StaticCatalogPlugin[] = metadataSnapshot
     ? metadataSnapshot.plugins
         .filter((plugin) => plugin.origin === "bundled")
-        .map(({ id, providers, modelCatalog }) => ({ id, providers, modelCatalog }))
+        .map(({ id, providers, modelCatalog, providerEndpoints }) => ({
+          id,
+          providers,
+          modelCatalog,
+          providerEndpoints,
+        }))
     : listOpenClawPluginManifestMetadata(params.env).flatMap((record): StaticCatalogPlugin[] => {
         if (record.origin !== "bundled") {
           return [];
@@ -146,6 +132,7 @@ function listBundledStaticCatalogPlugins(
                 id: loaded.manifest.id,
                 providers: loaded.manifest.providers,
                 modelCatalog: loaded.manifest.modelCatalog,
+                providerEndpoints: loaded.manifest.providerEndpoints,
               },
             ]
           : [];
@@ -384,6 +371,27 @@ async function loadBundledProviderStaticCatalogModels(params: {
     : undefined;
   const modelsByProvider = new Map<string, ProviderRuntimeModel[]>();
   for (const catalogProvider of providers) {
+    const plugin = params.pluginMetadataSnapshot?.manifestRegistry.plugins.find(
+      (candidate) => candidate.id === (catalogProvider.pluginId ?? catalogProvider.id),
+    );
+    const includeProvider = (provider: string) =>
+      isProviderCatalogSourceAllowed({ provider, plugin, config: params.cfg });
+    const soleStaticCatalog =
+      providers.filter(
+        (candidate) =>
+          (candidate.pluginId ?? normalizeProviderId(candidate.id)) ===
+            (catalogProvider.pluginId ?? normalizeProviderId(catalogProvider.id)) &&
+          candidate.staticCatalog,
+      ).length === 1;
+    const providerRefs = [
+      catalogProvider.id,
+      ...(catalogProvider.aliases ?? []),
+      ...(catalogProvider.hookAliases ?? []),
+      ...(soleStaticCatalog ? (plugin?.providers ?? []) : []),
+    ];
+    if (!providerRefs.some(includeProvider)) {
+      continue;
+    }
     const preparedResultKey = `${catalogProvider.pluginId ?? ""}\0${normalizeProviderId(catalogProvider.id)}`;
     const result = preparedResults?.has(preparedResultKey)
       ? preparedResults.get(preparedResultKey)
@@ -397,6 +405,7 @@ async function loadBundledProviderStaticCatalogModels(params: {
       // Empty catalogs never resolve request secrets or transport settings.
       if (
         !provider ||
+        !includeProvider(provider) ||
         !Array.isArray(providerConfig.models) ||
         providerConfig.models.length === 0
       ) {
@@ -407,7 +416,7 @@ async function loadBundledProviderStaticCatalogModels(params: {
         ...buildInlineProviderModels(
           { [provider]: providerConfig },
           { providerMetadataOwners: params.providerMetadataOwners },
-        ).map((model) => completeProviderStaticCatalogModel(model, providerConfig)),
+        ).map((model) => completeInlineProviderModel(model, providerConfig)),
       );
       modelsByProvider.set(provider, models);
     }

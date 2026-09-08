@@ -10,6 +10,8 @@ import { markHostPluginUsageDiagnosticEvent } from "../../infra/diagnostic-plugi
 import type { Api, Message } from "../../llm/types.js";
 import { getChildLogger } from "../../logging.js";
 import { normalizeAgentId } from "../../routing/session-key.js";
+import { AsyncWorkScope, captureAsyncWorkTracker } from "../../shared/async-work-scope.js";
+import { createDeferredCore } from "../../shared/deferred.js";
 import { modelKey } from "../../shared/model-key.js";
 import {
   estimateAggregateUsageCost,
@@ -500,74 +502,88 @@ export function createRuntimeLlm(
       };
 
       if (!isIsolatedAgentRuntimeRequest(params)) {
-        const prepared = await acquireSimpleCompletionModelForAgent(
-          {
-            cfg,
-            agentId,
-            modelRef: requestedModel,
-            abortSignal: params.signal,
-            preferredProfile,
-            allowMissingApiKeyModes: ["aws-sdk"],
-            allowBundledStaticCatalogFallback: true,
-            skipAgentDiscovery: true,
-          },
-          ({ selection, config }) => {
-            assertSelectionAllowed(selection, config);
-          },
-        );
-        if ("error" in prepared) {
-          throw new Error(`Plugin LLM completion failed: ${prepared.error}`);
-        }
-        try {
-          const context = {
-            systemPrompt: buildSystemPrompt(params),
-            messages: buildMessages({
-              request: params,
-              provider: prepared.model.provider,
-              model: prepared.model.id,
-              api: prepared.model.api,
-            }),
-          };
-          const result = await completeWithPreparedSimpleCompletionModel({
-            assertCurrent: prepared.assertCurrent,
-            model: prepared.model,
-            auth: prepared.auth,
-            cfg: prepared.config,
-            context,
-            options: {
-              maxTokens: asFiniteNumber(params.maxTokens),
-              temperature: asFiniteNumber(params.temperature),
-              ...(params.reasoning !== undefined ? { reasoning: params.reasoning } : {}),
-              signal: params.signal,
-            },
-          });
-          const text = result.content
-            .filter((c): c is { type: "text"; text: string } => c.type === "text")
-            .map((c) => c.text)
-            .join("");
-          return finalizePluginLlmCompletion({
-            cfg: prepared.config,
-            hostPluginId: pluginPolicyId,
-            // Provider failures resolve as messages; only visible successful output owns usage.
-            suppressUsage:
-              !text.trim() || !["stop", "length", "toolUse"].includes(result.stopReason),
-            rawUsage: result.usage,
-            logger,
-            result: {
-              text,
-              provider: prepared.selection.provider,
-              model: prepared.selection.modelId,
+        const callerResult = createDeferredCore<LlmCompleteResult>();
+        const trackOwner = captureAsyncWorkTracker();
+        // Admit drainage with the parent before acquisition; the caller only waits for its result.
+        void trackOwner(async () => {
+          const prepared = await acquireSimpleCompletionModelForAgent(
+            {
+              cfg,
               agentId,
-              execution: {
-                mode: "direct-provider",
-                owner: { kind: "provider", id: prepared.selection.provider },
-              },
-              audit,
+              modelRef: requestedModel,
+              abortSignal: params.signal,
+              preferredProfile,
+              allowMissingApiKeyModes: ["aws-sdk"],
+              allowBundledStaticCatalogFallback: true,
+              skipAgentDiscovery: true,
             },
-          });
-        } finally {
-          prepared.release();
-        }
+            ({ selection, config }) => {
+              assertSelectionAllowed(selection, config);
+            },
+          );
+          if ("error" in prepared) {
+            throw new Error(`Plugin LLM completion failed: ${prepared.error}`);
+          }
+          const work = new AsyncWorkScope();
+          try {
+            callerResult.resolve(
+              await work.track(async () => {
+                const context = {
+                  systemPrompt: buildSystemPrompt(params),
+                  messages: buildMessages({
+                    request: params,
+                    provider: prepared.model.provider,
+                    model: prepared.model.id,
+                    api: prepared.model.api,
+                  }),
+                };
+                const result = await completeWithPreparedSimpleCompletionModel({
+                  assertCurrent: prepared.assertCurrent,
+                  model: prepared.model,
+                  auth: prepared.auth,
+                  cfg: prepared.config,
+                  context,
+                  options: {
+                    maxTokens: asFiniteNumber(params.maxTokens),
+                    temperature: asFiniteNumber(params.temperature),
+                    ...(params.reasoning !== undefined ? { reasoning: params.reasoning } : {}),
+                    signal: params.signal,
+                  },
+                });
+                const text = result.content
+                  .filter((c): c is { type: "text"; text: string } => c.type === "text")
+                  .map((c) => c.text)
+                  .join("");
+                return finalizePluginLlmCompletion({
+                  cfg: prepared.config,
+                  hostPluginId: pluginPolicyId,
+                  // Provider failures resolve as messages; only visible successful output owns usage.
+                  suppressUsage:
+                    !text.trim() || !["stop", "length", "toolUse"].includes(result.stopReason),
+                  rawUsage: result.usage,
+                  logger,
+                  result: {
+                    text,
+                    provider: prepared.selection.provider,
+                    model: prepared.selection.modelId,
+                    agentId,
+                    execution: {
+                      mode: "direct-provider",
+                      owner: { kind: "provider", id: prepared.selection.provider },
+                    },
+                    audit,
+                  },
+                });
+              }),
+            );
+          } catch (error) {
+            callerResult.reject(error);
+          } finally {
+            await work.drain();
+            prepared.release();
+          }
+        }).catch((error: unknown) => callerResult.reject(error));
+        return await callerResult.promise;
       }
       const request = params;
       return await runIsolatedAgentRuntimeCompletion({

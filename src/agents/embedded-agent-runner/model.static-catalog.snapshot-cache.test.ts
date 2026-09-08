@@ -4,6 +4,7 @@ import { clearPluginMetadataLifecycleCaches } from "../../plugins/plugin-metadat
 import { createPluginMetadataSnapshotFixture } from "../../plugins/plugin-metadata.test-support.js";
 import { createStaticProviderModelIdNormalizer } from "../model-ref-shared.js";
 import { prepareConfiguredRuntimeModels } from "../prepared-model-runtime.configured.js";
+import { buildInlineProviderModels } from "./model.inline-provider.js";
 
 const manifestMocks = vi.hoisted(() => ({
   getGatewayPluginMetadataSnapshot: vi.fn(),
@@ -220,6 +221,8 @@ describe("bundled static model catalog snapshot cache", () => {
       expect(resolveModel({ provider: "mistral", modelId: "latest" })).toBeUndefined();
       expect(
         prepareConfiguredRuntimeModels({
+          config: {},
+          inlineProviderModels: [],
           configuredModelRefs: [{ provider: "mistral", modelId: "latest" }],
           metadataSnapshot,
           providerStaticModels: [],
@@ -233,6 +236,61 @@ describe("bundled static model catalog snapshot cache", () => {
         id: "final",
         contextWindow: 64000,
       });
+
+      for (const api of ["openai-completions", undefined] as const) {
+        const providerConfig = {
+          baseUrl: "https://proxy.example/v1",
+          ...(api ? { api } : {}),
+          models: plugin.modelCatalog.providers.mistral.models.map(
+            ({ id, name, contextWindow, maxTokens }) => ({
+              id,
+              name,
+              contextWindow,
+              maxTokens,
+              reasoning: false,
+              input: ["text" as const],
+              cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+            }),
+          ),
+        };
+        const config = { models: { providers: { mistral: providerConfig } } };
+        const resolveExcluded = createBundledStaticCatalogModelResolver({
+          cfg: config,
+          metadataSnapshot,
+        });
+        expect(resolveExcluded({ provider: "mistral", modelId: "middle" })).toBeUndefined();
+        const prepared = prepareConfiguredRuntimeModels({
+          config,
+          inlineProviderModels: buildInlineProviderModels(config.models.providers, {
+            providerMetadataOwners: metadataSnapshot.owners,
+          }),
+          configuredModelRefs: [
+            { provider: "mistral", modelId: "middle" },
+            { provider: "mistral", modelId: "latest" },
+          ],
+          metadataSnapshot,
+          providerStaticModels: [],
+          resolveStaticCatalogModel: resolveExcluded,
+          normalizeModelId: createStaticProviderModelIdNormalizer({
+            manifestPlugins: metadataSnapshot,
+          }),
+        });
+        expect(
+          prepared.map(({ model }) => ({
+            id: model.id,
+            contextWindow: model.contextWindow,
+            baseUrl: model.baseUrl,
+            api: model.api,
+          })),
+        ).toEqual(
+          api
+            ? [
+                { id: "middle", contextWindow: 32000, baseUrl: providerConfig.baseUrl, api },
+                { id: "middle", contextWindow: 32000, baseUrl: providerConfig.baseUrl, api },
+              ]
+            : [],
+        );
+      }
     },
   );
 
