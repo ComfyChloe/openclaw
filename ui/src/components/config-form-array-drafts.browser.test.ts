@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { updateConfigFormValue } from "../lib/config/config-draft-model.ts";
 import { createInitialConfigState } from "../lib/config/config-state-model.ts";
 import { analyzeConfigSchema, renderConfigForm, type JsonSchema } from "./config-form.ts";
+import baseStyles from "../styles/base.css?inline";
 
 function mountForm(properties: Record<string, JsonSchema>, values: Record<string, unknown>) {
   const analysis = analyzeConfigSchema({
@@ -12,6 +13,11 @@ function mountForm(properties: Record<string, JsonSchema>, values: Record<string
   const state = createInitialConfigState();
   state.configForm = { settings: values };
   const container = document.createElement("div");
+  const styles = document.createElement("style");
+  styles.textContent = baseStyles;
+  container.append(styles);
+  // The app root does not scroll; controls need an owned scrolling pane.
+  container.style.cssText = "height: 100%; overflow: auto";
   document.body.append(container);
   const renderValue = () => {
     render(
