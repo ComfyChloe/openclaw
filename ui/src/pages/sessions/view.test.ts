@@ -127,8 +127,8 @@ describe("sessions view", () => {
         ),
       );
       expect(
-        [...container.querySelectorAll(".session-data-row .agent-row-chip__name")].map(
-          (chip) => chip.textContent,
+        [...container.querySelectorAll(".session-data-row .agent-row-chip")].map((chip) =>
+          chip.getAttribute("data-agent-id"),
         ),
       ).toEqual(["main", "research", "research"]);
     } finally {

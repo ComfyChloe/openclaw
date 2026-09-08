@@ -143,8 +143,8 @@ describe("renderUsageInsights", () => {
       [...container.querySelectorAll("openclaw-agent-row-chip")].map((chip) => chip.updateComplete),
     );
     expect(
-      [...container.querySelectorAll(".usage-list-item .agent-row-chip__name")].map(
-        (chip) => chip.textContent,
+      [...container.querySelectorAll(".usage-list-item .agent-row-chip")].map((chip) =>
+        chip.getAttribute("data-agent-id"),
       ),
     ).toEqual(["main", "research"]);
     expect(
@@ -620,8 +620,8 @@ describe("renderSessionsCard", () => {
       [...container.querySelectorAll("openclaw-agent-row-chip")].map((chip) => chip.updateComplete),
     );
     expect(
-      [...container.querySelectorAll(".session-bar-row .agent-row-chip__name")].map(
-        (chip) => chip.textContent,
+      [...container.querySelectorAll(".session-bar-row .agent-row-chip")].map((chip) =>
+        chip.getAttribute("data-agent-id"),
       ),
     ).toEqual(["main", "research"]);
   });

@@ -22,8 +22,8 @@ describe("cron view list pane", () => {
         ),
       );
       expect(
-        [...container.querySelectorAll(".cron-table__row .agent-row-chip__name")].map(
-          (chip) => chip.textContent,
+        [...container.querySelectorAll(".cron-table__row .agent-row-chip")].map((chip) =>
+          chip.getAttribute("data-agent-id"),
         ),
       ).toEqual(["main", "research"]);
     } finally {

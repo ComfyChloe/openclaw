@@ -49,10 +49,17 @@ class AgentRowChip extends OpenClawLightDomElement {
     const agent = agentsList?.agents.find((entry) => entry.id === id) ?? { id };
     const identity = this.context?.agentIdentity.get(id);
     const name = normalizeAgentLabel(agent, identity);
+    const label = name === id ? `agent:${id}` : `${name} (agent:${id})`;
     const avatar = resolveAgentAvatarUrl(agent, identity);
     return this.avatars.withActiveRoutes(() => {
       const image = avatar ? this.avatars.resolve(avatar) : null;
-      return html`<span class="agent-row-chip" data-agent-id=${id} title=${name}>
+      return html`<span
+        class="agent-row-chip"
+        data-agent-id=${id}
+        role="img"
+        aria-label=${label}
+        title=${label}
+      >
         ${
           image
             ? html`<img class="agent-row-chip__avatar" src=${image} alt="" loading="lazy" />`

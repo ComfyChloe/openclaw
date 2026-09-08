@@ -39,5 +39,16 @@ it("uses loaded agent names and avatars, preserving default and unknown ownershi
   expect(
     [...provider.querySelectorAll(".agent-row-chip__avatar")].map((chip) => chip.textContent),
   ).toEqual(["🏡", "🔬", "R"]);
+  expect(
+    [...provider.querySelectorAll(".agent-row-chip")].map((chip) => [
+      chip.getAttribute("data-agent-id"),
+      chip.getAttribute("aria-label"),
+      chip.getAttribute("title"),
+    ]),
+  ).toEqual([
+    ["main", "Home agent (agent:main)", "Home agent (agent:main)"],
+    ["research", "Research (agent:research)", "Research (agent:research)"],
+    ["retired", "agent:retired", "agent:retired"],
+  ]);
   expect(request).not.toHaveBeenCalled();
 });

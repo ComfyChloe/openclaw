@@ -190,11 +190,11 @@ describe("TasksPage concurrent refresh events", () => {
     page.context = createContext(source.gateway, null);
     document.body.append(page);
     await waitForFast(() => {
-      expect(
-        [...page.querySelectorAll(".task-row .agent-row-chip__name")]
-          .map((chip) => chip.textContent)
-          .toSorted(),
-      ).toEqual(["main", "research"]);
+      const owners = [...page.querySelectorAll(".task-row .agent-row-chip")].map((chip) =>
+        chip.getAttribute("data-agent-id"),
+      );
+      expect(owners).toHaveLength(2);
+      expect(owners).toEqual(expect.arrayContaining(["main", "research"]));
     });
   });
 

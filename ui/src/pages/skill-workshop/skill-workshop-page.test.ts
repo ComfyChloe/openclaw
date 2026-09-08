@@ -205,7 +205,11 @@ describe("SkillWorkshopPage lifecycle", () => {
     if (!(agentChip instanceof HTMLElement)) {
       throw new Error("Proposal origin agent chip is missing");
     }
-    await waitForSkillWorkshop(() => expect(agentChip.textContent).toContain("research"));
+    await waitForSkillWorkshop(() =>
+      expect(agentChip.querySelector(".agent-row-chip")?.getAttribute("data-agent-id")).toBe(
+        "research",
+      ),
+    );
   });
 
   it("forces a fresh proposal load when the gateway source changes", async () => {
