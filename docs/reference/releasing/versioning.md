@@ -22,8 +22,7 @@ read_when:
 - `extended-stable` means the supported trailing-month Gateway distribution, beginning at patch `33`; patch `34` and later are maintenance releases on that monthly line
 - Regular final and regular correction releases publish to npm `beta` by default; release operators can target `latest` explicitly, or promote a vetted beta build later
 - Gateway extended-stable publishes core, every npm-publishable official plugin,
-  and its Docker images at one exact version; see the dedicated
-  [Extended-stable monthly release](/reference/releasing/extended-stable) workflow.
+  and its Docker images at one exact version; see the [extended-stable workflow](/reference/releasing/extended-stable).
 - Regular final releases publish the npm package first and finalize the GitHub release after npm and Docker verification. macOS, signed Windows Hub installers, and the signed standalone Android APK publish independently in parallel or afterward; app readiness never delays npm or GitHub publication. Verify each native release separately before announcing all platforms complete. Beta releases normally validate and publish the npm/package path first, with native app build/sign/notarize/promote reserved for regular final unless explicitly requested.
 
 ## Release cadence
@@ -35,6 +34,4 @@ read_when:
 
 ## Related
 
-- [Release policy](/reference/RELEASING)
 - [Release channels](/install/development-channels)
-- [Full release validation](/reference/full-release-validation)

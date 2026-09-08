@@ -63,6 +63,4 @@ Rules:
 
 ## Related
 
-- [Release policy](/reference/RELEASING)
 - [Release channels](/install/development-channels)
-- [Full release validation](/reference/full-release-validation)

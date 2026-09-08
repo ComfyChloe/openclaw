@@ -42,7 +42,9 @@ tag-to-SHA mapping and exact parent run tuple authorize the npm mutations
 enforced by this foundation even if `main` has advanced. Other privileged
 writers remain blocked until their dependent enforcement changes land.
 
-After the Code SHA is green, commit only `CHANGELOG.md` and run the same helper with the Release SHA:
+If the fresh qualified commit already contains final notes, Code SHA and Release SHA are identical. Use that same successful parent/attempt and its exact prepared bytes for candidate and publication checks, including the final channel-specific SDK report and required acknowledgement. No second commit or FRV is required merely to name a Release SHA.
+
+If notes change afterward, commit only `CHANGELOG.md` and optionally run the same helper with the new Release SHA:
 
 ```bash
 TOOLING_SHA="<same-recorded-tooling-sha>"
@@ -52,7 +54,7 @@ pnpm ci:full-release \
   --workflow-sha "$TOOLING_SHA"
 ```
 
-The second parent reuses product evidence only when GitHub proves the Release SHA descends from the Code SHA and the complete changed path set is exactly `CHANGELOG.md`. It records `changelog-only-release-v1` and dispatches no product children. Npm preflight and package/install acceptance still run on the Release SHA because its tarball bytes changed.
+This optional second parent reuses product evidence only when GitHub proves the Release SHA descends from the Code SHA and the complete changed path set is exactly `CHANGELOG.md`. It records `changelog-only-release-v1` and dispatches no product children. Npm preflight and package/install acceptance still run on the Release SHA because its tarball bytes changed.
 
 For a fresh Code SHA, the workflow resolves the target, dispatches manual `CI`, then dispatches `OpenClaw Release Checks`. Beta-publish maps to `release_profile=beta` and `run_release_soak=false`. An `all` run for an actual beta package on its matching canonical release branch or beta tag records `coveragePolicy=npm-beta-v1`: Linux/macOS/Windows Node, Control UI, plugin, package, Linux cross-OS, and QA parity/runtime/restart/tool gates remain; Windows/macOS cross-OS outcomes are advisory; native apps, performance, and published-package Telegram confidence are deferred. Beta `all` without soak also defers broad live/E2E, QA-live, and Package Acceptance Telegram. Postpublish-confidence uses the exact published package with soak or explicit focused groups. Stable-publish maps to `release_profile=stable`. The final verifier summary includes slowest-job tables for each selected child run.
 
@@ -101,13 +103,13 @@ Use these variants depending on release stage:
 ```bash
 TOOLING_SHA="<recorded-full-main-ancestor-sha>"
 
-# Validate the product-complete Code SHA.
+# Validate the product-complete Code SHA; final notes let this also be Release SHA.
 pnpm ci:full-release \
   --sha <code-sha> \
   --target-ref release/YYYY.M.PATCH \
   --workflow-sha "$TOOLING_SHA"
 
-# Validate the changelog-only Release SHA by reusing Code SHA product evidence.
+# Optional: only after a later CHANGELOG-only edit, reuse the green Code proof.
 pnpm ci:full-release \
   --sha <release-sha> \
   --target-ref release/YYYY.M.PATCH \
@@ -130,7 +132,7 @@ Do not use the full umbrella as the first rerun after a focused fix. Classify th
 coverage policy, effective soak setting, and validation inputs match and either the target SHA
 is identical or the new target is a descendant whose complete changed path set
 is exactly `CHANGELOG.md`. Exact-target reuse records
-`exact-target-full-validation-v1`; the post-validation Release SHA records
+`exact-target-full-validation-v1`; an optional CHANGELOG-only descendant records
 `changelog-only-release-v1`. The latter reuses only product validation. Npm
 preflight, package bytes, release-note provenance, and install/update acceptance
 must still run against the Release SHA. Any version, source, generated,
@@ -144,7 +146,7 @@ For bounded recovery, pass `rerun_group` to the umbrella. Supported controller g
 
 ### Vitest
 
-The Vitest box is the manual `CI` child workflow. Manual CI bypasses changed scoping and selects the normal test graph for the release candidate: Linux Node shards, bundled-plugin shards, plugin and channel contract shards, Node 22 compatibility, `check-*`, `check-additional-*`, built-artifact smoke checks, docs checks, Python skills, Windows, macOS, and Control UI i18n. Under `npm-beta-v1`, the umbrella passes `release_scope=npm-beta` and `include_android=false`: native Swift/OpenClawKit, iOS, Android, and native i18n CI lanes are deferred; macOS and Windows Node checks remain. Other Full Release Validation runs use full CI with Android. Standalone manual CI defaults to full coverage and requires `include_android=true` for Android.
+The Vitest box is the manual `CI` child workflow. Manual CI bypasses changed scoping and selects the normal test graph for the release candidate: Linux Node shards, bundled-plugin shards, plugin and channel contract shards, Node 24 minimum compatibility, `check-*`, `check-additional-*`, built-artifact smoke checks, docs checks, Python skills, Windows, macOS, and Control UI i18n. Under `npm-beta-v1`, the umbrella passes `release_scope=npm-beta` and `include_android=false`: native Swift/OpenClawKit, iOS, Android, and native i18n CI lanes are deferred; macOS and Windows Node checks remain. Other Full Release Validation runs use full CI with Android. Standalone manual CI defaults to full coverage and requires `include_android=true` for Android.
 
 Use this box to answer "did the source tree pass the selected CI suite?" It is separate from release-path product validation. Evidence to keep:
 
@@ -234,6 +236,4 @@ For package-candidate Telegram proof, enable `telegram_mode=mock-openai` or `tel
 
 ## Related
 
-- [Release policy](/reference/RELEASING)
 - [Release channels](/install/development-channels)
-- [Full release validation](/reference/full-release-validation)

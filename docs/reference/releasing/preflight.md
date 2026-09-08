@@ -9,10 +9,91 @@ read_when:
 
 ## Release preflight
 
+### Previous updater compatibility
+
+Before freezing the release, refresh `scripts/lib/update-compat-inventory.json`
+from every release in the supported upgrade window. The current window includes
+2026.9.1, 2026.9.2, and 2026.9.3. Download each npm tarball and verify it against
+its published `dist.integrity` before extracting it. Pass each verified artifact
+to the recorder with a repeatable `--release` argument:
+
+```bash
+pnpm update:compat:gen \
+  --release '<unpacked-2026.9.1-directory>=<verified-npm-dist.integrity>' \
+  --release '<unpacked-2026.9.2-directory>=<verified-npm-dist.integrity>' \
+  --release '<unpacked-2026.9.3-directory>=<verified-npm-dist.integrity>'
+```
+
+The recorder writes releases in version order and replaces the recorded set.
+Drop releases older than the supported upgrade window when regenerating it;
+the inventory must not accumulate indefinitely. A release with no post-swap
+imports still has an entry with an empty chunk list, so coverage is explicit.
+Conflicting origins for the same chunk export across releases fail generation.
+
+`pnpm update:compat:check` reads `npm view openclaw dist-tags --json` and requires
+the versions tagged `latest` and `beta` to be present, even when both tags refer
+to stable versions or the same version. A missing version fails with the exact
+`pnpm update:compat:gen` command to run after verifying and unpacking the listed
+artifacts. `pnpm release:prep`, version preparation, and prepared-release packing
+run this check. Ordinary PR checks and source packing do not query npm for it.
+To verify deterministic regeneration offline, run `pnpm update:compat:check`
+with the same `--release` arguments used for generation.
+
+The recorder scans emitted lazy imports in the updater, service, and CLI cleanup source
+regions and records required export origins. The wizard entry is excluded
+because it starts before replacement. `runtime-postbuild` generates hashed
+compatibility files by re-exporting the candidate's corresponding symbols;
+missing or ambiguous mappings fail the build. Stable entrypoints are checked
+without replacement. The package carries the inventory in
+`dist/update-compat-inventory.json`, so negative and future fixtures remove that
+candidate's bridges. Existing older compatibility aliases remain separately
+owned by their original upgrade contracts.
+
+The default `update-first-hop-compat` lane runs each recorded release against the
+candidate, with separate artifacts per version. It requires the installed build
+identity and a restarted service, including for same-version or lower-version
+explicit candidate tarballs. The 2026.9.1 negative control demonstrates the
+missing restart import; releases that already preload that helper record the
+negative control as not applicable while retaining the positive first-hop and
+bridge-free future-hop checks. An explicit source tarball still selects one
+baseline. Run the published upgrade survivor lane from the oldest supported
+release as well. Native Windows proof must invoke the old updater with
+a registered Scheduled Task and verify its restart without a subsequent manual
+`gateway start`. Import compatibility alone does not prove that old and new
+modules share process-local state.
+
+### Design proposal: immutable runtime generations
+
+A durable replacement would install each version in an immutable generation
+directory and switch an installation pointer. Launchers must resolve that
+pointer before starting Node so lazy imports keep the process's original tree.
+Retain generations until their processes have exited. This is a proposal, not
+the current update layout.
+
+The design must preserve npm's ownership and bookkeeping: `npm ls -g`, later
+global installs and uninstall, lifecycle scripts, and generated launchers must
+still work. Unix uses `<prefix>/lib/node_modules` and `<prefix>/bin`; Windows
+uses `<prefix>/node_modules` and prefix-root launchers. A mutable junction alone
+does not pin old imports, and Windows pointer replacement must respect open
+handles and junction semantics. npm must not replace or orphan the retained
+generation anchor during its next install.
+
+pnpm owns a global project, manifests, lockfiles, virtual-store links, and
+version-dependent package groups; its cleanup must not collect live generations.
+Bun also owns a shared global project and separate binary directory, and its
+Windows binary launchers currently cannot be relocated by this updater.
+Generation activation must preserve sibling packages and the existing
+concurrent-project checks for both managers. These constraints need separate
+design approval and package-manager integration proof before implementation.
+
+### Required checks
+
 - Run `pnpm check:test-types` before release preflight so test TypeScript stays covered outside the faster local `pnpm check` gate.
 - Run `pnpm check:architecture` before release preflight so the broader import cycle and architecture boundary checks are green outside the faster local gate.
 - Run `pnpm build && pnpm ui:build` before `pnpm release:check` so the expected `dist/*` release artifacts and Control UI bundle exist for the pack validation step.
 - Run `pnpm release:prep` after the root version bump and before tagging. It runs every deterministic release generator that commonly drifts after a version or config change: plugin versions, plugin inventory, base config schema, bundled channel config metadata, config docs baseline, plugin SDK exports, and Control UI locale bundles. It also blocks until native app translations and platform-generated locale resources match the source inventory; if they lag, wait for or dispatch `Native App Locale Refresh` before freezing the Code SHA. `pnpm release:check` re-runs those guards plus transient npm package-lock validation in check mode (including the strict locale gates plus the plugin SDK surface budget) and reports every failure in one pass before running package release checks. The npm preflight separately compares the exact release SHA with the prior published dist-tag and reports any Plugin SDK API changes.
+- For reviewed native translation repairs, configure the translation provider and run `pnpm native:i18n:sync --locale <code> --refresh-id <native-id>`. Find IDs in `apps/.i18n/native-source.json`; repeat the selector for up to 64 distinct IDs. Selected entries join ordinary pending work, including missing strings and glossary invalidation. Requests include bounded nearby owner code and instructions to preserve printf argument roles; excerpts are request-only and do not enter the source inventory. Unknown IDs fail before provider work, and selected refresh cannot be combined with `--force`. Then run `pnpm native:i18n:sync` to regenerate platform resources and `pnpm native:i18n:check` to validate them.
+- For reviewed Control UI translation repairs, run `pnpm ui:i18n:sync --locale <code> --refresh-key <key>`. Repeat the selector for up to 64 distinct catalog keys. It refreshes those keys alongside ordinary pending work while leaving still-valid unselected cached aliases reusable. A configured provider is required even when ordinary synchronization allows optional authentication; unknown keys and combining selected refresh with `--force` are rejected.
 - Plugin version sync updates the publishable `@openclaw/ai` runtime package, official plugin package versions, and existing `openclaw.compat.pluginApi` floors to the OpenClaw release version by default. Treat that field as the plugin SDK/runtime API floor, not just a copy of the package version: for plugin-only releases that intentionally remain compatible with older OpenClaw hosts, keep the floor at the oldest supported host API and document that choice in the plugin release proof.
 - Run the manual `Full Release Validation` workflow before release approval to select the pre-release test boxes from one entrypoint. It accepts a branch, tag, or full commit SHA and dispatches manual `CI`, plugin prerelease, and `OpenClaw Release Checks` for the selected profile. Canonical beta `all` without soak uses the bounded `npm-beta-v1` policy described in [Full release validation](/reference/full-release-validation); install, package, Linux cross-OS, QA parity, runtime-pair/restart, and tool-coverage gates remain; Windows/macOS cross-OS outcomes are advisory. Stable and full runs always include exhaustive live/E2E and Docker release-path soak; `run_release_soak=true` requests an explicit beta soak. Package Acceptance provides package Telegram E2E when selected, avoiding a second concurrent live poller for an unpublished candidate.
 
@@ -43,7 +124,7 @@ read_when:
   - `full`: Docker release-path chunks with OpenWebUI
   - `custom`: exact `docker_lanes` selection for a focused rerun
 
-- Run the manual `CI` workflow directly when you only need deterministic normal CI coverage for the release candidate. Manual CI dispatches bypass changed scoping and force the Linux Node shards, bundled-plugin shards, plugin and channel contract shards, Node 22 compatibility, `check-*`, `check-additional-*`, built-artifact smoke checks, docs checks, Python skills, Windows, macOS, and Control UI i18n lanes. Standalone manual CI defaults to full coverage and runs Android only with `include_android=true`. Full Release Validation includes Android except under `npm-beta-v1`, which selects `release_scope=npm-beta` and defers native app CI while retaining macOS and Windows Node checks.
+- Run the manual `CI` workflow directly when you only need deterministic normal CI coverage for the release candidate. Manual CI dispatches bypass changed scoping and force the Linux Node shards, bundled-plugin shards, plugin and channel contract shards, Node 24 minimum compatibility, `check-*`, `check-additional-*`, built-artifact smoke checks, docs checks, Python skills, Windows, macOS, and Control UI i18n lanes. Standalone manual CI defaults to full coverage and runs Android only with `include_android=true`. Full Release Validation includes Android except under `npm-beta-v1`, which selects `release_scope=npm-beta` and defers native app CI while retaining macOS and Windows Node checks.
 
   ```bash
   gh workflow run ci.yml --ref release/YYYY.M.PATCH -f include_android=true
@@ -54,11 +135,12 @@ read_when:
 - Run `pnpm qa:prometheus:smoke` when validating protected Prometheus scraping. It exercises QA-lab, rejects unauthenticated scrapes, and verifies release-critical metric families stay free of prompt content, raw identifiers, auth tokens, and local paths.
 - Run `pnpm qa:observability:smoke` for the source-checkout OpenTelemetry and Prometheus smoke lanes back to back.
 - Run `pnpm release:check` before every tagged release.
-- `OpenClaw NPM Preflight` packs the publishable tarball once, then generates dependency release evidence while qualifying those exact bytes. The npm advisory vulnerability gate is release-blocking. The transitive manifest risk, dependency ownership/install surface, and dependency change reports are release evidence only. The dependency change report compares the release candidate with the previous reachable release tag. The preflight uploads dependency evidence as `openclaw-release-dependency-evidence-<tag>` and also embeds it under `dependency-evidence/` inside the prepared npm preflight artifact. The real publish path reuses that preflight artifact, then attaches the same evidence to the GitHub release as `openclaw-<version>-dependency-evidence.zip`.
+- `OpenClaw NPM Preflight` packs the publishable tarball once, then generates dependency release evidence while qualifying those exact bytes. The npm advisory vulnerability gate is release-blocking. The transitive manifest risk, dependency ownership/install surface, dependency change, and npm package-lock mirror reports are release evidence only. The npm mirrors include the root package and every publishable workspace package with runtime dependencies or optional dependencies, generated and verified against the source checkout’s `pnpm-lock.yaml`. They are never included in npm tarballs. The dependency change report compares the release candidate with the previous reachable release tag. The preflight uploads dependency evidence as `openclaw-release-dependency-evidence-<tag>` and also embeds it under `dependency-evidence/` inside the prepared npm preflight artifact. The real publish path reuses that preflight artifact, then attaches the same evidence to the GitHub release as `openclaw-<version>-dependency-evidence.zip`.
+- **Downstream packagers:** Download `openclaw-<version>-dependency-evidence.zip` from the GitHub release and read `dependency-evidence/npm-package-locks.json` (`schemaVersion: 1`). Select the entry in `packages` matching the exact package `name` and `version` you pin. Every entry has an `omittedWorkspaceDependencies` array; a nonempty array marks a partial lock, and consumers must reject that entry instead of installing it. Sibling workspace packages publish in the same release, so the generator omits their `workspace:` runtime references at preflight. The top-level `packagesWithOmittedWorkspaceDependencies` counts these partial entries. Only for an entry with an empty omissions array, serialize `entry.lock` as `package-lock.json` (two-space JSON indentation plus a trailing newline reproduces `entry.lockSha256`). This supports offline installation of lockless packages such as `@openclaw/acpx`; the report includes a `bundleRuntimeDependencies` flag and direct dependency counts. Before using a lock, verify that `dependency-evidence/dependency-evidence-manifest.json`’s `releaseSha` equals the report’s `sourceSha` and the OpenClaw commit you pin. The report also records the source `pnpm-lock.yaml` SHA-256. The companion `npm-package-locks.md` provides counts and a package table. The locks encode this repository's `pnpm-workspace.yaml` overrides (for example a scoped `@openai/codex` pin for `codex-acp`), so nested dependency specs may not satisfy the locked versions by range alone: before running `npm ci`, either carry the same `overrides` in the consuming `package.json` or rewrite each entry's nested `dependencies`/`optionalDependencies` specs to the locked versions (nix-openclaw does the latter); a raw `npm ci` against an unmodified `package.json` otherwise fails its lock-sync check.
 - Run `OpenClaw Release Publish` for the mutating publish sequence after the tag exists. Dispatch regular beta and stable publishes from the protected `release-publish/<tooling-sha12>-<epoch>` tag at the frozen Tooling SHA; the release tag still selects the exact target commit and may point into `release/YYYY.M.PATCH`. Tideclaw alpha publishes remain on their matching alpha branch. Pass the successful OpenClaw npm `preflight_run_id`, successful `full_release_validation_run_id`, and exact `full_release_validation_run_attempt`, and keep the default plugin publish scope `all-publishable` unless you are deliberately running a focused repair. The workflow dispatches plugin npm and ClawHub together, then starts core npm once plugin npm succeeds. Core npm does not wait for ClawHub authorization or bootstrap; the exact ClawHub receipt remains a required parent step. When the tagged Android pin matches the stable release train, Android qualification runs independently and dispatch follows successful core npm publication; a mismatched pin records an explicit skip. Optional Windows promotion starts after GitHub finalization as a detached child. Android approval, build, and publication are monitored separately and do not hold core publication; the child can attach its verified assets after the GitHub release becomes public. Publish reruns are resumable: an already-published core npm version skips the core dispatch after the workflow proves the registry tarball matches the tag's preflight artifact, and Windows/Android promotion is skipped when the release already carries the verified asset contract, so a retry only redoes the failed stages. Focused plugin-only repairs require `plugin_publish_scope=selected` and a nonempty plugin list. Plugin-only `all-publishable` runs require complete immutable preflight and Full Release Validation evidence; partial evidence is rejected.
 - Stable `OpenClaw Release Publish` accepts optional `windows_node_tag` and `windows_node_installer_digests` inputs together. Omit both to skip Windows dispatch. When supplied, the parent finalizes the GitHub release on npm and Docker evidence, then dispatches `Windows Node Release` independently with the approved digest map unchanged. The child validates the exact published, non-prerelease source release, downloads the signed x64/ARM64 installers, matches the pinned digests, verifies the expected OpenClaw Foundation Authenticode signer on Windows, and attaches the installers plus SHA-256 manifest to the published OpenClaw release. It re-downloads the promoted assets to verify membership and hashes. Windows failures are reported in the child summary and evidence without failing the parent or reverting the public release to draft.
 
-  To attach Windows assets later or recover promotion, use the [manual recovery command](/reference/releasing/publish-automation) with exact target/source tags and the approved `expected_installer_digests` map. Recovery rejects unexpected `OpenClawCompanion-*` asset names before replacing the expected contract with the pinned source bytes. Website download links should target exact OpenClaw release asset URLs for the current stable release, or `releases/latest/download/...` only after verifying GitHub's latest redirect points at that same release; do not link only to the companion repo release page.
+  To attach Windows assets later or recover promotion, use the [manual recovery command](/reference/releasing/publish-automation#regular-release-publish-automation) with exact target/source tags and the approved `expected_installer_digests` map. Recovery rejects unexpected `OpenClawCompanion-*` asset names before replacing the expected contract with the pinned source bytes. Website download links should target exact OpenClaw release asset URLs for the current stable release, or `releases/latest/download/...` only after verifying GitHub's latest redirect points at that same release; do not link only to the companion repo release page.
 
 - Release checks run in a separate manual workflow: `OpenClaw Release Checks`. The `all`, `qa-parity`, and direct `qa` groups select QA Lab parity, runtime-pair/restart proof, and runtime tool coverage. The Matrix catalog and Telegram QA-live lanes run for stable/full all-group validation, soak-enabled all-group validation, or an explicit `qa`/`qa-live` rerun group. Bounded beta-publish `all` without soak defers those live lanes to postpublish-confidence. The live lanes use the `qa-live-shared` environment; Telegram also uses Convex CI credential leases.
 - Cross-OS install and upgrade runtime validation is part of public `OpenClaw Release Checks` and `Full Release Validation`, which call the reusable workflow `.github/workflows/openclaw-cross-os-release-checks-reusable.yml` directly. Linux cross-OS lanes gate publication. Windows and macOS lanes run alongside them as advisory coverage, with actual pass/fail conclusions retained in the manifest and summary; their failures do not block npm publication.
@@ -94,6 +176,4 @@ read_when:
 
 ## Related
 
-- [Release policy](/reference/RELEASING)
 - [Release channels](/install/development-channels)
-- [Full release validation](/reference/full-release-validation)

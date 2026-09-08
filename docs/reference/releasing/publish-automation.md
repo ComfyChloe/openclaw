@@ -253,6 +253,4 @@ SHA-256, and npm integrity. A mismatch requires a new package version.
 
 ## Related
 
-- [Release policy](/reference/RELEASING)
 - [Release channels](/install/development-channels)
-- [Full release validation](/reference/full-release-validation)

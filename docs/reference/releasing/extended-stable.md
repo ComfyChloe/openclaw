@@ -183,6 +183,4 @@ website, and private dist-tags; do not run those steps for this Gateway path.
 
 ## Related
 
-- [Release policy](/reference/RELEASING)
 - [Release channels](/install/development-channels)
-- [Full release validation](/reference/full-release-validation)

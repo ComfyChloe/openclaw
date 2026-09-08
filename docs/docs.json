@@ -1377,8 +1377,16 @@
                 "group": "Install overview",
                 "pages": [
                   "install/index",
-                  "install/installer",
-                  "install/node"
+                  "install/installer"
+                ]
+              },
+              {
+                "group": "Runtimes",
+                "pages": [
+                  "install/node",
+                  "install/node-compatibility",
+                  "install/bun",
+                  "install/bun-compatibility"
                 ]
               },
               {
@@ -1403,7 +1411,6 @@
                 "group": "Containers",
                 "pages": [
                   "install/ansible",
-                  "install/bun",
                   "install/docker",
                   "install/nix",
                   "install/podman"
@@ -1669,6 +1676,20 @@
                     "pages": [
                       "plugins/codex-computer-use",
                       "plugins/codex-harness",
+                      {
+                        "group": "Codex harness",
+                        "pages": [
+                          "plugins/codex-harness/placement",
+                          "plugins/codex-harness/routing",
+                          "plugins/codex-harness/configuration",
+                          "plugins/codex-harness/app-server",
+                          "plugins/codex-harness/config-fields",
+                          "plugins/codex-harness/commands",
+                          "plugins/codex-harness/runtime-behavior",
+                          "plugins/codex-harness/native-features",
+                          "plugins/codex-harness/troubleshooting"
+                        ]
+                      },
                       "plugins/codex-native-plugins",
                       "plugins/codex-supervision"
                     ]
@@ -1721,6 +1742,16 @@
                   "plugins/tool-plugins",
                   "plugins/sdk-channel-plugins",
                   "plugins/sdk-provider-plugins",
+                  {
+                    "group": "Provider plugins",
+                    "pages": [
+                      "plugins/sdk-provider-plugins/model-catalogs",
+                      "plugins/sdk-provider-plugins/hook-families",
+                      "plugins/sdk-provider-plugins/runtime-hooks",
+                      "plugins/sdk-provider-plugins/voice-and-audio",
+                      "plugins/sdk-provider-plugins/media-and-search"
+                    ]
+                  },
                   "plugins/cli-backend-plugins",
                   "plugins/hooks",
                   "plugins/plugin-permission-requests",
@@ -1745,6 +1776,19 @@
                 "pages": [
                   "automation/index",
                   "automation/cron-jobs",
+                  {
+                    "group": "Automations",
+                    "pages": [
+                      "automation/cron-jobs/how-it-works",
+                      "automation/cron-jobs/schedules",
+                      "automation/cron-jobs/payloads",
+                      "automation/cron-jobs/delivery",
+                      "automation/cron-jobs/managing-jobs",
+                      "automation/cron-jobs/webhooks",
+                      "automation/cron-jobs/gmail",
+                      "automation/cron-jobs/troubleshooting"
+                    ]
+                  },
                   "automation/imap",
                   "automation/tasks",
                   "automation/taskflow",
@@ -1784,6 +1828,19 @@
                     "group": "Tool catalogs and workflows",
                     "pages": [
                       "tools/code-mode",
+                      {
+                        "group": "Code Mode",
+                        "pages": [
+                          "tools/code-mode/quickstart",
+                          "tools/code-mode/configuration",
+                          "tools/code-mode/tool-surface",
+                          "tools/code-mode/guest-api",
+                          "tools/code-mode/output",
+                          "tools/code-mode/internals",
+                          "tools/code-mode/troubleshooting",
+                          "tools/code-mode/maintainers"
+                        ]
+                      },
                       "tools/llm-task",
                       "tools/lobster",
                       "tools/mcp",
@@ -1942,6 +1999,19 @@
                       "providers/nvidia",
                       "providers/ollama-cloud",
                       "providers/openai",
+                      {
+                        "group": "OpenAI",
+                        "pages": [
+                          "providers/openai/setup",
+                          "providers/openai/models",
+                          "providers/openai/runtimes",
+                          "providers/openai/coverage-and-cost",
+                          "providers/openai/image-and-video",
+                          "providers/openai/voice-and-speech",
+                          "providers/openai/azure",
+                          "providers/openai/advanced"
+                        ]
+                      },
                       "providers/opencode",
                       "providers/opencode-go",
                       "providers/perplexity-provider",
@@ -2075,6 +2145,19 @@
                       "gateway/configuration",
                       "gateway/configuration-reference",
                       "gateway/config-agents",
+                      {
+                        "group": "Agents",
+                        "pages": [
+                          "gateway/config-agents/workspace-and-bootstrap",
+                          "gateway/config-agents/models",
+                          "gateway/config-agents/runtime-and-cli-backends",
+                          "gateway/config-agents/heartbeat-compaction-and-streaming",
+                          "gateway/config-agents/sandbox",
+                          "gateway/config-agents/entries-and-multi-agent",
+                          "gateway/config-agents/sessions",
+                          "gateway/config-agents/messages-and-talk"
+                        ]
+                      },
                       "gateway/config-automation",
                       "gateway/config-browser-ui-desktop",
                       "gateway/config-channels",
@@ -2106,6 +2189,18 @@
                       "gateway/health",
                       "gateway/heartbeat",
                       "gateway/doctor",
+                      {
+                        "group": "Doctor",
+                        "pages": [
+                          "gateway/doctor/running",
+                          "gateway/doctor/checks",
+                          "gateway/doctor/config-migrations",
+                          "gateway/doctor/provider-repairs",
+                          "gateway/doctor/state-and-sessions",
+                          "gateway/doctor/gateway-and-services",
+                          "gateway/doctor/workspace-and-dreams"
+                        ]
+                      },
                       "gateway/audit",
                       "gateway/telemetry",
                       "logging",
@@ -2132,11 +2227,21 @@
                     "group": "Security and sandboxing",
                     "pages": [
                       "gateway/security/index",
+                      "gateway/security/trust-model",
+                      "gateway/security/running-the-audit",
+                      "gateway/security/audit-checks",
+                      "gateway/security/hardened-baseline",
+                      "gateway/security/access-control",
+                      "gateway/security/prompt-injection",
+                      "gateway/security/tool-permissions",
+                      "gateway/security/browser-control",
+                      "gateway/security/network-exposure",
+                      "gateway/security/secrets-and-storage",
                       "gateway/security/exposure-runbook",
+                      "gateway/security/rate-limiting",
+                      "gateway/security/operator-incident-response",
                       "gateway/security/secure-file-operations",
                       "gateway/security/dependency-locking",
-                      "gateway/security/audit-checks",
-                      "gateway/security/rate-limiting",
                       "gateway/operator-scopes",
                       "gateway/sandboxing",
                       "gateway/openshell",
@@ -2433,6 +2538,19 @@
                   "plugins/sdk-subpaths",
                   "plugins/sdk-entrypoints",
                   "plugins/sdk-runtime",
+                  {
+                    "group": "Plugin runtime helpers",
+                    "pages": [
+                      "plugins/sdk-runtime/config-and-utilities",
+                      "plugins/sdk-runtime/agent",
+                      "plugins/sdk-runtime/models",
+                      "plugins/sdk-runtime/background-work",
+                      "plugins/sdk-runtime/gateway-and-nodes",
+                      "plugins/sdk-runtime/media",
+                      "plugins/sdk-runtime/state-and-system",
+                      "plugins/sdk-runtime/channel"
+                    ]
+                  },
                   "plugins/sdk-agent-harness",
                   "plugins/sdk-setup",
                   "plugins/sdk-testing"
@@ -2521,6 +2639,7 @@
                 "group": "Release notes",
                 "pages": [
                   "releases/index",
+                  "releases/2026.9.3",
                   "releases/2026.9.2",
                   "releases/2026.9.1",
                   "releases/2026.8.2",
@@ -2562,6 +2681,17 @@
                 "group": "Testing and CI",
                 "pages": [
                   "reference/test",
+                  {
+                    "group": "Tests",
+                    "pages": [
+                      "reference/test/local",
+                      "reference/test/lanes",
+                      "reference/test/docker",
+                      "reference/test/performance",
+                      "reference/test/runner-internals",
+                      "reference/test/remote-proof"
+                    ]
+                  },
                   "ci",
                   {
                     "group": "CI",
@@ -2607,6 +2737,17 @@
                 "group": "Testing",
                 "pages": [
                   "help/testing",
+                  {
+                    "group": "Testing guide",
+                    "pages": [
+                      "help/testing/suites",
+                      "help/testing/live-workflows",
+                      "help/testing/docker",
+                      "help/testing/qa-runners",
+                      "help/testing/contracts",
+                      "help/testing/writing-tests"
+                    ]
+                  },
                   "help/testing-updates-plugins",
                   "help/testing-live"
                 ]

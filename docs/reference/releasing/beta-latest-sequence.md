@@ -8,7 +8,7 @@ read_when:
 
 ## Regular beta/latest stable release sequence
 
-This legacy sequence is for the regular orchestrated release that also owns plugins, GitHub Release, Windows, and other platform work. It is not the monthly `.33+` Gateway extended-stable path documented in [Extended-stable monthly release](/reference/releasing/extended-stable).
+This legacy sequence is for the regular orchestrated release that also owns plugins, GitHub Release, Windows, and other platform work. It is not the monthly `.33+` Gateway extended-stable path documented at the top of this page.
 
 When cutting a regular orchestrated stable release:
 
@@ -27,6 +27,4 @@ If a maintainer must fall back to local npm authentication, run any 1Password CL
 
 ## Related
 
-- [Release policy](/reference/RELEASING)
 - [Release channels](/install/development-channels)
-- [Full release validation](/reference/full-release-validation)
