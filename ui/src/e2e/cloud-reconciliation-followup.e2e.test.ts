@@ -155,7 +155,6 @@ suite.define(() => {
           messages: [
             { role: "assistant", content: "Cloud edits are ready to apply." },
             pendingInput.message,
-            { role: "assistant", content: "The queued follow-up started automatically." },
           ],
           pendingInputs: { items: [], total: 0 },
           sessionId: active.sessionId,
