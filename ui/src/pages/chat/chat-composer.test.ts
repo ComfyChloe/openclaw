@@ -152,7 +152,11 @@ describe("renderChatComposer controls", () => {
     document.body.append(container);
     const composerProps = props({
       gatewayClient: {
-        request: vi.fn(async () => ({ transcription: { ready: true } })),
+        request: vi.fn(async (method: string) =>
+          method === "dictation.catalog"
+            ? { ready: true, providers: [] }
+            : { realtime: { ready: true, providers: [] } },
+        ),
       } as unknown as GatewayBrowserClient,
       onToggleRealtimeTalk: vi.fn(),
     });
@@ -479,8 +483,10 @@ describe("renderChatComposer controls", () => {
       if (method === "talk.catalog") {
         return {
           realtime: { ready: false, providers: [] },
-          transcription: { ready: false, providers: [] },
         };
+      }
+      if (method === "dictation.catalog") {
+        return { ready: false, providers: [] };
       }
       throw new Error(`unexpected request: ${method}`);
     });
@@ -561,8 +567,10 @@ describe("renderChatComposer controls", () => {
         if (method === "talk.catalog") {
           return {
             realtime: { ready: realtimeReady, providers: [] },
-            transcription: { ready: transcriptionReady, providers: [] },
           };
+        }
+        if (method === "dictation.catalog") {
+          return { ready: transcriptionReady, providers: [] };
         }
         throw new Error(`unexpected request: ${method}`);
       });
@@ -774,13 +782,49 @@ describe("renderChatComposer controls", () => {
     ).not.toBeNull();
   });
 
+  it("preserves click-to-Talk when the click-to-dictate preference is omitted", async () => {
+    discoverRealtimeTalkInputsMock.mockResolvedValue({ devices: [], issue: "none-found" });
+    const request = vi.fn(async (method: string) => {
+      if (method === "talk.catalog") {
+        return { realtime: { ready: true, providers: [] } };
+      }
+      if (method === "dictation.catalog") {
+        return { ready: true, providers: [] };
+      }
+      throw new Error(`unexpected request: ${method}`);
+    });
+    const onToggleRealtimeTalk = vi.fn();
+    const container = document.createElement("div");
+    document.body.append(container);
+    const composerProps = props({
+      composerClickToDictate: undefined,
+      gatewayClient: { request } as unknown as GatewayBrowserClient,
+      onToggleRealtimeTalk,
+    });
+    const draw = () => render(renderChatComposer(composerProps), container);
+    composerProps.onRequestUpdate = draw;
+    draw();
+
+    await vi.waitFor(() => expect(request).toHaveBeenCalledWith("talk.catalog", {}));
+    await vi.waitFor(() =>
+      expect(container.querySelector('[data-chat-talk-capability="realtime"]')).toBeNull(),
+    );
+    button(container, t("chat.composer.startVoiceInput")).click();
+
+    expect(onToggleRealtimeTalk).toHaveBeenCalledOnce();
+    expect(request).not.toHaveBeenCalledWith("talk.session.create", expect.anything());
+  });
+
   it("keeps the dictation button stable through hold progress and latch", async () => {
     vi.useFakeTimers();
     openMicrophoneMock.mockResolvedValue({ getTracks: () => [{ stop: vi.fn() }] });
     vi.stubGlobal("AudioContext", DictationAudioContext);
     const request = vi.fn(async (method: string) => {
       if (method === "talk.catalog") {
-        return { transcription: { ready: true } };
+        return { realtime: { ready: true, providers: [] } };
+      }
+      if (method === "dictation.catalog") {
+        return { ready: true, providers: [] };
       }
       if (method === "talk.session.create") {
         return {
@@ -848,7 +892,10 @@ describe("renderChatComposer controls", () => {
     discoverRealtimeTalkInputsMock.mockResolvedValue({ devices: [], issue: "none-found" });
     const request = vi.fn(async (method: string) => {
       if (method === "talk.catalog") {
-        return { realtime: { ready: true }, transcription: { ready: false } };
+        return { realtime: { ready: true, providers: [] } };
+      }
+      if (method === "dictation.catalog") {
+        return { ready: false, providers: [] };
       }
       throw new Error(`unexpected request: ${method}`);
     });
@@ -893,7 +940,10 @@ describe("renderChatComposer controls", () => {
     openMicrophoneMock.mockRejectedValue(new DOMException("blocked", "NotAllowedError"));
     const request = vi.fn(async (method: string) => {
       if (method === "talk.catalog") {
-        return { realtime: { ready: true }, transcription: { ready: true } };
+        return { realtime: { ready: true, providers: [] } };
+      }
+      if (method === "dictation.catalog") {
+        return { ready: true, providers: [] };
       }
       throw new Error(`unexpected request: ${method}`);
     });
