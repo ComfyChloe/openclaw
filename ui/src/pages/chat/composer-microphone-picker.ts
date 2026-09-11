@@ -1,4 +1,4 @@
-import type { TalkCatalogResult } from "@openclaw/gateway-protocol";
+import type { DictationCatalogResult, TalkCatalogResult } from "@openclaw/gateway-protocol";
 import type { GatewayBrowserClient } from "../../api/gateway.ts";
 import {
   discoverRealtimeTalkInputs,
@@ -160,25 +160,22 @@ export class ComposerMicrophonePicker {
     if (notify) {
       this.requestUpdate();
     }
-    void client
-      .request<TalkCatalogResult>("talk.catalog", {})
-      .then((catalog) => {
+    void Promise.allSettled([
+      client.request<TalkCatalogResult>("talk.catalog", {}),
+      client.request<DictationCatalogResult>("dictation.catalog", {}),
+    ])
+      .then(([talkResult, dictationResult]) => {
         if (request !== this.catalogRequest) {
           return;
         }
-        this.realtimeStatusValue = catalog.realtime?.ready === true ? "ready" : "unavailable";
-        this.dictationStatusValue = catalog.transcription?.ready === true ? "ready" : "unavailable";
-      })
-      .catch(() => {
-        if (request !== this.catalogRequest) {
-          return;
-        }
-        if (this.realtimeStatusValue === "checking") {
-          this.realtimeStatusValue = "unknown";
-        }
-        if (this.dictationStatusValue === "checking") {
-          this.dictationStatusValue = "unknown";
-        }
+        this.realtimeStatusValue =
+          talkResult.status === "fulfilled" && talkResult.value.realtime?.ready === true
+            ? "ready"
+            : "unavailable";
+        this.dictationStatusValue =
+          dictationResult.status === "fulfilled" && dictationResult.value.ready === true
+            ? "ready"
+            : "unavailable";
       })
       .finally(() => {
         if (request === this.catalogRequest) {

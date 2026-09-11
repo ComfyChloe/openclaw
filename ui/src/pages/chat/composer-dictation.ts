@@ -60,6 +60,7 @@ type ComposerDictationControllerOptions = {
   client: GatewayBrowserClient | null;
   connected: boolean;
   enabled: boolean;
+  holdToDictate?: boolean;
   dictationAvailable?: boolean;
   realtimeTalkActive: boolean;
   onCommit: (text: string, late?: true) => void;
@@ -437,7 +438,7 @@ export class ComposerDictationController {
   }
 
   startDirect(): boolean {
-    if (this.phase !== "idle" || !this.canHold()) {
+    if (this.phase !== "idle" || !this.canStart()) {
       return false;
     }
     // Surfaces without Talk do not need the hold discriminator. Enter the same
@@ -455,7 +456,7 @@ export class ComposerDictationController {
     if (this.phase === "stopping") {
       return;
     }
-    if ((this.phase !== "idle" && !this.canHold()) || (this.active && !options.connected)) {
+    if ((this.phase !== "idle" && !this.canStart()) || (this.active && !options.connected)) {
       const keepFinal = this.active && !options.connected;
       const preservesText = keepFinal ? (this.session?.markGatewayDisconnected() ?? false) : false;
       void this.stop({ commit: keepFinal });
@@ -601,6 +602,10 @@ export class ComposerDictationController {
   };
 
   private canHold(): boolean {
+    return this.canStart() && this.options.holdToDictate !== false;
+  }
+
+  private canStart(): boolean {
     return (
       this.options.enabled &&
       this.options.connected &&
@@ -611,7 +616,7 @@ export class ComposerDictationController {
 
   private async start(): Promise<void> {
     const client = this.options.client;
-    if (this.phase !== "holding" || !client || !this.canHold()) {
+    if (this.phase !== "holding" || !client || !this.canStart()) {
       await this.stop({ commit: false });
       return;
     }

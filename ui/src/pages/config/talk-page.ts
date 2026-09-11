@@ -2,7 +2,8 @@ import { consume } from "@lit/context";
 // Controller for the curated Talk settings page. Owns the talk.catalog read
 // that feeds the provider/model/voice pickers; all writes go through the shared
 // config form draft so the embedded schema editor below stays in sync.
-import type { TalkCatalogResult } from "@openclaw/gateway-protocol";
+import type { DictationCatalogResult, TalkCatalogResult } from "@openclaw/gateway-protocol";
+import { asOptionalRecord } from "@openclaw/normalization-core/record-coerce";
 import { html, type TemplateResult } from "lit";
 import { property, state } from "lit/decorators.js";
 import { applicationContext, type ApplicationContext } from "../../app/context.ts";
@@ -19,9 +20,14 @@ import {
 import {
   effectiveTalkValues,
   renderTalk,
+  dictationProviderConfigKeys,
+  selectedDictationProviderOption,
   selectedTalkProviderOption,
   talkProviderConfigKeys,
   type TalkCatalogState,
+  type DictationCatalogState,
+  type DictationSelection,
+  type DictationProviderOption,
   type TalkRealtimeProviderOption,
 } from "./talk.ts";
 
@@ -78,6 +84,50 @@ function toProviderOption(
     transports: provider.transports ?? [],
     defaultModel: provider.defaultModel ?? null,
   };
+}
+
+function toDictationProviderOption(
+  provider: DictationCatalogResult["providers"][number],
+): DictationProviderOption {
+  return {
+    id: provider.id,
+    label: provider.label,
+    configured: provider.configured,
+    aliases: provider.aliases ?? [],
+    models: provider.models ?? [],
+    defaultModel: provider.defaultModel ?? null,
+  };
+}
+
+function resolveDictationSelection(configObject: Record<string, unknown>): DictationSelection {
+  const dictation = asOptionalRecord(configObject.dictation) ?? {};
+  const rawProviders = asOptionalRecord(dictation.providers);
+  const providerEntries: Record<string, { endpoint?: string; model?: string }> = {};
+  if (rawProviders) {
+    for (const [providerId, rawEntry] of Object.entries(rawProviders)) {
+      const entry = asOptionalRecord(rawEntry);
+      if (!entry) {
+        continue;
+      }
+      providerEntries[providerId] = {
+        ...(typeof entry.endpoint === "string" ? { endpoint: entry.endpoint } : {}),
+        ...(typeof entry.model === "string" ? { model: entry.model } : {}),
+      };
+    }
+  }
+  const provider = typeof dictation.provider === "string" ? dictation.provider : null;
+  let model = typeof dictation.model === "string" ? dictation.model : null;
+  let endpoint: string | null = null;
+  const selectedEntry = provider
+    ? providerEntries[provider]
+    : Object.keys(providerEntries).length === 1
+      ? Object.values(providerEntries)[0]
+      : undefined;
+  if (selectedEntry) {
+    model ??= selectedEntry.model ?? null;
+    endpoint ??= selectedEntry.endpoint ?? null;
+  }
+  return { provider, model, endpoint, providerEntries };
 }
 
 /** Transports whose sessions are client-owned (`talk.client.create`). */
@@ -312,6 +362,7 @@ class TalkSettingsPage extends OpenClawLightDomElement {
   @property({ attribute: false }) buildEditor: TalkPageProps["buildEditor"] = () => html``;
 
   @state() private catalog: TalkCatalogState = { kind: "unavailable" };
+  @state() private dictationCatalog: DictationCatalogState = { kind: "unavailable" };
   @state() private modelDefaultResetIntent: ModelDefaultResetIntent | null = null;
 
   private connection: CatalogConnection | null = null;
@@ -387,13 +438,20 @@ class TalkSettingsPage extends OpenClawLightDomElement {
     ) {
       return;
     }
-    const connection: CatalogConnection = { gatewayUrl, client, connected, voiceWake };
+    const connection: CatalogConnection = {
+      gatewayUrl,
+      client,
+      connected,
+      voiceWake,
+    };
     this.connection = connection;
     if (!client || !connected) {
       this.catalog = { kind: "unavailable" };
+      this.dictationCatalog = { kind: "unavailable" };
       return;
     }
     this.catalog = { kind: "loading" };
+    this.dictationCatalog = { kind: "loading" };
     void this.loadCatalog(client, connection);
   }
 
@@ -403,20 +461,36 @@ class TalkSettingsPage extends OpenClawLightDomElement {
     // slow older response would overwrite a fresher one.
     const requestId = ++this.catalogRequestId;
     try {
-      const result = await client.request<TalkCatalogResult>("talk.catalog", {});
-      const applied = this.applyCatalog(connection, requestId, {
-        kind: "ready",
-        ready: result.realtime.ready === true,
-        activeProvider: result.realtime.activeProvider ?? null,
-        providers: result.realtime.providers.map(toProviderOption),
-      });
-      if (applied) {
-        this.acknowledgeModelDefaultReset(connection);
+      const [talkResult, dictationResult] = await Promise.allSettled([
+        client.request<TalkCatalogResult>("talk.catalog", {}),
+        client.request<DictationCatalogResult>("dictation.catalog", {}),
+      ]);
+      if (talkResult.status === "fulfilled") {
+        const applied = this.applyCatalog(connection, requestId, {
+          kind: "ready",
+          ready: talkResult.value.realtime.ready === true,
+          activeProvider: talkResult.value.realtime.activeProvider ?? null,
+          providers: talkResult.value.realtime.providers.map(toProviderOption),
+        });
+        if (applied) {
+          this.acknowledgeModelDefaultReset(connection);
+        }
+      } else {
+        this.applyCatalog(connection, requestId, { kind: "unavailable" });
+      }
+      if (dictationResult.status === "fulfilled") {
+        this.applyDictationCatalog(connection, requestId, {
+          kind: "ready",
+          ready: dictationResult.value.ready === true,
+          activeProvider: dictationResult.value.activeProvider ?? null,
+          providers: dictationResult.value.providers.map(toDictationProviderOption),
+        });
+      } else {
+        this.applyDictationCatalog(connection, requestId, { kind: "unavailable" });
       }
     } catch {
-      // The catalog only powers the pickers; the page still renders the raw
-      // configured values when it cannot be read.
       this.applyCatalog(connection, requestId, { kind: "unavailable" });
+      this.applyDictationCatalog(connection, requestId, { kind: "unavailable" });
     }
   }
 
@@ -433,6 +507,22 @@ class TalkSettingsPage extends OpenClawLightDomElement {
       return false;
     }
     this.catalog = catalog;
+    return true;
+  }
+
+  private applyDictationCatalog(
+    connection: CatalogConnection,
+    requestId: number,
+    catalog: DictationCatalogState,
+  ): boolean {
+    if (
+      !this.isConnected ||
+      this.connection !== connection ||
+      this.catalogRequestId !== requestId
+    ) {
+      return false;
+    }
+    this.dictationCatalog = catalog;
     return true;
   }
 
@@ -548,9 +638,97 @@ class TalkSettingsPage extends OpenClawLightDomElement {
    */
   private liveSelection() {
     const form = this.context.runtimeConfig.state.configForm;
-    const configObject =
-      form && typeof form === "object" ? (form as Record<string, unknown>) : this.configObject;
+    const configObject = asOptionalRecord(form) ?? this.configObject;
     return resolveTalkRealtimeSelection(configObject);
+  }
+
+  private liveDictationSelection(): DictationSelection {
+    const form = this.context.runtimeConfig.state.configForm;
+    const configObject = asOptionalRecord(form) ?? this.configObject;
+    return resolveDictationSelection(configObject);
+  }
+
+  private changeDictationProvider(providerId: string | null) {
+    if (this.mutationDisabled) {
+      return;
+    }
+    const runtimeConfig = this.context.runtimeConfig;
+    const selection = this.liveDictationSelection();
+    const option =
+      providerId && this.dictationCatalog.kind === "ready"
+        ? this.dictationCatalog.providers.find(
+            (entry) => entry.id === providerId || entry.aliases.includes(providerId),
+          )
+        : undefined;
+    const configuredKey =
+      providerId &&
+      Object.keys(selection.providerEntries).find(
+        (key) =>
+          key === providerId ||
+          option?.aliases.includes(key) === true ||
+          key.toLowerCase() === providerId.toLowerCase(),
+      );
+    const nextProvider = configuredKey ?? providerId;
+    runtimeConfig.removeFormValue(["dictation", "model"]);
+    if (providerId === null) {
+      if (Object.keys(selection.providerEntries).length <= 1) {
+        runtimeConfig.removeFormValue(["dictation", "provider"]);
+      }
+    } else {
+      runtimeConfig.patchForm(["dictation", "provider"], nextProvider);
+      if (!configuredKey && Object.keys(selection.providerEntries).length > 0) {
+        runtimeConfig.patchForm(["dictation", "providers", providerId], {});
+      }
+    }
+  }
+
+  private changeDictationModel(model: string | null) {
+    if (this.mutationDisabled) {
+      return;
+    }
+    if (model === null) {
+      this.context.runtimeConfig.removeFormValue(["dictation", "model"]);
+      // Reset to Default must also clear the selected provider's own model
+      // override: otherwise both the renderer and the Gateway keep using
+      // dictation.providers.<id>.model and the reset silently does nothing.
+      // Only the selected provider's entry is cleared; every other provider
+      // keeps its stored model (mirrors the endpoint reset below).
+      const selection = this.liveDictationSelection();
+      const option = selectedDictationProviderOption(this.dictationCatalog, selection);
+      const providerId =
+        dictationProviderConfigKeys(selection, option)[0] ?? selection.provider ?? option?.id;
+      if (providerId) {
+        this.context.runtimeConfig.removeFormValue(["dictation", "providers", providerId, "model"]);
+      }
+    } else {
+      this.context.runtimeConfig.patchForm(["dictation", "model"], model);
+    }
+  }
+
+  private changeDictationEndpoint(endpoint: string | null) {
+    if (this.mutationDisabled) {
+      return;
+    }
+    const selection = this.liveDictationSelection();
+    const option = selectedDictationProviderOption(this.dictationCatalog, selection);
+    const providerId =
+      dictationProviderConfigKeys(selection, option)[0] ?? selection.provider ?? option?.id;
+    if (!providerId) {
+      return;
+    }
+    if (endpoint === null) {
+      this.context.runtimeConfig.removeFormValue([
+        "dictation",
+        "providers",
+        providerId,
+        "endpoint",
+      ]);
+    } else {
+      this.context.runtimeConfig.patchForm(
+        ["dictation", "providers", providerId, "endpoint"],
+        endpoint,
+      );
+    }
   }
 
   /**
@@ -627,6 +805,8 @@ class TalkSettingsPage extends OpenClawLightDomElement {
       },
       selection: resolveTalkRealtimeSelection(this.configObject),
       catalog: this.catalog,
+      dictationSelection: resolveDictationSelection(this.configObject),
+      dictationCatalog: this.dictationCatalog,
       modelDefaultPending: this.modelDefaultResetIntent !== null,
       configBusy:
         this.mutationDisabled ||
@@ -636,6 +816,9 @@ class TalkSettingsPage extends OpenClawLightDomElement {
       onProviderChange: (providerId) => this.changeProvider(providerId),
       onModelChange: (model) => this.changeModel(model),
       onVoiceChange: (voice) => this.changeVoice(voice),
+      onDictationProviderChange: (providerId) => this.changeDictationProvider(providerId),
+      onDictationModelChange: (model) => this.changeDictationModel(model),
+      onDictationEndpointChange: (endpoint) => this.changeDictationEndpoint(endpoint),
       editor: this.buildEditor(),
     });
   }
