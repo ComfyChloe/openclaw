@@ -67,6 +67,17 @@ function isAbortError(error: unknown): boolean {
   return error instanceof DOMException && error.name === "AbortError";
 }
 
+export function composeDictationRecoveryMessage(
+  message: string,
+  failure: { kind: "interrupted" | "start"; preservesText: boolean },
+): string {
+  const recovery =
+    failure.kind === "interrupted" && failure.preservesText
+      ? t("chat.composer.dictationInterruptedRecovery")
+      : t("chat.composer.dictationStartRecovery");
+  return `${message} ${recovery}`;
+}
+
 export class ComposerDictationSession {
   private readonly input = new RealtimeTalkInputController((detail) => this.reportFailure(detail));
   private context: AudioContext | null = null;
@@ -116,7 +127,6 @@ export class ComposerDictationSession {
     this.inputMeter = new RealtimeTalkMediaStreamMeter(this.callbacks.onLevel);
     this.inputMeter.start(media, this.context);
     this.inputPump.start(media, this.context, (samples) => this.appendAudio(samples));
-    this.callbacks.onReady();
 
     const result = await this.client.request<DictationSessionResult>("talk.session.create", {
       mode: "transcription",
@@ -125,6 +135,11 @@ export class ComposerDictationSession {
     });
     this.sessionId = result.sessionId;
     this.transcriptionSessionId = result.transcriptionSessionId ?? result.sessionId;
+    if (this.pendingReadySessionId === this.transcriptionSessionId) {
+      // The relay can confirm readiness before the create response lands.
+      this.pendingReadySessionId = null;
+      this.confirmReady();
+    }
     if (
       result.audio?.inputEncoding !== DICTATION_ENCODING ||
       result.audio.inputSampleRateHz !== DICTATION_SAMPLE_RATE_HZ
@@ -228,6 +243,17 @@ export class ComposerDictationSession {
 
   private handleEvent(frame: GatewayEventFrame): void {
     const payload = eventPayload(frame);
+    if (payload?.type === "ready" && !this.readyConfirmed) {
+      if (this.transcriptionSessionId === null) {
+        // The relay can confirm readiness before the create response lands.
+        this.pendingReadySessionId = payload.transcriptionSessionId;
+        return;
+      }
+      if (payload.transcriptionSessionId === this.transcriptionSessionId) {
+        this.confirmReady();
+      }
+      return;
+    }
     if (
       !payload ||
       payload.transcriptionSessionId !== this.transcriptionSessionId ||
@@ -236,6 +262,7 @@ export class ComposerDictationSession {
       return;
     }
     if (payload.type === "transcript" && typeof payload.text === "string") {
+      this.confirmReady();
       const text = payload.text.trim();
       if (payload.final !== true) {
         this.currentPartial = text;
@@ -250,6 +277,7 @@ export class ComposerDictationSession {
       return;
     }
     if (payload.type === "partial" && typeof payload.text === "string") {
+      this.confirmReady();
       this.currentPartial = payload.text.trim();
       this.callbacks.onTranscriptChange();
       return;
@@ -266,6 +294,17 @@ export class ComposerDictationSession {
     if (payload.type === "close" && payload.reason === "error") {
       this.reportFailure(t("chat.composer.dictationDisconnected"));
     }
+  }
+
+  private readyConfirmed = false;
+  private pendingReadySessionId: unknown = null;
+
+  private confirmReady(): void {
+    if (this.readyConfirmed) {
+      return;
+    }
+    this.readyConfirmed = true;
+    this.callbacks.onReady();
   }
 
   private reportFailure(message: string): void {

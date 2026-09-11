@@ -15,7 +15,14 @@
 //        { "type": "final",   "text": "hello world" }
 //        { "type": "error",   "message": "..." }
 //
-//   optional control messages (server -> client) for cooperative shutdown:
+//   optional control messages (client -> server):
+//
+//        { "type": "config", "encoding": "pcm16", "sample_rate": 16000 }
+//                              // sent once on open; servers that answer it
+//                              // reply with `ready` after warming up
+//        { "type": "commit" }  // emitted on turn end to flush the transcript
+//
+//   optional control messages (server -> client):
 //
 //        { "type": "ready" }   // emitted once the server has loaded its model
 //
@@ -86,6 +93,8 @@ const OPENAI_COMPATIBLE_STT_CLOSE_TIMEOUT_MS = 5_000;
 const OPENAI_COMPATIBLE_STT_MAX_RECONNECT_ATTEMPTS = 5;
 const OPENAI_COMPATIBLE_STT_RECONNECT_DELAY_MS = 1_000;
 const OPENAI_COMPATIBLE_STT_MAX_QUEUED_BYTES = 2 * 1024 * 1024;
+/** Falls back to ready when a server never answers the open-time config message. */
+const OPENAI_COMPATIBLE_STT_READY_FALLBACK_MS = 5_000;
 const OPENAI_COMPATIBLE_STT_MAX_RETAINED_TRANSCRIPT_BYTES = 256 * 1024;
 const RELAY_AUDIO_SAMPLE_RATE_HZ = 8000;
 
@@ -263,6 +272,16 @@ function createOpenAiCompatibleRealtimeTranscriptionSession(
   let finalizedTranscript = "";
   let pendingPartial = "";
   let commitSent = false;
+  let configSent = false;
+  let readyFallbackTimer: ReturnType<typeof setTimeout> | undefined;
+
+  const sendSessionConfig = (transport: RealtimeTranscriptionWebSocketTransport): void => {
+    if (configSent) {
+      return;
+    }
+    configSent = true;
+    transport.sendJson({ type: "config", encoding: "pcm16", sample_rate: config.sampleRate });
+  };
   const relayAudio = createRelayAudioConverter(config.sampleRate);
 
   const collapseWhitespace = (value: string) => value.replace(/\s+/g, " ").trim();
@@ -312,6 +331,7 @@ function createOpenAiCompatibleRealtimeTranscriptionSession(
     switch (event.type) {
       case "ready":
       case "speech_start": {
+        transport.markReady();
         config.onSpeechStart?.();
         return;
       }
@@ -363,7 +383,20 @@ function createOpenAiCompatibleRealtimeTranscriptionSession(
     callbacks: config,
     url: () => buildEndpointUrl(config),
     headers,
-    readyOnOpen: true,
+    // Readiness follows the server's `ready` event (sent after its model
+    // loads) so the UI shows a connecting state instead of a premature
+    // "listening". The fallback covers servers that never answer the
+    // open-time config message.
+    readyOnOpen: false,
+    onOpen: (transport) => {
+      sendSessionConfig(transport);
+      readyFallbackTimer = setTimeout(() => {
+        if (!transport.isReady()) {
+          transport.markReady();
+        }
+      }, OPENAI_COMPATIBLE_STT_READY_FALLBACK_MS);
+      (readyFallbackTimer as { unref?: () => void }).unref?.();
+    },
     connectTimeoutMs: OPENAI_COMPATIBLE_STT_CONNECT_TIMEOUT_MS,
     closeTimeoutMs: OPENAI_COMPATIBLE_STT_CLOSE_TIMEOUT_MS,
     maxReconnectAttempts: OPENAI_COMPATIBLE_STT_MAX_RECONNECT_ATTEMPTS,
@@ -372,6 +405,10 @@ function createOpenAiCompatibleRealtimeTranscriptionSession(
     connectTimeoutMessage: "OpenAI-compatible STT connection timeout",
     parseMessage: (payload) => normalizeEvent(payload) ?? { type: "unknown" },
     sendAudio: (audio, transport) => {
+      // The SDK helper queues audio until ready, so production traffic only
+      // reaches this hook after onOpen; the guard keeps direct senders (and
+      // tests) ordered.
+      sendSessionConfig(transport);
       transport.sendBinary(relayAudio.convert(audio));
     },
     onMessage: (event, transport) => {
@@ -380,6 +417,12 @@ function createOpenAiCompatibleRealtimeTranscriptionSession(
       }
     },
     onClose: (transport) => {
+      // Audio-less sessions (open -> commit) still negotiate framing first.
+      sendSessionConfig(transport);
+      if (readyFallbackTimer) {
+        clearTimeout(readyFallbackTimer);
+        readyFallbackTimer = undefined;
+      }
       // Flush the resampler tail so the commit's audio domain is complete,
       // then ask the server to emit its final transcript. Do not flush a
       // partial locally: doing so duplicates the partial when the server

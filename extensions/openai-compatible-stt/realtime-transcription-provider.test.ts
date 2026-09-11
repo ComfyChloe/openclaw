@@ -143,8 +143,9 @@ describe("openai-compatible-stt provider", () => {
     );
     const audio = Buffer.alloc(160, 0xff);
     session.sendAudio(audio);
-    // Sending audio never emits text frames.
-    expect(socket.sentText).toHaveLength(0);
+    // Sending audio never emits text frames beyond the open-time config
+    // message that negotiates the PCM framing.
+    expect(socket.sentText).toEqual([{ type: "config", encoding: "pcm16", sample_rate: 16000 }]);
     // The SDK streaming resampler holds back its right edge until more input
     // arrives (or the session flushes), so the exact sample count is asserted
     // after close rather than per frame.
@@ -262,7 +263,10 @@ describe("openai-compatible-stt provider", () => {
     expect(onTranscript).not.toHaveBeenCalled();
     expect(lastSocket().sentText).toContainEqual({ type: "commit" });
     session.close();
-    expect(lastSocket().sentText).toEqual([{ type: "commit" }]);
+    expect(lastSocket().sentText).toEqual([
+      { type: "config", encoding: "pcm16", sample_rate: 16000 },
+      { type: "commit" },
+    ]);
     lastSocket().emit({ type: "final", text: "in flight corrected" });
     expect(onTranscript).toHaveBeenCalledExactlyOnceWith("in flight corrected");
   });
@@ -351,7 +355,10 @@ describe("openai-compatible-stt provider", () => {
     const socket = lastSocket();
     session.sendAudio(Buffer.alloc(160, 0xff));
     session.close();
-    expect(socket.sentText).toEqual([{ type: "commit" }]);
+    expect(socket.sentText).toEqual([
+      { type: "config", encoding: "pcm16", sample_rate: 11025 },
+      { type: "commit" },
+    ]);
     // The flushed tail must land before the commit request.
     const lastBinary = socket.sentBinary.at(-1);
     expect(lastBinary).toBeInstanceOf(Buffer);

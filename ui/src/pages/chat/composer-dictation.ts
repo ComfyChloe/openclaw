@@ -50,6 +50,31 @@ export function insertComposerDictation(
   };
 }
 
+export function resolveComposerDictationInsertion(params: {
+  captured: { start: number; end: number; value: string } | null;
+  late: boolean | undefined;
+  target: HTMLTextAreaElement | null;
+  liveValue: string;
+  transcript: string;
+}): { value: string; caret: number } {
+  // Stop unlocks the draft. Preserve later edits by using the live caret only
+  // when a delayed final finds that the captured draft has changed.
+  const selection =
+    params.captured && (!params.late || params.captured.value === params.liveValue)
+      ? params.captured
+      : {
+          start: params.target?.selectionStart ?? params.liveValue.length,
+          end: params.target?.selectionEnd ?? params.liveValue.length,
+          value: params.liveValue,
+        };
+  return insertComposerDictation(
+    selection.value,
+    params.transcript,
+    selection.start,
+    selection.end,
+  );
+}
+
 export class ComposerDictationController {
   readonly inputLevel = new RealtimeTalkLevelSignal();
   private options: ComposerDictationControllerOptions;

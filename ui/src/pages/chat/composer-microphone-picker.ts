@@ -173,9 +173,13 @@ export class ComposerMicrophonePicker {
             ? "ready"
             : "unavailable";
         this.dictationStatusValue =
-          dictationResult.status === "fulfilled" && dictationResult.value.ready === true
-            ? "ready"
-            : "unavailable";
+          dictationResult.status === "fulfilled"
+            ? dictationResult.value.ready === true
+              ? "ready"
+              : "unavailable"
+            : // A failed probe is inconclusive, not proof of absence: the next
+              // sync/focus retries instead of latching the mic shut.
+              "unknown";
       })
       .finally(() => {
         if (request === this.catalogRequest) {

@@ -12,7 +12,11 @@ import { isChatControlCommand, isModelIndependentChatCommand } from "../../../li
 import { updateHumanMentions } from "../../../lib/chat/human-mentions.ts";
 import { areUiSessionKeysEquivalent } from "../../../lib/sessions/session-key.ts";
 import { detectTextDirection } from "../../../lib/text-direction.ts";
-import { ComposerDictationController, insertComposerDictation } from "../composer-dictation.ts";
+import { composeDictationRecoveryMessage } from "../composer-dictation-session.ts";
+import {
+  ComposerDictationController,
+  resolveComposerDictationInsertion,
+} from "../composer-dictation.ts";
 import { normalizeChatComposerDraft } from "../composer-draft.ts";
 import { ComposerMicrophonePicker } from "../composer-microphone-picker.ts";
 import { isLargePastedTextAttachment } from "./chat-attachments.ts";
@@ -538,28 +542,17 @@ export function renderChatComposer(props: ChatComposerProps) {
       !props.suggestionComposer &&
       (props.composerHoldToRecord !== false || props.composerClickToDictate === true),
     holdToDictate: props.composerHoldToRecord !== false,
-    dictationAvailable: devicePicker.dictationStatus === "ready",
+    dictationAvailable: devicePicker.dictationStatus !== "unavailable",
     realtimeTalkActive: props.realtimeTalkActive === true,
     onCommit: (transcript: string, late?: true) => {
       const target = state.composerTextarea;
-      const captured = state.dictationSelection;
-      const liveValue = target?.value ?? props.getDraft?.() ?? props.draft;
-      // Stop unlocks the draft. Preserve later edits by using the live caret only
-      // when a delayed final finds that the captured draft has changed.
-      const selection =
-        captured && (!late || captured.value === liveValue)
-          ? captured
-          : {
-              start: target?.selectionStart ?? liveValue.length,
-              end: target?.selectionEnd ?? liveValue.length,
-              value: liveValue,
-            };
-      const insertion = insertComposerDictation(
-        selection.value,
+      const insertion = resolveComposerDictationInsertion({
+        captured: state.dictationSelection,
+        late,
+        target,
+        liveValue: target?.value ?? props.getDraft?.() ?? props.draft,
         transcript,
-        selection.start,
-        selection.end,
-      );
+      });
       if (target) {
         target.value = insertion.value;
         adjustTextareaHeight(target);
@@ -581,11 +574,7 @@ export function renderChatComposer(props: ChatComposerProps) {
       message: string,
       failure: { kind: "interrupted" | "start"; preservesText: boolean },
     ) => {
-      const recovery =
-        failure.kind === "interrupted" && failure.preservesText
-          ? t("chat.composer.dictationInterruptedRecovery")
-          : t("chat.composer.dictationStartRecovery");
-      state.dictationError = `${message} ${recovery}`;
+      state.dictationError = composeDictationRecoveryMessage(message, failure);
       requestUpdate();
     },
     onStateChange: () => {
