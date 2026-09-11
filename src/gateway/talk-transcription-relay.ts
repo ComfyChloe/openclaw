@@ -153,9 +153,20 @@ function assertRelayInputAudioConfig(providerConfig: RealtimeTranscriptionProvid
     );
   }
 
+  // `sampleRate` is provider-owned for generic transcription providers. The
+  // universal OpenAI-compatible adapter uses it for the server's PCM output
+  // rate, while the relay input remains fixed at 8 kHz μ-law. Only validate
+  // an explicit relay/input rate here; otherwise a valid provider config such
+  // as `{ sampleRate: 16000 }` would be rejected before the adapter can
+  // transcode the relay bytes.
   const sampleRate =
-    readFiniteNumber(providerConfig.sampleRate ?? providerConfig.sample_rate) ??
-    inferSampleRateFromAudioFormat(encodingValue);
+    readFiniteNumber(
+      providerConfig.relayInputSampleRate ??
+        providerConfig.inputSampleRate ??
+        providerConfig.input_sample_rate ??
+        providerConfig.sampleRate ??
+        providerConfig.sample_rate,
+    ) ?? inferSampleRateFromAudioFormat(encodingValue);
   if (sampleRate && sampleRate !== RELAY_INPUT_SAMPLE_RATE_HZ) {
     throw new Error(
       `Gateway transcription relay requires ${RELAY_INPUT_ENCODING}/${RELAY_INPUT_SAMPLE_RATE_HZ} audio`,
