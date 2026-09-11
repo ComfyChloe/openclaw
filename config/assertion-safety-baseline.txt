@@ -1,4 +1,4 @@
-# Per-file counts of production type assertions without a // SAFETY: invariant.
+﻿# Per-file counts of production type assertions without a // SAFETY: invariant.
 # Ratchet: counts may only shrink. New non-const assertions need a SAFETY comment.
 # Format: repo-relative path, tab, positive count. Zero-count files are omitted.
 extensions/acpx/src/codex-auth-bridge.ts	7
@@ -3843,7 +3843,7 @@ ui/src/pages/chat/components/session-diff-menus.ts	1
 ui/src/pages/chat/components/session-diff-panel.ts	2
 ui/src/pages/chat/components/widget-card.ts	3
 ui/src/pages/chat/components/widget-export.ts	1
-ui/src/pages/chat/composer-dictation.ts	2
+ui/src/pages/chat/composer-dictation.ts	1
 ui/src/pages/chat/connect-error.ts	1
 ui/src/pages/chat/critical-observer-notice.ts	1
 ui/src/pages/chat/export.ts	1

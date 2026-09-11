@@ -101,13 +101,16 @@ endpoint URL, it owns the worker process and points the
 }
 ```
 
-`talk.transcription` then references the bundled provider:
+`dictation` then references the bundled provider:
 
 ```json5
 {
-  talk: {
-    transcription: {
-      provider: "whisper-local",
+  dictation: {
+    provider: "openai-compatible-stt",
+    providers: {
+      "openai-compatible-stt": {
+        endpoint: "ws://127.0.0.1:8765/ws/transcribe",
+      },
     },
   },
 }
