@@ -176,7 +176,12 @@ export class ComposerMicrophonePicker {
           dictationResult.status === "fulfilled"
             ? dictationResult.value.ready === true
               ? "ready"
-              : "unavailable"
+              : dictationResult.value.ready === false
+                ? "unavailable"
+                : // A gateway that omits `ready` is inconclusive (mock gateways
+                  // answer unknown methods with { ok: true }); retry on the
+                  // next sync/focus instead of latching the mic shut.
+                  "unknown"
             : // A failed probe is inconclusive, not proof of absence: the next
               // sync/focus retries instead of latching the mic shut.
               "unknown";

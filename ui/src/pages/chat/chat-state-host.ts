@@ -76,10 +76,6 @@ export type ChatPageHost = ChatHost &
     chatModelSwitchPromises: Record<string, Promise<boolean>>;
     chatModelPickerOpenSessionKey?: string | null;
     chatModelCatalog: ModelCatalogEntry[];
-    /** True only after a model catalog response has been accepted for this scope. */
-    chatModelCatalogHasSnapshot?: boolean;
-    /** Last known friendly labels retained while a scope refresh is in flight. */
-    chatModelDisplayNames?: Readonly<Record<string, string>>;
     chatModelCatalogError: string | null;
     chatModelCatalogRefreshFailed?: boolean;
     chatAccountSelection?: ChatAccountSelection | null;

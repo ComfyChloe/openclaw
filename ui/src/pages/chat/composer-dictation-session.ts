@@ -16,10 +16,10 @@ import {
   RealtimeTalkInputController,
 } from "./realtime-talk-input.ts";
 
-export const FINAL_TRANSCRIPT_MAX_WAIT_MS = 10_000;
-export const DICTATION_ENCODING = "g711_ulaw";
-export const DICTATION_SAMPLE_RATE_HZ = 8000;
-export const MAX_PENDING_AUDIO_SAMPLES = DICTATION_SAMPLE_RATE_HZ * 10;
+const FINAL_TRANSCRIPT_MAX_WAIT_MS = 10_000;
+const DICTATION_ENCODING = "g711_ulaw";
+const DICTATION_SAMPLE_RATE_HZ = 8000;
+const MAX_PENDING_AUDIO_SAMPLES = DICTATION_SAMPLE_RATE_HZ * 10;
 
 // Transcription relay talk.event payload (src/gateway/talk-transcription-relay.ts):
 // the transcriptionSessionId envelope is the relay's emission shape, shared with the
@@ -53,6 +53,8 @@ function eventPayload(frame: GatewayEventFrame): DictationEvent | null {
   if (frame.event !== "talk.event" || !frame.payload || typeof frame.payload !== "object") {
     return null;
   }
+  // SAFETY: the relay only emits talk.event frames with object payloads; the
+  // cast narrows the envelope to the dictation fields read below.
   return frame.payload as DictationEvent;
 }
 
