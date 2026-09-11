@@ -127,9 +127,12 @@ describe("renderChatComposer controls", () => {
     const composerProps = props({
       gatewayClient: {
         request: vi.fn(async (method: string) =>
-          method === "dictation.catalog"
-            ? { ready: true, providers: [] }
-            : { realtime: { ready: true, providers: [] } },
+          method === "talk.catalog"
+            ? {
+                realtime: { ready: true, providers: [] },
+                transcription: { ready: true, providers: [] },
+              }
+            : {},
         ),
       } as unknown as GatewayBrowserClient,
       onToggleRealtimeTalk: vi.fn(),
@@ -541,10 +544,8 @@ describe("renderChatComposer controls", () => {
         if (method === "talk.catalog") {
           return {
             realtime: { ready: realtimeReady, providers: [] },
+            transcription: { ready: transcriptionReady, providers: [] },
           };
-        }
-        if (method === "dictation.catalog") {
-          return { ready: transcriptionReady, providers: [] };
         }
         throw new Error(`unexpected request: ${method}`);
       });
@@ -795,10 +796,10 @@ describe("renderChatComposer controls", () => {
     vi.stubGlobal("AudioContext", DictationAudioContext);
     const request = vi.fn(async (method: string) => {
       if (method === "talk.catalog") {
-        return { realtime: { ready: true, providers: [] } };
-      }
-      if (method === "dictation.catalog") {
-        return { ready: true, providers: [] };
+        return {
+          realtime: { ready: true, providers: [] },
+          transcription: { ready: true, providers: [] },
+        };
       }
       if (method === "talk.session.create") {
         return {
@@ -927,10 +928,10 @@ describe("renderChatComposer controls", () => {
     openMicrophoneMock.mockRejectedValue(new DOMException("blocked", "NotAllowedError"));
     const request = vi.fn(async (method: string) => {
       if (method === "talk.catalog") {
-        return { realtime: { ready: true, providers: [] } };
-      }
-      if (method === "dictation.catalog") {
-        return { ready: true, providers: [] };
+        return {
+          realtime: { ready: true, providers: [] },
+          transcription: { ready: true, providers: [] },
+        };
       }
       throw new Error(`unexpected request: ${method}`);
     });

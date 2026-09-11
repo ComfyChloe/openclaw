@@ -36,6 +36,13 @@ type DictationEvent = {
 type DictationSessionResult = {
   sessionId: string;
   transcriptionSessionId?: string;
+  /**
+   * Relays that defer readiness while their STT provider warms up send
+   * ready: false and confirm via the session.ready event (or the first
+   * partial). Absent means the peer has no readiness handshake - treat as
+   * ready immediately.
+   */
+  ready?: boolean;
   audio?: {
     inputEncoding?: unknown;
     inputSampleRateHz?: unknown;
@@ -139,6 +146,11 @@ export class ComposerDictationSession {
     if (this.pendingReadySessionId === this.transcriptionSessionId) {
       // The relay can confirm readiness before the create response lands.
       this.pendingReadySessionId = null;
+      this.confirmReady();
+    } else if (result.ready !== false) {
+      // Peers without a readiness handshake are ready with the response;
+      // relays that defer send ready: false and confirm via the
+      // session.ready event or the first partial.
       this.confirmReady();
     }
     if (

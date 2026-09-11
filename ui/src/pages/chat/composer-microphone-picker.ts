@@ -1,4 +1,4 @@
-import type { DictationCatalogResult, TalkCatalogResult } from "@openclaw/gateway-protocol";
+import type { TalkCatalogResult } from "@openclaw/gateway-protocol";
 import type { GatewayBrowserClient } from "../../api/gateway.ts";
 import {
   discoverRealtimeTalkInputs,
@@ -160,31 +160,25 @@ export class ComposerMicrophonePicker {
     if (notify) {
       this.requestUpdate();
     }
-    void Promise.allSettled([
-      client.request<TalkCatalogResult>("talk.catalog", {}),
-      client.request<DictationCatalogResult>("dictation.catalog", {}),
-    ])
-      .then(([talkResult, dictationResult]) => {
+    void client
+      .request<TalkCatalogResult>("talk.catalog", {})
+      .then((catalog) => {
         if (request !== this.catalogRequest) {
           return;
         }
-        this.realtimeStatusValue =
-          talkResult.status === "fulfilled" && talkResult.value.realtime?.ready === true
-            ? "ready"
-            : "unavailable";
-        this.dictationStatusValue =
-          dictationResult.status === "fulfilled"
-            ? dictationResult.value.ready === true
-              ? "ready"
-              : dictationResult.value.ready === false
-                ? "unavailable"
-                : // A gateway that omits `ready` is inconclusive (mock gateways
-                  // answer unknown methods with { ok: true }); retry on the
-                  // next sync/focus instead of latching the mic shut.
-                  "unknown"
-            : // A failed probe is inconclusive, not proof of absence: the next
-              // sync/focus retries instead of latching the mic shut.
-              "unknown";
+        this.realtimeStatusValue = catalog.realtime?.ready === true ? "ready" : "unavailable";
+        this.dictationStatusValue = catalog.transcription?.ready === true ? "ready" : "unavailable";
+      })
+      .catch(() => {
+        if (request !== this.catalogRequest) {
+          return;
+        }
+        if (this.realtimeStatusValue === "checking") {
+          this.realtimeStatusValue = "unknown";
+        }
+        if (this.dictationStatusValue === "checking") {
+          this.dictationStatusValue = "unknown";
+        }
       })
       .finally(() => {
         if (request === this.catalogRequest) {

@@ -83,6 +83,11 @@ type TalkTranscriptionRelaySessionResult = {
   provider: string;
   mode: "transcription";
   transport: "gateway-relay";
+  /**
+   * Always false in the response: the response is built before the provider
+   * connects. Readiness arrives via the session.ready event.
+   */
+  ready: false;
   transcriptionSessionId: string;
   audio: {
     inputEncoding: "g711_ulaw";
@@ -424,6 +429,7 @@ export function createTalkTranscriptionRelaySession(
     provider: params.provider.id,
     mode: "transcription",
     transport: "gateway-relay",
+    ready: false,
     transcriptionSessionId,
     audio: {
       inputEncoding: RELAY_INPUT_ENCODING,
