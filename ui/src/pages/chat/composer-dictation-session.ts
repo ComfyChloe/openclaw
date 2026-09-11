@@ -53,8 +53,7 @@ function eventPayload(frame: GatewayEventFrame): DictationEvent | null {
   if (frame.event !== "talk.event" || !frame.payload || typeof frame.payload !== "object") {
     return null;
   }
-  // SAFETY: the relay only emits talk.event frames with object payloads; the
-  // cast narrows the envelope to the dictation fields read below.
+  // SAFETY: the relay only emits talk.event frames with object payloads; the cast narrows the envelope.
   return frame.payload as DictationEvent;
 }
 

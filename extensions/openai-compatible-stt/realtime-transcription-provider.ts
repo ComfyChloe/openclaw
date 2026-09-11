@@ -395,8 +395,7 @@ function createOpenAiCompatibleRealtimeTranscriptionSession(
           transport.markReady();
         }
       }, OPENAI_COMPATIBLE_STT_READY_FALLBACK_MS);
-      // SAFETY: Node timers expose unref(); the structural cast keeps the
-      // browser-shaped timeout type from blocking the optional call.
+      // SAFETY: Node timers expose unref(); this cast keeps the browser timeout shape from blocking it.
       (readyFallbackTimer as { unref?: () => void }).unref?.();
     },
     connectTimeoutMs: OPENAI_COMPATIBLE_STT_CONNECT_TIMEOUT_MS,
